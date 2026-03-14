@@ -1,0 +1,128 @@
+// hook_play_layer.cpp
+#include <Geode/DefaultInclude.hpp>
+#include <Geode/modify/PlayLayer.hpp>
+#include <Geode/binding/PlayLayer.hpp>
+#include "../core/ghost_manager.hpp"
+#include "../core/globals.hpp"
+
+using namespace geode::prelude;
+
+class $modify(PLHook, PlayLayer) {
+    $override bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
+        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
+        Ghosts::I().updateModEnabled();
+        if (Ghosts::I().isModEnabled()) {
+            Ghosts::I().prepareLevelPersistence(level->m_levelID, this);
+            Ghosts::I().attach(this);
+
+            int lvlId = level ? level->m_levelID : 0;
+            Ghosts::I().m_levelIDOnAttach = lvlId;
+            if (Ghosts::I().isRecording()) {
+                Ghosts::I().renumberCurrentAttemptIfFresh();
+            }
+
+            Ghosts::I().stopReplay();
+        }
+        
+        return true;
+    }
+    $override void resetLevel() {
+        //log::info("[PlayLayer] resetLevel");
+        if (Ghosts::I().isModEnabled()) Ghosts::I().setResetting(true);
+        
+        PlayLayer::resetLevel();
+        if (Ghosts::I().isModEnabled()) {
+            Ghosts::I().onReset();
+            Ghosts::I().setResetting(false);
+        }
+    }
+    //$override void onExit() { Pausing?
+    //    //log::info("[PlayLayer] onExit");
+    //    PlayLayer::onExit();
+    //}
+    $override void onQuit() {
+        //log::info("[PlayLayer] onQuit");
+        if (Ghosts::I().isModEnabled()) {
+            Ghosts::I().saveNewAttemptsForCurrentLevel();
+            Ghosts::I().onQuit();
+            Ghosts::I().stopReplay();
+        } else {
+            Ghosts::I().onQuit();
+            Ghosts::I().stopReplay();
+        }
+        PlayLayer::onQuit();
+    }
+    $override void levelComplete() {
+        //log::info("[PlayLayer] levelComplete");
+        if (Ghosts::I().isModEnabled()) {
+            if (!Ghosts::I().safeMode_enabled) {
+                Ghosts::I().onComplete();
+                PlayLayer::levelComplete();
+            }
+            if (Ghosts::I().safeMode_enabled) {
+                onQuit();
+            }
+        }
+    } 
+    $override void destroyPlayer(PlayerObject* p0, GameObject* p1) {
+        //log::info("[PlayLayer] destroyPlayer m_isStartPos: {}, m_uniqueID: {}", p1->m_isStartPos, p1->m_uniqueID);
+        
+        auto& G = Ghosts::I();
+        if (!G.noclip_enabled) {
+            PlayLayer::destroyPlayer(p0, p1);
+        }
+        if (G.isModEnabled() && this->m_playerDied) { // && p0 == this->m_player1 || p0 == this->m_player2
+            G.onDeath();
+        }
+        //log::info("[PlayLayer] destroyPlayer player1 dead: {}, player2 dead: {}, Playerdead: {}", this->m_player1->m_isDead, this->m_player2->m_isDead, this->m_playerDied);
+    }
+    $override void showNewBest(bool newReward, int orbs, int diamonds, bool demonKey, bool noRetry, bool noTitle) {
+        if (!Ghosts::I().safeMode_enabled) {
+            PlayLayer::showNewBest(newReward, orbs, diamonds, demonKey, noRetry, noTitle);
+        }
+    }
+    //$override void activateEndTrigger(int targetID, bool reverse, bool lockPlayerY) { // can't hook
+    //    log::info("[PlayLayer] activateEndTrigger targetID {}, reverse {}, lockPlayerY {}", targetID, reverse, lockPlayerY);
+    //    PlayLayer::activateEndTrigger(targetID, reverse, lockPlayerY);
+    //}
+    //$override void pauseGame(bool p0) {
+    //    //log::info("[PlayLayer] pauseGame {}", p0);
+    //    PlayLayer::pauseGame(p0);
+    //}
+    //$override void storeCheckpoint(CheckpointObject* p0) {
+    //    //log::info("[PlayLayer] storeCheckpoint()");
+    //    PlayLayer::storeCheckpoint(p0);
+    //}
+    //$override void createCheckpoint() {
+    //    //log::info("[PlayLayer] createCheckpoint()");
+    //    PlayLayer::createCheckpoint();
+    //}
+    $override void removeCheckpoint(bool p0) {
+        //log::info("[PlayLayer] removeCheckpoint({})", p0);
+        PlayLayer::removeCheckpoint(p0);
+        if (Ghosts::I().isModEnabled()) {
+            Ghosts::I().onPracticeUndoCheckpoint();
+        }
+    }
+    $override void togglePracticeMode(bool on) {
+        //log::info("[PlayLayer] togglePracticeMode({})", on);
+        if (Ghosts::I().isModEnabled()) {
+            Ghosts::I().onPracticeToggle(on);
+        }
+        PlayLayer::togglePracticeMode(on);
+    }
+    //$override void commitJumps() {
+    //    PlayLayer::commitJumps();
+    //}
+    //$override void update(float dt) {
+    //    PlayLayer::update(dt);
+    //}
+    
+    //$override void postUpdate(float dt) {
+    //    PlayLayer::postUpdate(dt);
+        
+    //}
+    //$override float getCurrentPercent() {
+    //    return PlayLayer::getCurrentPercent();
+    //}
+};

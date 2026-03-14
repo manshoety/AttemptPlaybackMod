@@ -1,0 +1,74 @@
+{
+  "geode": "5.3.0",
+  "gd": {
+    "win": "2.2081",
+    "android": "2.2081",
+    "mac": "2.2081",
+    "ios": "2.2081"
+  },
+  "id": "manshoety.attemptplayback",
+  "name": "Attempt Playback Mod",
+  "version": "v1.4.2",
+  "developer": "manshoety",
+  "description": "Allows you to see all past attempts as ghosts",
+  "dependencies": {
+    "geode.node-ids": { "version": ">=v1.23.0", "required": true },
+    "legowiifun.cheat_api": { "version": ">=1.2.3", "required": true }
+  },
+  "settings": {
+    "awesome-title": { "type": "title", "name": "Gamer Settings" },
+
+    "mod-enabled": {
+      "name": "Enable Mod",
+      "description": "If off, the mod is fully disabled",
+      "type": "bool",
+      "default": true
+    },
+    "real-player-objects": {
+      "name": "Real Player Objects",
+      "description": "Number of real player objects to use during playback. Basically the max number that will appear on screen at one time. \nWARNING: Increasing this number will use around 1GB of RAM for every 2k Player Objects",
+      "type": "int",
+      "default": 1000,
+      "min": 250,
+      "max": 20000
+    },
+    
+    "record-in-practice": {
+      "name": "Record in Practice",
+      "description": "If off, new attempts made in Practice are ignored",
+      "type": "bool",
+      "default": true
+    },
+    "autosave-enabled": {
+      "name": "Autosave attempts",
+      "description": "Append new attempts to disk every N minutes and on exit",
+      "type": "bool",
+      "default": true
+    },
+    "autosave-minutes": {
+      "name": "Autosave interval (minutes)",
+      "description": "How often to autosave new attempts while playing",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "max": 120
+    },
+    "wave-trail-ghost": {
+      "name": "Wave trail ghost",
+      "description": "Draw a simple trail for ghosts when in Wave mode",
+      "type": "bool",
+      "default": true
+    },
+    "allow-platformer": {
+      "name": "Allow recording on Platformer levels",
+      "description": "PROBABLY VERY BUGGY",
+      "type": "bool",
+      "default": true
+    }
+  },
+  "resources": {
+    "files": [
+      "resources/*.ogg"
+    ]
+    }
+}

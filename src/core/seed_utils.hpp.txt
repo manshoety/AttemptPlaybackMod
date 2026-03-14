@@ -1,0 +1,62 @@
+// seed_utils.hpp
+// NEED TO FIX FOR NEW UPDATE, NOT USED CURRENTLY
+#pragma once
+#include <Geode/Geode.hpp>
+#include <Geode/binding/PlayLayer.hpp>
+#include <Geode/binding/PlayerObject.hpp>
+#include <Geode/binding/GameToolbox.hpp>
+#include <random>
+#include "./globals.hpp"
+
+using namespace geode::prelude;
+
+namespace seedutils {
+    
+    inline uintptr_t getCurrentSeed() {
+        #ifdef GEODE_IS_WINDOWS
+        return *(uintptr_t*)((char*)geode::base::get() + kSeedOffset);
+        #else
+        return 0;
+        #endif
+    }
+    
+    inline void setRawSeed(uintptr_t seed) {
+        #ifdef GEODE_IS_WINDOWS
+        *(uintptr_t*)((char*)geode::base::get() + kSeedOffset) = seed;
+        #else
+        if (seed != 0) {
+            GameToolbox::fast_srand(static_cast<int>(seed));
+        }
+        #endif
+    }
+    
+    // Apply seed with progress-based variation (for deterministic but varying randomness)
+    inline void applyAttemptSeed(uintptr_t baseSeed, PlayLayer* pl) {
+        if (baseSeed == 0 || !pl) return;
+        
+        int finalSeed;
+        
+        if (pl->m_player1 && !pl->m_player1->m_isDead) {
+            // Generate deterministic seed based on base seed + progress
+            std::mt19937 generator(static_cast<uint32_t>(baseSeed) + 
+                                   static_cast<uint32_t>(pl->m_gameState.m_currentProgress));
+            std::uniform_int_distribution<int> distribution(10000, 999999999);
+            finalSeed = distribution(generator);
+        } else {
+            // Use base seed directly
+            finalSeed = static_cast<int>(baseSeed & 0x7FFFFFFF);
+            if (finalSeed < 10000) finalSeed += 10000;
+        }
+        
+        setRawSeed(static_cast<uintptr_t>(finalSeed));
+    }
+    
+    // Capture a fresh random seed (for new recordings)
+    inline uintptr_t generateFreshSeed() {
+        std::random_device rd;
+        std::mt19937 generator(rd());
+        std::uniform_int_distribution<uintptr_t> distribution(10000, 999999999);
+        return distribution(generator);
+    }
+}
+    
