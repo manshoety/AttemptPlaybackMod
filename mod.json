@@ -8,13 +8,12 @@
   },
   "id": "manshoety.attemptplayback",
   "name": "Attempt Playback",
-  "version": "v1.4.3",
+  "version": "v1.4.2",
   "developer": "manshoety",
   "description": "Allows you to see all past attempts as ghosts",
   "dependencies": {
     "geode.node-ids": { "version": ">=v1.23.0", "required": true },
-    "legowiifun.cheat_api": { "version": ">=1.2.3", "required": true },
-    "cvolton.level-id-api": { "version": "v1.0.0", "required": true }
+    "legowiifun.cheat_api": { "version": ">=1.2.3", "required": true }
   },
   "settings": {
     "awesome-title": { "type": "title", "name": "Gamer Settings" },
