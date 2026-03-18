@@ -57,9 +57,6 @@
 #include "../core/player_object_pool.hpp"
 // #include "../core/seed_utils.hpp"
 
-// Current bugs:
-// Practice mode when removing and placing checkpoints at the start, somehow you can sometimes break it and cause a jumpback upon replay
-
 // Current visual bugs:
 // Wave trail wackyness when turning off (only show past percent) when replaying with waves at the start
 // Replay practice session, then record a practice session entering by pressing practice mode during replay, then replay and icons are the wrong gamemode 

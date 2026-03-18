@@ -15,6 +15,15 @@
     "geode.node-ids": { "version": ">=v1.23.0", "required": true },
     "legowiifun.cheat_api": { "version": ">=1.2.3", "required": true }
   },
+  "tags": [
+    "gameplay",
+    "offline",
+    "interface",
+    "content"
+  ],
+  "links": {
+    "source": "https://github.com/manshoety/AttemptPlaybackMod"
+  },
   "settings": {
     "awesome-title": { "type": "title", "name": "Gamer Settings" },
 
