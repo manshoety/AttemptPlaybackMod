@@ -380,6 +380,12 @@ public:
         }
     }
 
+    bool isAtLevelStartNoCheckpoints() const {
+        const PracticeSession* s = m_path.activeSession();
+        if (!s) return true;
+        return s->activeChain.empty();
+    }
+
     void onExitEarly() {
         if (currentFurthestSegment.ownerSerial <= 0) return;
         if (!(currentFurthestSegment.localEndTime > currentFurthestSegment.localStartTime)) return;
@@ -392,16 +398,21 @@ public:
             currentFurthestSegment.startX,
             currentFurthestSegment.endX,
             currentFurthestSegment.p1Frames,
-            currentFurthestSegment.p2Frames
+            currentFurthestSegment.p2Frames,
+            false
         );
     }
     
     void overwriteSegmentForAttempt(
         int serial,
         double baseTimeOffset,
-        double localStartTime, double localEndTime,
-        float startX, float endX,
-        size_t p1Frames, size_t p2Frames
+        double localStartTime,
+        double localEndTime,
+        float startX,
+        float endX,
+        size_t p1Frames,
+        size_t p2Frames,
+        bool beganAtStartOfLevel
     ) {
         if (!(localEndTime > localStartTime)) return;
 
@@ -414,200 +425,25 @@ public:
 
         if (m_path.frozen || session->frozen) return;
 
-        if (session->allAttemptSerials.empty() || session->allAttemptSerials.back() != serial) {
-            session->allAttemptSerials.push_back(serial);
-        }
+        addAttemptSerialIfMissing_(*session, serial);
 
-        auto& segs = session->segments;
-
-        const double absStartTime = baseTimeOffset + localStartTime;
-        const double absEndTime   = baseTimeOffset + localEndTime;
-        if (!(absEndTime > absStartTime)) return;
-
-        const size_t segsBefore = segs.size();
-
-        PracticeSegment newSeg;
-        newSeg.baseTimeOffset  = baseTimeOffset;
-        newSeg.localStartTime  = localStartTime;
-        newSeg.localEndTime    = localEndTime;
-        newSeg.startX          = startX;
-        newSeg.endX            = endX;
-        newSeg.ownerSerial     = serial;
-        newSeg.p1Frames        = p1Frames;
-        newSeg.p2Frames        = p2Frames;
-        newSeg.maxXReached     = std::max(startX, endX);
-        newSeg.checkpointIdEnd = -1;
-
-        constexpr double kEps = 1e-9;
-        if (currentFurthestSegment.ownerSerial <= 0 ||
-            std::fabs(currentFurthestSegment.baseTimeOffset - newSeg.baseTimeOffset) > kEps ||
-            newSeg.localEndTime > currentFurthestSegment.localEndTime) {
-            currentFurthestSegment = newSeg;
-        }
-
-        // Fast path: empty timeline
-        if (segs.empty()) {
-            segs.push_back(newSeg);
-            session->updateSpan();
-            m_dirty = true;
-
-            /*
-            geode::log::info(
-                "overwrite: serial={} base={} local=[{:.6f},{:.6f}] abs=[{:.6f},{:.6f}] startX={:.3f} endX={:.3f} segs(before)={} segs(after)={}",
-                serial, baseTimeOffset, localStartTime, localEndTime,
-                absStartTime, absEndTime, startX, endX,
-                (int)segsBefore, (int)segs.size()
-            );*/
-            return;
-        }
-
-        // Fast append path: strictly after tail
-        {
-            const PracticeSegment& tail = segs.back();
-            const double tailEnd = tail.absEnd();
-
-            if (absStartTime >= tailEnd - kEps) {
-                // Merge directly into tail if same owner and touching/overlapping at boundary
-                if (tail.ownerSerial == serial && absStartTime <= tailEnd + 1e-5) {
-                    PracticeSegment& back = segs.back();
-                    back.localEndTime = std::max(back.localEndTime, absEndTime - back.baseTimeOffset);
-                    back.endX = std::max(back.endX, endX);
-                    back.maxXReached = std::max(back.maxXReached, std::max(startX, endX));
-                    back.p1Frames = std::max(back.p1Frames, p1Frames);
-                    back.p2Frames = std::max(back.p2Frames, p2Frames);
-                } else {
-                    segs.push_back(newSeg);
-                }
-
-                session->updateSpan();
-                m_dirty = true;
-
-                /*
-                geode::log::info(
-                    "overwrite: serial={} base={} local=[{:.6f},{:.6f}] abs=[{:.6f},{:.6f}] startX={:.3f} endX={:.3f} segs(before)={} segs(after)={}",
-                    serial, baseTimeOffset, localStartTime, localEndTime,
-                    absStartTime, absEndTime, startX, endX,
-                    (int)segsBefore, (int)segs.size()
-                );*/
-                return;
-            }
-        }
-
-        // Find first segment whose absEnd() > absStartTime
-        auto itFirst = std::lower_bound(
-            segs.begin(), segs.end(), absStartTime,
-            [](PracticeSegment const& s, double t) {
-                return s.absEnd() <= t;
-            }
+        PracticeSegment newSeg = makeSegment_(
+            serial,
+            baseTimeOffset,
+            localStartTime,
+            localEndTime,
+            startX,
+            endX,
+            p1Frames,
+            p2Frames
         );
 
-        // Find first segment whose absStart() >= absEndTime
-        auto itLast = std::lower_bound(
-            segs.begin(), segs.end(), absEndTime,
-            [](PracticeSegment const& s, double t) {
-                return s.absStart() < t;
-            }
-        );
+        updateCurrentFurthestSegment_(newSeg);
 
-        const size_t iFirst = static_cast<size_t>(itFirst - segs.begin());
-        const size_t iLast  = static_cast<size_t>(itLast  - segs.begin());
-
-        std::vector<PracticeSegment> replacement;
-        replacement.reserve(3);
-
-        // Left remainder from first overlapped segment
-        if (iFirst < segs.size()) {
-            const PracticeSegment& s = segs[iFirst];
-            const double s0 = s.absStart();
-            const double s1 = s.absEnd();
-
-            if (s0 < absStartTime && s1 > absStartTime + kEps) {
-                PracticeSegment left = s;
-                left.localEndTime = absStartTime - left.baseTimeOffset;
-
-                if (left.localEndTime > left.localStartTime + kEps) {
-                    // Conservative X trimming
-                    left.endX = std::min(left.endX, startX);
-                    if (left.endX < left.startX) left.endX = left.startX;
-
-                    left.maxXReached = std::min(left.maxXReached, left.endX);
-                    if (left.maxXReached < left.endX) left.maxXReached = left.endX;
-
-                    replacement.push_back(left);
-                }
-            }
-        }
-
-        // New segment owns entire overwrite interval
-        replacement.push_back(newSeg);
-
-        // Right remainder from last overlapped segment
-        if (iLast > 0 && (iLast - 1) < segs.size()) {
-            const PracticeSegment& s = segs[iLast - 1];
-            const double s0 = s.absStart();
-            const double s1 = s.absEnd();
-
-            if (s0 < absEndTime - kEps && s1 > absEndTime) {
-                PracticeSegment right = s;
-                right.localStartTime = absEndTime - right.baseTimeOffset;
-                if (right.localStartTime < 0.0) right.localStartTime = 0.0;
-
-                if (right.localEndTime > right.localStartTime + kEps) {
-                    // Conservative X trimming
-                    right.startX = std::max(right.startX, endX);
-                    if (right.endX < right.startX) right.endX = right.startX;
-                    if (right.maxXReached < right.endX) right.maxXReached = right.endX;
-
-                    replacement.push_back(right);
-                }
-            }
-        }
-
-        // Replace overlapped window [iFirst, iLast)
-        segs.erase(segs.begin() + iFirst, segs.begin() + iLast);
-        segs.insert(segs.begin() + iFirst, replacement.begin(), replacement.end());
-
-        // Local merge only near changed area
-        auto mergeAt = [&](size_t idx) -> bool {
-            if (idx == 0 || idx >= segs.size()) return false;
-
-            PracticeSegment& a = segs[idx - 1];
-            PracticeSegment& b = segs[idx];
-
-            if (a.ownerSerial == b.ownerSerial &&
-                b.absStart() <= a.absEnd() + 1e-5) {
-                const double newAbsEnd = std::max(a.absEnd(), b.absEnd());
-                a.localEndTime = newAbsEnd - a.baseTimeOffset;
-                a.endX = std::max(a.endX, b.endX);
-                a.maxXReached = std::max(a.maxXReached, b.maxXReached);
-                a.p1Frames = std::max(a.p1Frames, b.p1Frames);
-                a.p2Frames = std::max(a.p2Frames, b.p2Frames);
-                segs.erase(segs.begin() + idx);
-                return true;
-            }
-
-            return false;
-        };
-
-        size_t mergePos = (iFirst > 0 ? iFirst : 1);
-
-        while (mergePos < segs.size() && mergeAt(mergePos)) {
-            if (mergePos > 1) --mergePos;
-        }
-        while (mergePos + 1 < segs.size() && mergeAt(mergePos + 1)) {
-            // keep merging forward if needed
-        }
+        overwriteIntoTimeline_(session->segments, newSeg, beganAtStartOfLevel);
 
         session->updateSpan();
         m_dirty = true;
-
-        /*
-        geode::log::info(
-            "overwrite: serial={} base={} local=[{:.6f},{:.6f}] abs=[{:.6f},{:.6f}] startX={:.3f} endX={:.3f} segs(before)={} segs(after)={}",
-            serial, baseTimeOffset, localStartTime, localEndTime,
-            absStartTime, absEndTime, startX, endX,
-            (int)segsBefore, (int)segs.size()
-        );*/
     }
     
     int findOwnerSerialForTime(double t) const {
@@ -740,69 +576,51 @@ public:
 
         segs.erase(
             std::remove_if(segs.begin(), segs.end(),
-                [](const PracticeSegment& seg) {
-                    return seg.ownerSerial <= 0 || !(seg.absEnd() > seg.absStart());
+                [](PracticeSegment const& s) {
+                    return !validSegment_(s);
                 }),
             segs.end()
         );
 
         std::sort(segs.begin(), segs.end(),
-            [](const PracticeSegment& a, const PracticeSegment& b) {
+            [](PracticeSegment const& a, PracticeSegment const& b) {
                 if (a.absStart() != b.absStart()) return a.absStart() < b.absStart();
                 if (a.absEnd()   != b.absEnd())   return a.absEnd()   < b.absEnd();
                 return a.ownerSerial < b.ownerSerial;
             });
 
-        constexpr double kEps = 1e-5;
+        // Different-owner overlaps: trim the later segment so the timeline stays non-overlapping.
+        std::vector<PracticeSegment> out;
+        out.reserve(segs.size());
 
-        std::vector<PracticeSegment> repaired;
-        repaired.reserve(segs.size());
+        for (auto s : segs) {
+            if (!validSegment_(s)) continue;
 
-        for (const auto& s : segs) {
-            if (!(s.absEnd() > s.absStart())) continue;
-
-            if (repaired.empty()) {
-                repaired.push_back(s);
+            if (out.empty()) {
+                out.push_back(s);
                 continue;
             }
 
-            PracticeSegment& back = repaired.back();
+            PracticeSegment& back = out.back();
 
-            // Merge touching/overlapping same-owner segments
-            if (back.ownerSerial == s.ownerSerial &&
-                s.absStart() <= back.absEnd() + kEps) {
-                const double newAbsEnd = std::max(back.absEnd(), s.absEnd());
-                back.localEndTime = newAbsEnd - back.baseTimeOffset;
-                back.endX = std::max(back.endX, s.endX);
-                back.maxXReached = std::max(back.maxXReached, s.maxXReached);
-                back.p1Frames = std::max(back.p1Frames, s.p1Frames);
-                back.p2Frames = std::max(back.p2Frames, s.p2Frames);
+            if (canMerge_(back, s)) {
+                mergeIntoLeft_(back, s);
                 continue;
             }
 
-            // No overlap
-            if (s.absStart() >= back.absEnd() - kEps) {
-                repaired.push_back(s);
-                continue;
+            if (s.absStart() < back.absEnd() - kSegEps_) {
+                s.localStartTime = back.absEnd() - s.baseTimeOffset;
+                if (s.localStartTime < 0.0) s.localStartTime = 0.0;
+                if (!validSegment_(s)) continue;
+                s.startX = std::max(s.startX, back.endX);
+                clampSegmentX_(s);
             }
 
-            // Overlap with previous different-owner segment:
-            // keep only the tail after the previous segment ends.
-            if (s.absEnd() > back.absEnd() + kEps) {
-                PracticeSegment trimmed = s;
-                trimmed.localStartTime = back.absEnd() - trimmed.baseTimeOffset;
-                if (trimmed.localStartTime < 0.0) trimmed.localStartTime = 0.0;
-
-                if (trimmed.localEndTime > trimmed.localStartTime) {
-                    trimmed.startX = std::max(trimmed.startX, back.endX);
-                    if (trimmed.endX < trimmed.startX) trimmed.endX = trimmed.startX;
-                    if (trimmed.maxXReached < trimmed.endX) trimmed.maxXReached = trimmed.endX;
-                    repaired.push_back(trimmed);
-                }
-            }
+            out.push_back(s);
         }
 
-        segs.swap(repaired);
+        mergeAdjacentSegments_(out);
+        segs.swap(out);
         session.updateSpan();
     }
 
@@ -835,6 +653,7 @@ private:
     bool m_noValidSessionForStartX = false;
     std::vector<double> baseTimeForCheckpoints;
     PracticeSegment currentFurthestSegment; // For when you exit practice mode before finishing the level
+    static constexpr double kSegEps_ = 1e-6;
 
     void rebuildCheckpointBaseTimesFromSession_(PracticeSession const& session) {
         baseTimeForCheckpoints.clear();
@@ -878,5 +697,185 @@ private:
             if (s.sessionId == id) return &s;
         }
         return nullptr;
+    }
+
+    void addAttemptSerialIfMissing_(PracticeSession& session, int serial) {
+        if (serial <= 0) return;
+        if (session.allAttemptSerials.empty() || session.allAttemptSerials.back() != serial) {
+            session.allAttemptSerials.push_back(serial);
+        }
+    }
+
+    PracticeSegment makeSegment_(
+        int serial,
+        double baseTimeOffset,
+        double localStartTime,
+        double localEndTime,
+        float startX,
+        float endX,
+        size_t p1Frames,
+        size_t p2Frames
+    ) const {
+        PracticeSegment seg;
+        seg.startX = startX;
+        seg.endX = endX;
+        seg.ownerSerial = serial;
+        seg.checkpointIdEnd = -1;
+        seg.p1Frames = p1Frames;
+        seg.p2Frames = p2Frames;
+        seg.maxXReached = std::max(startX, endX);
+        seg.baseTimeOffset = baseTimeOffset;
+        seg.localStartTime = localStartTime;
+        seg.localEndTime = localEndTime;
+        return seg;
+    }
+
+    void updateCurrentFurthestSegment_(PracticeSegment const& seg) {
+        if (currentFurthestSegment.ownerSerial <= 0) {
+            currentFurthestSegment = seg;
+            return;
+        }
+
+        if (std::fabs(currentFurthestSegment.baseTimeOffset - seg.baseTimeOffset) > kSegEps_ ||
+            seg.localEndTime > currentFurthestSegment.localEndTime) {
+            currentFurthestSegment = seg;
+        }
+    }
+
+    static bool validSegment_(PracticeSegment const& s) {
+        return s.ownerSerial > 0 && (s.absEnd() > s.absStart() + kSegEps_);
+    }
+
+    static void clampSegmentX_(PracticeSegment& s) {
+        if (s.endX < s.startX) s.endX = s.startX;
+        if (s.maxXReached < s.endX) s.maxXReached = s.endX;
+    }
+
+    static bool canMerge_(PracticeSegment const& a, PracticeSegment const& b) {
+        return a.ownerSerial == b.ownerSerial &&
+            b.absStart() <= a.absEnd() + 1e-5;
+    }
+
+    static void mergeIntoLeft_(PracticeSegment& a, PracticeSegment const& b) {
+        const double newAbsEnd = std::max(a.absEnd(), b.absEnd());
+        a.localEndTime = newAbsEnd - a.baseTimeOffset;
+        a.endX = std::max(a.endX, b.endX);
+        a.maxXReached = std::max(a.maxXReached, b.maxXReached);
+        a.p1Frames = std::max(a.p1Frames, b.p1Frames);
+        a.p2Frames = std::max(a.p2Frames, b.p2Frames);
+    }
+
+    static void mergeAdjacentSegments_(std::vector<PracticeSegment>& segs) {
+        if (segs.empty()) return;
+
+        std::vector<PracticeSegment> merged;
+        merged.reserve(segs.size());
+
+        for (auto const& s : segs) {
+            if (!validSegment_(s)) continue;
+
+            if (merged.empty()) {
+                merged.push_back(s);
+                continue;
+            }
+
+            PracticeSegment& back = merged.back();
+            if (canMerge_(back, s)) {
+                mergeIntoLeft_(back, s);
+            } else {
+                merged.push_back(s);
+            }
+        }
+
+        segs.swap(merged);
+    }
+
+    void overwriteIntoTimeline_(
+        std::vector<PracticeSegment>& segs,
+        PracticeSegment const& newSeg,
+        bool beganAtStartOfLevel
+    ) {
+        const double newAbsStart = newSeg.absStart();
+        const double newAbsEnd   = newSeg.absEnd();
+
+        if (!(newAbsEnd > newAbsStart + kSegEps_)) return;
+
+        if (segs.empty()) {
+            segs.push_back(newSeg);
+            return;
+        }
+
+        std::vector<PracticeSegment> out;
+        out.reserve(segs.size() + 1);
+
+        bool inserted = false;
+
+        for (auto const& old : segs) {
+            const double oldStart = old.absStart();
+            const double oldEnd   = old.absEnd();
+
+            // If this was a true start of level attempt, the new segment owns the full left side
+            const bool oldEntirelyBeforeNew = beganAtStartOfLevel ? false : (oldEnd <= newAbsStart + kSegEps_);
+
+            const bool oldEntirelyAfterNew = oldStart >= newAbsEnd - kSegEps_;
+
+            if (oldEntirelyBeforeNew) {
+                out.push_back(old);
+                continue;
+            }
+
+            if (oldEntirelyAfterNew) {
+                if (!inserted) {
+                    out.push_back(newSeg);
+                    inserted = true;
+                }
+                out.push_back(old);
+                continue;
+            }
+
+            // Overlap case:
+            // maybe preserve left remainder (only for non start of level attempts)
+            if (!beganAtStartOfLevel && oldStart < newAbsStart - kSegEps_) {
+                PracticeSegment left = old;
+                left.localEndTime = newAbsStart - left.baseTimeOffset;
+                if (validSegment_(left)) {
+                    left.endX = std::min(left.endX, newSeg.startX);
+                    clampSegmentX_(left);
+                    out.push_back(left);
+                }
+            }
+
+            if (!inserted) {
+                out.push_back(newSeg);
+                inserted = true;
+            }
+
+            // maybe preserve right remainder
+            if (oldEnd > newAbsEnd + kSegEps_) {
+                PracticeSegment right = old;
+                right.localStartTime = newAbsEnd - right.baseTimeOffset;
+                if (right.localStartTime < 0.0) right.localStartTime = 0.0;
+
+                if (validSegment_(right)) {
+                    right.startX = std::max(right.startX, newSeg.endX);
+                    clampSegmentX_(right);
+                    out.push_back(right);
+                }
+            }
+        }
+
+        if (!inserted) {
+            out.push_back(newSeg);
+        }
+
+        std::sort(out.begin(), out.end(),
+            [](PracticeSegment const& a, PracticeSegment const& b) {
+                if (a.absStart() != b.absStart()) return a.absStart() < b.absStart();
+                if (a.absEnd() != b.absEnd()) return a.absEnd() < b.absEnd();
+                return a.ownerSerial < b.ownerSerial;
+            });
+
+        mergeAdjacentSegments_(out);
+        segs.swap(out);
     }
 };

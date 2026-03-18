@@ -535,6 +535,7 @@ struct Attempt {
     bool preloaded = false;
     bool needsVisualSetup = false;
     bool m_isPlatformer = false;
+    bool beganAtStartOfLevel = true;
     uintptr_t seed = 0;
 
     PoseCache last1{};

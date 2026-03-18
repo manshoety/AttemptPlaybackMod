@@ -57,6 +57,9 @@
 #include "../core/player_object_pool.hpp"
 // #include "../core/seed_utils.hpp"
 
+// Current bugs:
+// Practice mode when removing and placing checkpoints at the start, somehow you can sometimes break it and cause a jumpback upon replay
+
 // Current visual bugs:
 // Wave trail wackyness when turning off (only show past percent) when replaying with waves at the start
 // Replay practice session, then record a practice session entering by pressing practice mode during replay, then replay and icons are the wrong gamemode 
@@ -1726,7 +1729,8 @@ public:
                     startX,
                     endX,
                     m_current.p1.size(),
-                    m_current.p2.size()
+                    m_current.p2.size(),
+                    m_current.beganAtStartOfLevel
                 );
             }
 
@@ -1787,7 +1791,8 @@ public:
                     startX,
                     endX,
                     m_current.p1.size(),
-                    m_current.p2.size()
+                    m_current.p2.size(),
+                    m_current.beganAtStartOfLevel
                 );
 
                 if (recordInPractice) {
@@ -2049,7 +2054,8 @@ public:
                     startX,
                     endX,
                     p1Count,
-                    p2Count
+                    p2Count,
+                    m_current.beganAtStartOfLevel
                 );
             }
 
@@ -5488,6 +5494,7 @@ private:
             m_current.baseTimeOffset = time;
             m_checkpointBaseTime = time;
             m_current.startCheckpointId = m_checkpointMgr.getCurrentCheckpointId(false);
+            m_current.beganAtStartOfLevel = m_checkpointMgr.isAtLevelStartNoCheckpoints();
         } else {
             m_current.baseTimeOffset = 0.0;
             m_checkpointBaseTime = 0.0;
