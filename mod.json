@@ -7,13 +7,14 @@
     "ios": "2.2081"
   },
   "id": "manshoety.attemptplayback",
-  "name": "Attempt Playback Mod",
-  "version": "v1.4.2",
+  "name": "Attempt Playback",
+  "version": "v1.4.3",
   "developer": "manshoety",
   "description": "Allows you to see all past attempts as ghosts",
   "dependencies": {
     "geode.node-ids": { "version": ">=v1.23.0", "required": true },
-    "legowiifun.cheat_api": { "version": ">=1.2.3", "required": true }
+    "legowiifun.cheat_api": { "version": ">=1.2.3", "required": true },
+    "cvolton.level-id-api": { "version": "v1.0.0", "required": true }
   },
   "settings": {
     "awesome-title": { "type": "title", "name": "Gamer Settings" },
@@ -61,9 +62,9 @@
     },
     "allow-platformer": {
       "name": "Allow recording on Platformer levels",
-      "description": "PROBABLY VERY BUGGY",
+      "description": "PROBABLY VERY BUGGY (Only works on levels with no checkpoints)",
       "type": "bool",
-      "default": true
+      "default": false
     }
   },
   "resources": {

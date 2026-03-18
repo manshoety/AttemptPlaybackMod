@@ -55,7 +55,17 @@
 #include "../core/sfx_handling.hpp"
 #include "../core/checkpoint_manager.hpp"
 #include "../core/player_object_pool.hpp"
+
+// #include <cvolton.level-id-api/include/EditorIDs.hpp>
 // #include "../core/seed_utils.hpp"
+
+// Current visual bugs:
+// Wave trail wackyness when turning off (only show past percent) when replaying with waves at the start
+// Replay practice session, then record a practice session entering by pressing practice mode during replay, then replay and icons are the wrong gamemode 
+
+// Features I'll (maybe) add:
+// Ability to only replay one practice session or multiple (maybe even name them and save names as a different file). This would be it's own UI. Also have ability to delete certain sessions and maybe even export and import sessions (practice and normal). It would be cool to be able to export your best attempt, and be able to import the best attempt of several people and replay the at the same time, and have the icons maybe exported and imported too? A lot of work but would be cool to have eventually.
+// Platformer mode isn't implimented when there are checkpoints yet (practice mode works but not normal)
 
 using namespace geode::prelude;
 
@@ -1517,7 +1527,7 @@ public:
         if (!mod->hasSavedValue("ghosts-explode")) m_ghostsExplode = false;
         if (!mod->hasSavedValue("ghosts-explode-sfx")) m_ghostsExplodeSFX = true;
         if (!mod->hasSavedValue("custom-ghosts-explode-sfx")) m_useCustomExplodeSounds = false;
-        if (!mod->hasSavedValue("randomIcons-enabled")) m_randomIcons = true;
+        if (!mod->hasSavedValue("randomIcons-enabled")) m_randomIcons = false;
         if (!mod->hasSavedValue("ReplayPreventCompletion-enabled")) m_pauseGameAtTheEndOfReplayBot = false;
         m_pauseGameAtTheEndOfReplayBot = false;
 
@@ -1536,7 +1546,7 @@ public:
         setOpacityVar(clampU8_(op));
 
         
-        if (!mod->hasSavedValue("ghost-colors")) mod->setSavedValue("ghost-colors", std::string("Random"));
+        if (!mod->hasSavedValue("ghost-colors")) mod->setSavedValue("ghost-colors", std::string("PlayerColors"));
         std::string colorMode = mod->getSavedValue<std::string>("ghost-colors");
 
         if (colorMode == "PlayerColors") colors = ColorMode::PlayerColors;
@@ -1586,7 +1596,7 @@ public:
         //log::info("[Ghosts] attach() right before thingy");
 
         recording = true;
-        playback  = false;
+        playback = false;
 
         p1Hold = p2Hold = false;
         p1LHold = p2LHold = false;
