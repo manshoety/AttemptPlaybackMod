@@ -111,7 +111,9 @@ public:
         int bestId = -1;
         double bestEndT = -1.0;
 
-        for (auto const& s : m_path.sessions) {
+        // Walk newest -> oldest so ties prefer the most recent session
+        for (size_t i = m_path.sessions.size(); i-- > 0;) {
+            auto const& s = m_path.sessions[i];
             if (s.segments.empty()) continue;
 
             const float sx = sessionStartX_(s);
@@ -124,11 +126,13 @@ public:
 
             const double endT = sessionAbsEnd_(s);       // RANK BY TIME
             //geode::log::info("session: {} endT: {}", s.sessionId, endT);
+
             if (endT > bestEndT) {
                 bestEndT = endT;
                 bestId = s.sessionId;
             }
         }
+
         return bestId;
     }
 

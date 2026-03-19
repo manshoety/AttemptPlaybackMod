@@ -1271,9 +1271,9 @@ public:
 
     void setOpacityVar(GLubyte o) { opacity = o; }
 
-    void updateOpacityForAttempt(Attempt& a, GLubyte o) {
+    void updateOpacityForAttempt(Attempt& a, GLubyte o, bool force=false) {
         m_skipGhostWork = (o == 0);
-        if (a.opacity == o) return;
+        if (!force && a.opacity == o) return;
         auto applyAll = [&](PlayerObject* po){
                 if (!po) return;
                 po->setOpacity(o);
@@ -5197,12 +5197,14 @@ private:
                     if (pc.spiderState != IconAnimationState::Idle) {
                         ghost->m_spiderSprite->runAnimation("idle01");
                         pc.spiderState = IconAnimationState::Idle;
+                        updateOpacityForAttempt(a, a.opacity, true);
                     }
                 }
                 else {
                     if (pc.spiderState != IconAnimationState::Run) {
                         ghost->m_spiderSprite->runAnimation("run");
                         pc.spiderState = IconAnimationState::Run;
+                        updateOpacityForAttempt(a, a.opacity, true);
                     }
                 }
                 if (fNext.y < f.y) { // Falling
@@ -5210,11 +5212,13 @@ private:
                         if (pc.spiderState != IconAnimationState::Jump) {
                             ghost->m_spiderSprite->runAnimation("jump_loop");
                             pc.spiderState = IconAnimationState::Jump;
+                            updateOpacityForAttempt(a, a.opacity, true);
                         }
                     }
                     else if (pc.spiderState != IconAnimationState::Fall) {
                         ghost->m_spiderSprite->runAnimation("fall_loop");
                         pc.spiderState = IconAnimationState::Fall;
+                        updateOpacityForAttempt(a, a.opacity, true);
                     }
                 }
                 else if (fNext.y > f.y) { // Jumping
@@ -5222,11 +5226,13 @@ private:
                         if (pc.spiderState != IconAnimationState::Jump) {
                             ghost->m_spiderSprite->runAnimation("fall_loop");
                             pc.spiderState = IconAnimationState::Jump;
+                            updateOpacityForAttempt(a, a.opacity, true);
                         }
                     }
                     else if (pc.spiderState != IconAnimationState::Fall) {
                         ghost->m_spiderSprite->runAnimation("jump_loop");
                         pc.spiderState = IconAnimationState::Fall;
+                        updateOpacityForAttempt(a, a.opacity, true);
                     }
                 }
             }
@@ -5238,6 +5244,7 @@ private:
                     if (pc.robotState != IconAnimationState::Idle) {
                         ghost->m_robotSprite->runAnimation("idle01");
                         pc.robotState = IconAnimationState::Idle;
+                        updateOpacityForAttempt(a, a.opacity, true);
                     }
                 }
                 else {
@@ -5246,6 +5253,7 @@ private:
                     if (pc.robotState != IconAnimationState::Run) {
                         ghost->m_robotSprite->runAnimation("run");
                         pc.robotState = IconAnimationState::Run;
+                        updateOpacityForAttempt(a, a.opacity, true);
                     }
                 }
                 if (fNext.y < f.y) { // Falling
@@ -5255,6 +5263,7 @@ private:
                         if (pc.robotState != IconAnimationState::Jump) {
                             ghost->m_robotSprite->runAnimation("jump_loop");
                             pc.robotState = IconAnimationState::Jump;
+                            updateOpacityForAttempt(a, a.opacity, true);
                         }
                     }
                     //else if (pc.robotState != RobotState::Fall) 
@@ -5262,6 +5271,7 @@ private:
                     else if (pc.robotState != IconAnimationState::Fall) {
                         ghost->m_robotSprite->runAnimation("fall_loop");
                         pc.robotState = IconAnimationState::Fall;
+                        updateOpacityForAttempt(a, a.opacity, true);
                     }
                 }
                 else if (fNext.y > f.y) { // Jumping
@@ -5271,6 +5281,7 @@ private:
                         if (pc.robotState != IconAnimationState::Jump) {
                             ghost->m_robotSprite->runAnimation("fall_loop");
                             pc.robotState = IconAnimationState::Jump;
+                            updateOpacityForAttempt(a, a.opacity, true);
                         }
                     }
                     //else if (pc.robotState != RobotState::Fall) 
@@ -5278,6 +5289,7 @@ private:
                     else if (pc.robotState != IconAnimationState::Fall) {
                         ghost->m_robotSprite->runAnimation("jump_loop");
                         pc.robotState = IconAnimationState::Fall;
+                        updateOpacityForAttempt(a, a.opacity, true);
                     }
                 }
             }
