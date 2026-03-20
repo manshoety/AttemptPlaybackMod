@@ -59,7 +59,6 @@
 
 // Current visual bugs:
 // Wave trail wackyness when turning off (only show past percent) when replaying with waves at the start
-// Replay practice session, then record a practice session entering by pressing practice mode during replay, then replay and icons are the wrong gamemode 
 
 // Features I'll (maybe) add:
 // Ability to only replay one practice session or multiple (maybe even name them and save names as a different file). This would be it's own UI. Also have ability to delete certain sessions and maybe even export and import sessions (practice and normal). It would be cool to be able to export your best attempt, and be able to import the best attempt of several people and replay the at the same time, and have the icons maybe exported and imported too? A lot of work but would be cool to have eventually.
@@ -732,7 +731,7 @@ public:
             const size_t idx = m_preloadOrder[m_preloadCursor];
             Attempt& a = attempts[idx];
             //log::info("preload idx: {}, already preloaded: {}", idx, a.preloaded);
-            preloadAttempt_(a, idx);
+            preloadAttempt_(a, idx, true);
             //log::info("preloaded: {}, iconsAssigned: {}", a.preloaded, a.iconsAssigned);
             if (m_replayKind == ReplayKind::PracticeComposite) InitialGamemodeSetProcessAttemptIdx(idx);
             if (a.preloaded) {
@@ -1270,6 +1269,11 @@ public:
     }
 
     void setOpacityVar(GLubyte o) { opacity = o; }
+
+    void refreshOpacityForAttemptNoWaveTrail(Attempt& a) {
+        if (a.g1) a.g1->setOpacity(a.opacity);
+        if (a.g2) a.g2->setOpacity(a.opacity);
+    }
 
     void updateOpacityForAttempt(Attempt& a, GLubyte o, bool force=false) {
         m_skipGhostWork = (o == 0);
@@ -4477,8 +4481,8 @@ private:
         }
     }
 
-    void preloadAttempt_(Attempt& a, size_t attemptIdx = SIZE_MAX) {
-        if (a.preloaded) return;
+    void preloadAttempt_(Attempt& a, size_t attemptIdx = SIZE_MAX, bool force=false) {
+        if (!force && a.preloaded) return;
         if (!m_pl || !m_pl->m_player1) return;
         
         //double tStart = getTimeMs();
@@ -5197,14 +5201,14 @@ private:
                     if (pc.spiderState != IconAnimationState::Idle) {
                         ghost->m_spiderSprite->runAnimation("idle01");
                         pc.spiderState = IconAnimationState::Idle;
-                        updateOpacityForAttempt(a, a.opacity, true);
+                        refreshOpacityForAttemptNoWaveTrail(a);
                     }
                 }
                 else {
                     if (pc.spiderState != IconAnimationState::Run) {
                         ghost->m_spiderSprite->runAnimation("run");
                         pc.spiderState = IconAnimationState::Run;
-                        updateOpacityForAttempt(a, a.opacity, true);
+                        refreshOpacityForAttemptNoWaveTrail(a);
                     }
                 }
                 if (fNext.y < f.y) { // Falling
@@ -5212,13 +5216,13 @@ private:
                         if (pc.spiderState != IconAnimationState::Jump) {
                             ghost->m_spiderSprite->runAnimation("jump_loop");
                             pc.spiderState = IconAnimationState::Jump;
-                            updateOpacityForAttempt(a, a.opacity, true);
+                            refreshOpacityForAttemptNoWaveTrail(a);
                         }
                     }
                     else if (pc.spiderState != IconAnimationState::Fall) {
                         ghost->m_spiderSprite->runAnimation("fall_loop");
                         pc.spiderState = IconAnimationState::Fall;
-                        updateOpacityForAttempt(a, a.opacity, true);
+                        refreshOpacityForAttemptNoWaveTrail(a);
                     }
                 }
                 else if (fNext.y > f.y) { // Jumping
@@ -5226,13 +5230,13 @@ private:
                         if (pc.spiderState != IconAnimationState::Jump) {
                             ghost->m_spiderSprite->runAnimation("fall_loop");
                             pc.spiderState = IconAnimationState::Jump;
-                            updateOpacityForAttempt(a, a.opacity, true);
+                            refreshOpacityForAttemptNoWaveTrail(a);
                         }
                     }
                     else if (pc.spiderState != IconAnimationState::Fall) {
                         ghost->m_spiderSprite->runAnimation("jump_loop");
                         pc.spiderState = IconAnimationState::Fall;
-                        updateOpacityForAttempt(a, a.opacity, true);
+                        refreshOpacityForAttemptNoWaveTrail(a);
                     }
                 }
             }
@@ -5244,7 +5248,7 @@ private:
                     if (pc.robotState != IconAnimationState::Idle) {
                         ghost->m_robotSprite->runAnimation("idle01");
                         pc.robotState = IconAnimationState::Idle;
-                        updateOpacityForAttempt(a, a.opacity, true);
+                        refreshOpacityForAttemptNoWaveTrail(a);
                     }
                 }
                 else {
@@ -5253,7 +5257,7 @@ private:
                     if (pc.robotState != IconAnimationState::Run) {
                         ghost->m_robotSprite->runAnimation("run");
                         pc.robotState = IconAnimationState::Run;
-                        updateOpacityForAttempt(a, a.opacity, true);
+                        refreshOpacityForAttemptNoWaveTrail(a);
                     }
                 }
                 if (fNext.y < f.y) { // Falling
@@ -5263,7 +5267,7 @@ private:
                         if (pc.robotState != IconAnimationState::Jump) {
                             ghost->m_robotSprite->runAnimation("jump_loop");
                             pc.robotState = IconAnimationState::Jump;
-                            updateOpacityForAttempt(a, a.opacity, true);
+                            refreshOpacityForAttemptNoWaveTrail(a);
                         }
                     }
                     //else if (pc.robotState != RobotState::Fall) 
@@ -5271,7 +5275,7 @@ private:
                     else if (pc.robotState != IconAnimationState::Fall) {
                         ghost->m_robotSprite->runAnimation("fall_loop");
                         pc.robotState = IconAnimationState::Fall;
-                        updateOpacityForAttempt(a, a.opacity, true);
+                        refreshOpacityForAttemptNoWaveTrail(a);
                     }
                 }
                 else if (fNext.y > f.y) { // Jumping
@@ -5281,7 +5285,7 @@ private:
                         if (pc.robotState != IconAnimationState::Jump) {
                             ghost->m_robotSprite->runAnimation("fall_loop");
                             pc.robotState = IconAnimationState::Jump;
-                            updateOpacityForAttempt(a, a.opacity, true);
+                            refreshOpacityForAttemptNoWaveTrail(a);
                         }
                     }
                     //else if (pc.robotState != RobotState::Fall) 
@@ -5289,7 +5293,7 @@ private:
                     else if (pc.robotState != IconAnimationState::Fall) {
                         ghost->m_robotSprite->runAnimation("jump_loop");
                         pc.robotState = IconAnimationState::Fall;
-                        updateOpacityForAttempt(a, a.opacity, true);
+                        refreshOpacityForAttemptNoWaveTrail(a);
                     }
                 }
             }
@@ -5308,10 +5312,10 @@ private:
                         trail->setVisible(false);
                         trail->setOpacity(0);
                         trailActive = false;
-                    } //else if (trail) {
-                    //    trail->setVisible(false);
-                    //    trail->setOpacity(0);
-                    //}
+                    } else if (trail) {
+                        trail->setVisible(false);
+                        trail->setOpacity(0);
+                    }
                 } else {
                     if (!trailActive) {
                         // hardResetWaveTrail(ghost);
