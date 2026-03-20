@@ -836,7 +836,34 @@ public:
     bool isPlayerFrozen() const { return m_freezePlayerXAtEnd; }
 
     void resetAttemptPreloadState_(Attempt& a, int idx) {
+        (void)idx;
+
+        if (a.g1) a.setP1Visible(false, true);
+        if (a.g2) a.setP2Visible(false, true);
+
         a.preloaded = false;
+        a.needsVisualSetup = false;
+
+        a.resetPlayback();
+
+        a.p1Visible = false;
+        a.p2Visible = false;
+        a.last1 = PoseCache{};
+        a.last2 = PoseCache{};
+
+        a.g1CurMode = IconType::Cube;
+        a.g2CurMode = IconType::Cube;
+
+        a.g1 = nullptr;
+        a.g2 = nullptr;
+        a.g1Idx = -1;
+        a.g2Idx = -1;
+    }
+
+    void clearAllAttemptPreloadState_() {
+        for (size_t i = 0; i < attempts.size(); ++i) {
+            resetAttemptPreloadState_(attempts[i], static_cast<int>(i));
+        }
     }
 
     void clearAttemptPreloadStateForCurrentSelection_() {
@@ -857,12 +884,17 @@ public:
         m_preloadedIndices.clear();
         m_preloadedSet.clear();
         practiceAttemptReplayIndex.clear();
+        m_attemptsPreloadedTotal = 0;
+
         m_playerObjectPool.clearOwners(true);
-            attemptBuffer.clear();
-            m_primedIndices.clear();
-            m_primedSet.clear();
-            m_wantToPrimeIndices.clear();
-            m_wantToPrimeSet.clear();
+        clearAllAttemptPreloadState_();
+
+        attemptBuffer.clear();
+        m_primedIndices.clear();
+        m_primedSet.clear();
+        m_wantToPrimeIndices.clear();
+        m_wantToPrimeSet.clear();
+
         if (!ignoreStopPlayback) {
             stopReplay();
             playback = false;
