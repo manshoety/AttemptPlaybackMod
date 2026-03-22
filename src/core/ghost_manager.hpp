@@ -2826,29 +2826,22 @@ public:
         forcePlayersVisible_();
         clearHeldInputs_();
 
-        if (enabled) {
-            m_practiceCompositeOwnerSerial = -1;
-            m_current.practiceAttempt = true;
+        if (!recordingBlocked) {
+            if (enabled) {
+                m_practiceCompositeOwnerSerial = -1;
+                m_current.practiceAttempt = true;
 
-            m_checkpointMgr.createNewSession();
+                m_checkpointMgr.createNewSession();
+                m_pendingRearm = false;
+            }
+            else {
+                m_checkpointMgr.freezeForReplay();
 
-            /*
-            if (recording && recordInPractice) {
-                const PracticeSession* session = m_checkpointMgr.getPath().activeSession();
-                if (session) {
-                    log::info("[Practice] Started recording for new session id={}", session->sessionId);
-                }
-            }*/
+                saveCurrentAttemptNow();
+                flushPendingSaves_();
 
-            m_pendingRearm = false;
-        }
-        else {
-            m_checkpointMgr.freezeForReplay();
-
-            saveCurrentAttemptNow();
-            flushPendingSaves_();
-
-            m_pendingRearm = true;
+                m_pendingRearm = true;
+            }
         }
 
         m_prevPractice = enabled;
@@ -3054,8 +3047,6 @@ public:
         const float px2 = playerX2_();
 
         // geode::log::warn("[applySegmentBasedReplay_] updateFreezeX");
-
-        updateFreezePlayerX_();
         
         if (m_replayKind == ReplayKind::BestSingle) {
             // geode::log::warn("[applySegmentBasedReplay_] ReplayKind::BestSingle");
@@ -3111,6 +3102,8 @@ public:
                 applyFrameToPlayer_Only_(m_pl->m_player2, m_currentOwner->p2, idx2, px2, false, false);
             }
         }
+
+        updateFreezePlayerX_();
     }
 
     void recordUpdate(bool isPlayer1) {
