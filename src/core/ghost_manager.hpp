@@ -1380,6 +1380,12 @@ public:
         }
     }
     void setRecordingEnabled(bool on) { if (on != recording) toggleRecording(); }
+    void setRecordingBlocked(bool on) { 
+        recordingBlocked = on; 
+        m_current = Attempt{};
+        restartLevel();
+    }
+    bool isRecordingBlocked() const { return recordingBlocked; }
     bool isInterpolationEnabled() const { return m_useInterpolation; }
     void setInterpolationEnabled(bool on) { m_useInterpolation = on; }
     bool isGhostsExplodeEnabled() const { return m_ghostsExplode; }
@@ -1548,6 +1554,7 @@ public:
         m_ghostsExplode = mod->getSavedValue<bool>("ghosts-explode");
         m_ghostsExplodeSFX = mod->getSavedValue<bool>("ghosts-explode-sfx");
         m_useCustomExplodeSounds = mod->getSavedValue<bool>("custom-ghosts-explode-sfx");
+        recordingBlocked = mod->getSavedValue<bool>("recording-blocked");
 
         //m_useInterpolation = mod->getSavedValue<bool>("interp-enabled");
         m_useInterpolation = false;
@@ -1562,6 +1569,7 @@ public:
         if (!mod->hasSavedValue("ghosts-explode-sfx")) m_ghostsExplodeSFX = true;
         if (!mod->hasSavedValue("custom-ghosts-explode-sfx")) m_useCustomExplodeSounds = false;
         if (!mod->hasSavedValue("randomIcons-enabled")) m_randomIcons = false;
+        if (!mod->hasSavedValue("recording-blocked")) recordingBlocked = false;
         if (!mod->hasSavedValue("ReplayPreventCompletion-enabled")) m_pauseGameAtTheEndOfReplayBot = false;
         m_pauseGameAtTheEndOfReplayBot = false;
 
@@ -1743,7 +1751,7 @@ public:
         m_justDied = true;
 
         if (m_pl->m_isPracticeMode) {
-            if (recording && recordInPractice && !m_current.p1.empty()) {
+            if (recording && !recordingBlocked && recordInPractice && !m_current.p1.empty()) {
                 double startTime = m_current.baseTimeOffset;
                 float startX = m_current.p1.front().x;
                 float endX = m_current.p1.back().x;
@@ -1767,14 +1775,14 @@ public:
                 );
             }
 
-            if (recording && recordInPractice && !m_current.p1.empty() && !block_attempt_push_on_recording_start) {
+            if (recording && !recordingBlocked && recordInPractice && !m_current.p1.empty() && !block_attempt_push_on_recording_start) {
                 pushAttempt(std::move(m_current));
             }
 
             return;
         }
 
-        if (recording && !m_current.p1.empty() && !block_attempt_push_on_recording_start) {
+        if (recording && !recordingBlocked && !m_current.p1.empty() && !block_attempt_push_on_recording_start) {
             pushAttempt(std::move(m_current));
         }
     }
@@ -1794,7 +1802,7 @@ public:
         //log::info("player x: {}, y: {}", m_pl->m_player1->m_positionX, m_pl->m_player1->m_positionY);
         //log::info("playerV2 x: {}", playerX_());
 
-        if (m_pl && m_pl->m_isPracticeMode && recording) {
+        if (m_pl && m_pl->m_isPracticeMode && recording && !recordingBlocked) {
             // Check for start position switch (end recording if so)
             // PLAYER X IS WEIRD AND IS THE DEFAULT START NOT THE CORRECT PLAYER START (maybe delay 1 frame?)
             //Checkpoint* currentCheckpoint = m_checkpointMgr.getCurrentCheckpoint();
@@ -1838,7 +1846,7 @@ public:
         }
         
         // Will still push on the attempt you switched start pos on
-        if (recording && !m_current.p1.empty()) {
+        if (recording && !recordingBlocked && !m_current.p1.empty()) {
             pushAttempt(std::move(m_current));
         }
 
@@ -2073,7 +2081,7 @@ public:
             const size_t p1Count = m_current.p1.size();
             const size_t p2Count = m_current.p2.size();
 
-            if (m_pl && m_pl->m_isPracticeMode && recording && recordInPractice) {
+            if (m_pl && m_pl->m_isPracticeMode && recording && !recordingBlocked && recordInPractice) {
                 double startTime = m_current.baseTimeOffset;
                 float startX = m_current.p1.front().x;
 
@@ -2105,7 +2113,7 @@ public:
 
     void saveCurrentAttemptNow() {
         if (botActive || playback) return;
-        if (!recording) return;
+        if (!recording || recordingBlocked) return;
 
         // Don't save practice attempts unless explicitly enabled.
         if (m_pl && m_pl->m_isPracticeMode && !recordInPractice) {
@@ -2155,7 +2163,7 @@ public:
         if (recording) {
             if (m_pl) {
                 block_attempt_push_on_recording_start = true;
-                m_pl->resetLevel();
+                restartLevel();
                 block_attempt_push_on_recording_start = false;
             }
         }
@@ -2463,7 +2471,7 @@ public:
         if (isPracticeMode()) togglePracticeMode(false);
 
         block_attempt_push_on_recording_start = true;
-        m_pl->resetLevel();
+        restartLevel();
         block_attempt_push_on_recording_start = false;
 
         m_currentReplayStartPos.x = m_pl->m_player1->m_positionX;
@@ -2574,7 +2582,7 @@ public:
             m_freezePlayerYP2 = 0.f;
         }
         
-        m_pl->resetLevel();
+        restartLevel();
     }
 
     void startReplayBest() {
@@ -2600,7 +2608,7 @@ public:
         botActive = false;
         playback = false;
         
-        m_pl->resetLevel();
+        restartLevel();
 
         m_currentReplayStartPos.x = m_pl->m_player1->m_positionX;
         m_currentReplayStartPos.y = m_pl->m_player1->m_positionY;
@@ -2675,7 +2683,7 @@ public:
         m_justStartedBot = true;
 
         //log::info("[Bot] startReplayBest: calling final resetLevel()");
-        m_pl->resetLevel();
+        restartLevel();
         //log::info("[Bot] startReplayBest: complete, botActive={}", botActive);
     }
 
@@ -2805,7 +2813,7 @@ public:
 
         m_freezeRemoveCheckpointDuringCompletionCleanup = true;
 
-        if (recording && recordInPractice) {
+        if (recording && !recordingBlocked && recordInPractice) {
             m_checkpointMgr.onExitEarly();
         }
 
@@ -3119,7 +3127,7 @@ public:
         }
 
         const bool isPractice = m_pl->m_isPracticeMode;
-        const bool shouldRecord = recording && (!isPractice || recordInPractice);
+        const bool shouldRecord = recording && !recordingBlocked && (!isPractice || recordInPractice);
 
         if (shouldRecord) {
             recordCurrentFrame_(isPlayer1);
@@ -3667,6 +3675,7 @@ private:
     size_t m_lastEmitIdx2 = 0;
 
     bool recording = true;
+    bool recordingBlocked = false;
     bool playback = false;
     bool m_playbackArmed = false;
     bool block_attempt_push_on_recording_start = false;

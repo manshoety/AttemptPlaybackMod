@@ -322,6 +322,16 @@ void PlaybackModMenu::buildTemplateUI_() {
                                 .pos(38.f, 5.f)
                                 .anchorPoint(0.f, 0.f)
                                 .scale(0.725f)
+                        ),
+                    Build<CCMenuItemToggler>(mkToggler(menu_selector(PlaybackModMenu::onToggleBlockRecording)))
+                        .id("BlockRecordingToggle")
+                        .store(m_tgBlockRecording)
+                        .scale(1.f)
+                        .children(
+                            Build<CCLabelBMFont>::create("Disable Recording", "bigFont.fnt")
+                                .pos(38.f, 5.f)
+                                .anchorPoint(0.f, 0.f)
+                                .scale(0.725f)
                         )
                         /*
                     Build<CCMenuItemToggler>(mkToggler(menu_selector(PlaybackModMenu::onToggleReplayPreventCompletion)))
@@ -347,7 +357,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.7", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.8", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
@@ -699,6 +709,14 @@ void PlaybackModMenu::onToggleRandomIcons(CCObject*) {
     G.setRandomIconsEnabled(on);
 }
 
+void PlaybackModMenu::onToggleBlockRecording(CCObject*) {
+    auto& G = Ghosts::I();
+    bool on = !G.isRecordingBlocked();
+    Mod::get()->setSavedValue("recording-blocked", on);
+    Mod::get()->setSettingValue("recording-blocked", on);
+    G.setRecordingBlocked(on);
+}
+
 void PlaybackModMenu::onToggleGhostsExplodeSFX(CCObject*) {
     auto& G = Ghosts::I();
     bool on = !G.isGhostsExplodeSFXEnabled();
@@ -835,6 +853,7 @@ void PlaybackModMenu::refreshToggles_() {
     if (m_tgRandomIcons) m_tgRandomIcons->toggle(G.isRandomIconsEnabled());
     if (m_tgGhostsExplode) m_tgGhostsExplode->toggle(G.isGhostsExplodeEnabled());
     if (m_tgGhostsExplodeSFX) m_tgGhostsExplodeSFX->toggle(G.isGhostsExplodeSFXEnabled());
+    if (m_tgBlockRecording) m_tgBlockRecording->toggle(G.isRecordingBlocked());
     if (m_tgReplayPreventCompletion) m_tgReplayPreventCompletion->toggle(G.isReplayPreventCompletionEnabled());
 }
 

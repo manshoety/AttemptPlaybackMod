@@ -68,6 +68,7 @@ private:
     CCMenuItemToggler* m_tgRandomIcons = nullptr;
     CCMenuItemToggler* m_tgGhostsExplode = nullptr;
     CCMenuItemToggler* m_tgGhostsExplodeSFX = nullptr;
+    CCMenuItemToggler* m_tgBlockRecording = nullptr;
     CCMenuItemToggler* m_tgReplayPreventCompletion    = nullptr;
 
     Slider* m_opacitySlider = nullptr;
@@ -91,6 +92,7 @@ private:
     void onToggleRandomIcons(cocos2d::CCObject*);
     void onToggleGhostsExplode(cocos2d::CCObject*);
     void onToggleGhostsExplodeSFX(cocos2d::CCObject*);
+    void onToggleBlockRecording(cocos2d::CCObject*);
     void onToggleReplayPreventCompletion(cocos2d::CCObject*);
     void onCycleGhostColors(cocos2d::CCObject*);
     void onOpenColorSelector(cocos2d::CCObject*);
