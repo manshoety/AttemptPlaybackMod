@@ -357,7 +357,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.10", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.11", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
@@ -837,7 +837,7 @@ void PlaybackModMenu::onSliderInt(CCObject*) {
 }
 
 std::pair<std::string, float> PlaybackModMenu::sliderKeyAndValue_(CCObject* obj) {
-    auto* n = dynamic_cast<cocos2d::CCNode*>(obj);
+    auto* n = typeinfo_cast<cocos2d::CCNode*>(obj);
     while (n && !typeinfo_cast<Slider*>(n)) n = n->getParent();
     if (!n) return {"", 0.f};
 
@@ -1078,7 +1078,7 @@ int PreloadAttemptsPopup::sanitizeParseClamp_() {
     long long v = 0;
 
     auto parsed = geode::utils::numFromString<long long>(digits);
-    if (parsed) {
+    if (parsed.isOk()) {
         v = parsed.unwrap();
     }
     else {
@@ -1573,7 +1573,7 @@ float PlaybackSettingsPopup::sanitizeParseClampPercent_() {
 
     double v = 0.0;
     auto parsed = geode::utils::numFromString<double>(s);
-    if (parsed) {
+    if (parsed.isOk()) {
         v = parsed.unwrap();
     }
     else {
@@ -1626,7 +1626,7 @@ int PlaybackSettingsPopup::sanitizeParseClampMaxVisible_() {
 
     long long v = 0;
     auto parsed = geode::utils::numFromString<long long>(digits);
-    if (parsed) {
+    if (parsed.isOk()) {
         v = parsed.unwrap();
     }
     else {

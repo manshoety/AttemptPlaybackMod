@@ -409,7 +409,7 @@ public:
 
     std::string getCurrentLevelSaveFileName() const {
         auto path = fileForLevel_(m_levelIDOnAttach);
-        return path.filename().string();
+        return geode::utils::string::pathToString(path.filename());
     }
 
     void ensureRandomColorMaskLoaded_() {
@@ -4356,39 +4356,78 @@ private:
         if (m_attemptsDir.empty()) {
             auto base = Mod::get()->getSaveDir();
             m_attemptsDir = base / "attempts";
+
             std::error_code ec;
             std::filesystem::create_directories(m_attemptsDir, ec);
+            if (ec) {
+                log::warn(
+                    "[SAVE FILE] create_directories failed: {} ({})",
+                    geode::utils::string::pathToString(m_attemptsDir),
+                    ec.message()
+                );
+            }
         }
         return m_attemptsDir;
     }
 
     std::filesystem::path fileForLevel_(int levelID) const {
         auto dir = attemptsDir_();
+
         if (levelID < 120 && !m_customSaveId.empty()) {
-            //log::info("[SAVE FILE] {}", dir / (m_customSaveId + "_attempts.apx"));
             return dir / (m_customSaveId + "_attempts.apx");
         }
-        //log::info("[SAVE FILE] {}", dir / (std::to_string(levelID) + "_attempts.apx"));
+
         return dir / (std::to_string(levelID) + "_attempts.apx");
     }
 
     void ensureHeader_(std::filesystem::path const& path) {
         std::error_code ec;
-        const bool exists = std::filesystem::exists(path, ec);
-        const uintmax_t fsz = exists ? std::filesystem::file_size(path, ec) : 0;
 
-        if (exists && fsz >= sizeof(APXHeader)) {
-            // Check version of existing file
-            std::ifstream checkFile(path, std::ios::binary);
-            APXHeader existing{};
-            checkFile.read(reinterpret_cast<char*>(&existing), sizeof(existing));
-            if (checkFile && std::string(existing.magic, 4) == "APX2") {
-                // File exists with valid header - don't overwrite
+        ec.clear();
+        const bool exists = std::filesystem::exists(path, ec);
+        if (ec) {
+            log::warn(
+                "[SAVE FILE] exists failed for {}: {}",
+                geode::utils::string::pathToString(path),
+                ec.message()
+            );
+            return;
+        }
+
+        uintmax_t fsz = 0;
+        if (exists) {
+            ec.clear();
+            fsz = std::filesystem::file_size(path, ec);
+            if (ec) {
+                log::warn(
+                    "[SAVE FILE] file_size failed for {}: {}",
+                    geode::utils::string::pathToString(path),
+                    ec.message()
+                );
                 return;
             }
         }
 
+        if (exists && fsz >= sizeof(APXHeader)) {
+            std::ifstream checkFile(path, std::ios::binary);
+            if (checkFile) {
+                APXHeader existing{};
+                checkFile.read(reinterpret_cast<char*>(&existing), sizeof(existing));
+                if (checkFile && std::string(existing.magic, 4) == "APX2") {
+                    return;
+                }
+            }
+        }
+
         std::ofstream hout(path, std::ios::binary | std::ios::trunc);
+        if (!hout) {
+            log::warn(
+                "[SAVE FILE] failed to open header file for write: {}",
+                geode::utils::string::pathToString(path)
+            );
+            return;
+        }
+
         APXHeader h{};
         std::memcpy(h.magic, "APX2", 4);
         hout.write(reinterpret_cast<const char*>(&h), sizeof(h));
@@ -5647,7 +5686,7 @@ private:
 
     static void applyOpacityTree(cocos2d::CCNode* n, GLubyte o) {
         if (!n) return;
-        if (auto* rgba = dynamic_cast<cocos2d::CCRGBAProtocol*>(n)) rgba->setOpacity(o);
+        if (auto* rgba = typeinfo_cast<cocos2d::CCRGBAProtocol*>(n)) rgba->setOpacity(o);
         if (auto* kids = n->getChildren()) {
             for (unsigned i = 0; i < kids->count(); ++i) {
                 applyOpacityTree(static_cast<cocos2d::CCNode*>(kids->objectAtIndex(i)), o);

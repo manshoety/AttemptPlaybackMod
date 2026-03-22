@@ -1,36 +1,53 @@
-// sfx_handling.hpp
 #pragma once
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <deque>
 #include <filesystem>
 #include <optional>
 #include <random>
 #include <string>
 #include <vector>
-#include <chrono>
-#include <Geode/Geode.hpp>
-#include <Geode/loader/Log.hpp>
-#include <Geode/binding/FMODAudioEngine.hpp>
 
+#include <Geode/Geode.hpp>
+#include <Geode/binding/FMODAudioEngine.hpp>
+#include <Geode/loader/Log.hpp>
+#include <Geode/utils/string.hpp>
 
 static std::filesystem::path explodeSfxDir_() {
-    auto dir = Mod::get()->getSaveDir() / "ghost-explode-sfx";
+    auto* mod = Mod::get();
+    if (!mod) {
+        log::warn("[GhostSFX] Mod::get() was null");
+        return {};
+    }
+
+    auto dir = mod->getSaveDir() / "ghost-explode-sfx";
+
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     if (ec) {
-        log::warn("[GhostSFX] create_directories failed: {} ({})",
-            utils::string::pathToString(dir), ec.message());
+        log::warn(
+            "[GhostSFX] create_directories failed: {} ({})",
+            geode::utils::string::pathToString(dir),
+            ec.message()
+        );
     }
+
     return dir;
+}
+
+static std::string lowerASCII_(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return s;
 }
 
 static bool isAudioFile_(std::filesystem::path const& p) {
     if (!p.has_extension()) return false;
-    std::string ext = p.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(),
-        [](unsigned char c) { return (char)std::tolower(c); });
+
+    auto ext = lowerASCII_(geode::utils::string::pathToString(p.extension()));
     return ext == ".ogg" || ext == ".mp3" || ext == ".wav";
 }
 
@@ -39,38 +56,68 @@ static void refreshCustomExplodeSfx_(
     std::filesystem::file_time_type& lastDirWrite
 ) {
     auto dir = explodeSfxDir_();
+    if (dir.empty()) {
+        out.clear();
+        return;
+    }
 
     std::error_code ec;
     auto t = std::filesystem::last_write_time(dir, ec);
-    if (!ec && !out.empty() && t == lastDirWrite) {
-        return; // no changes since last scan
+    if (ec) {
+        log::warn(
+            "[GhostSFX] last_write_time failed for {}: {}",
+            geode::utils::string::pathToString(dir),
+            ec.message()
+        );
     }
-    if (!ec) lastDirWrite = t;
+    else if (!out.empty() && t == lastDirWrite) {
+        return;
+    }
+    else {
+        lastDirWrite = t;
+    }
 
     out.clear();
 
-    for (auto const& ent : std::filesystem::directory_iterator(dir, ec)) {
-        if (ec) break;
-        if (!ent.is_regular_file()) continue;
+    ec.clear();
+    std::filesystem::directory_iterator it(dir, ec);
+    std::filesystem::directory_iterator end;
+    if (ec) {
+        log::warn(
+            "[GhostSFX] directory_iterator failed for {}: {}",
+            geode::utils::string::pathToString(dir),
+            ec.message()
+        );
+        return;
+    }
+
+    for (; it != end; it.increment(ec)) {
+        if (ec) {
+            log::warn(
+                "[GhostSFX] directory iteration failed for {}: {}",
+                geode::utils::string::pathToString(dir),
+                ec.message()
+            );
+            break;
+        }
+
+        auto const& ent = *it;
+
+        std::error_code fileEc;
+        if (!ent.is_regular_file(fileEc) || fileEc) {
+            continue;
+        }
 
         auto const& p = ent.path();
         if (!isAudioFile_(p)) continue;
 
-        out.push_back(utils::string::pathToString(p)); // absolute path string
+        out.push_back(geode::utils::string::pathToString(p));
     }
 
-    // Stable ordering (nice for debugging)
     std::sort(out.begin(), out.end());
 }
 
-static std::string lowerASCII_(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
-        return (char)std::tolower(c);
-    });
-    return s;
-}
-
-// Find a resource file anywhere under the mod's runtime resources directory by *filename*.
+// Find a resource file anywhere under the mod's runtime resources directory by filename.
 static std::optional<std::filesystem::path> findModResourceByFilename_(
     std::filesystem::path const& resDir,
     std::string const& filename
@@ -78,18 +125,40 @@ static std::optional<std::filesystem::path> findModResourceByFilename_(
     std::error_code ec;
     const std::string want = lowerASCII_(filename);
 
-    for (auto it = std::filesystem::recursive_directory_iterator(resDir, ec);
-         !ec && it != std::filesystem::recursive_directory_iterator();
-         ++it)
-    {
-        const auto& ent = *it;
-        if (!ent.is_regular_file(ec)) continue;
+    std::filesystem::recursive_directory_iterator it(resDir, ec);
+    std::filesystem::recursive_directory_iterator end;
+    if (ec) {
+        log::warn(
+            "[GhostSFX] recursive_directory_iterator failed for {}: {}",
+            geode::utils::string::pathToString(resDir),
+            ec.message()
+        );
+        return std::nullopt;
+    }
+
+    for (; it != end; it.increment(ec)) {
+        if (ec) {
+            log::warn(
+                "[GhostSFX] recursive iteration failed for {}: {}",
+                geode::utils::string::pathToString(resDir),
+                ec.message()
+            );
+            break;
+        }
+
+        auto const& ent = *it;
+
+        std::error_code fileEc;
+        if (!ent.is_regular_file(fileEc) || fileEc) {
+            continue;
+        }
 
         auto p = ent.path();
-        if (lowerASCII_(p.filename().string()) == want) {
+        if (lowerASCII_(geode::utils::string::pathToString(p.filename())) == want) {
             return p;
         }
     }
+
     return std::nullopt;
 }
 
@@ -110,6 +179,8 @@ static ExplodeSfxSyncResult syncBundledExplodeSfxIntoCustomDir_(
     if (!mod) return r;
 
     const auto dstDir = explodeSfxDir_();
+    if (dstDir.empty()) return r;
+
     const auto resDir = mod->getResourcesDir();
 
     static constexpr const char* kSeedFiles[] = {
@@ -127,18 +198,33 @@ static ExplodeSfxSyncResult syncBundledExplodeSfxIntoCustomDir_(
     for (auto* name : kSeedFiles) {
         std::filesystem::path dst = dstDir / name;
 
-        // Decide what copy mode to use
         std::filesystem::copy_options mode = std::filesystem::copy_options::skip_existing;
-
         std::error_code ec;
 
-        const bool exists = std::filesystem::exists(dst, ec) && !ec;
+        ec.clear();
+        const bool exists = std::filesystem::exists(dst, ec);
+        if (ec) {
+            log::warn(
+                "[GhostSFX] exists failed for {}: {}",
+                geode::utils::string::pathToString(dst),
+                ec.message()
+            );
+            continue;
+        }
+
         bool shouldOverwrite = overwriteExisting;
 
         if (!shouldOverwrite && exists && overwriteIfZeroBytes) {
             ec.clear();
             auto sz = std::filesystem::file_size(dst, ec);
-            if (!ec && sz == 0) {
+            if (ec) {
+                log::warn(
+                    "[GhostSFX] file_size failed for {}: {}",
+                    geode::utils::string::pathToString(dst),
+                    ec.message()
+                );
+            }
+            else if (sz == 0) {
                 shouldOverwrite = true;
             }
         }
@@ -152,10 +238,19 @@ static ExplodeSfxSyncResult syncBundledExplodeSfxIntoCustomDir_(
             mode = std::filesystem::copy_options::overwrite_existing;
         }
 
-        // Find source (direct or recursive)
         std::filesystem::path src = resDir / name;
         ec.clear();
-        if (!(std::filesystem::exists(src, ec) && !ec)) {
+        const bool srcExists = std::filesystem::exists(src, ec);
+        if (ec) {
+            log::warn(
+                "[GhostSFX] exists failed for {}: {}",
+                geode::utils::string::pathToString(src),
+                ec.message()
+            );
+            continue;
+        }
+
+        if (!srcExists) {
             auto found = findModResourceByFilename_(resDir, name);
             if (!found) {
                 r.missing++;
@@ -166,14 +261,23 @@ static ExplodeSfxSyncResult syncBundledExplodeSfxIntoCustomDir_(
         }
 
         ec.clear();
-        std::filesystem::copy_file(src, dst, mode, ec);
+        bool copied = std::filesystem::copy_file(src, dst, mode, ec);
         if (ec) {
-            log::warn("[GhostSFX] copy_file failed '{}' -> '{}': {}",
-                utils::string::pathToString(src),
-                utils::string::pathToString(dst),
+            log::warn(
+                "[GhostSFX] copy_file failed '{}' -> '{}': {}",
+                geode::utils::string::pathToString(src),
+                geode::utils::string::pathToString(dst),
                 ec.message()
             );
-            // treat as "missing"/failed copy, but keep counters stable
+            continue;
+        }
+
+        if (!copied) {
+            log::warn(
+                "[GhostSFX] copy_file returned false '{}' -> '{}'",
+                geode::utils::string::pathToString(src),
+                geode::utils::string::pathToString(dst)
+            );
             continue;
         }
 
@@ -191,12 +295,10 @@ static void seedDefaultCustomExplodeSfxOnce_() {
 
     static constexpr const char* kSeedKey = "seeded-custom-explode-sfx-v1";
 
-    // Already seeded?
     if (mod->hasSavedValue(kSeedKey) && mod->getSavedValue<bool>(kSeedKey)) {
         return;
     }
 
-    // If user already has any custom audio files, don't seed (avoid adding stuff on updates)
     std::vector<std::string> existing;
     std::filesystem::file_time_type dummy{};
     refreshCustomExplodeSfx_(existing, dummy);
@@ -206,15 +308,14 @@ static void seedDefaultCustomExplodeSfxOnce_() {
         return;
     }
 
-    // Seed (idempotent copy-missing behavior)
     auto res = syncBundledExplodeSfxIntoCustomDir_(
         /*overwriteExisting=*/false,
         /*overwriteIfZeroBytes=*/true
     );
+    (void)res;
 
     mod->setSavedValue(kSeedKey, true);
 }
-
 
 struct ActiveSfx {
     int channelID = 0;
@@ -227,15 +328,14 @@ public:
 
     void setMaxVoices(int n) { m_maxVoices = std::max(1, n); }
 
-    void play(const std::filesystem::path& path, float volume = 1.f, float pitch = 1.f) {
+    void play(std::filesystem::path const& path, float volume = 1.f, float pitch = 1.f) {
         auto* eng = FMODAudioEngine::sharedEngine();
         if (!eng) return;
 
         pruneDead_(eng);
 
-        const auto s = utils::string::pathToString(path);
+        const auto s = geode::utils::string::pathToString(path);
 
-        // No cache: always preload right before play
         eng->preloadEffect(s);
 
         while ((int)m_live.size() >= m_maxVoices) {
@@ -244,7 +344,7 @@ public:
         }
 
         const int channelID = eng->getNextChannelID();
-        const int effectID  = nextEffectID_();
+        const int effectID = nextEffectID_();
 
         eng->playEffectAdvanced(
             s,
@@ -273,7 +373,7 @@ public:
 
 private:
     void pruneDead_(FMODAudioEngine* eng) {
-        for (auto it = m_live.begin(); it != m_live.end(); ) {
+        for (auto it = m_live.begin(); it != m_live.end();) {
             FMOD::Channel* ch = eng->channelForChannelID(it->channelID);
             bool playing = false;
 
@@ -283,6 +383,7 @@ private:
                     continue;
                 }
             }
+
             it = m_live.erase(it);
         }
     }

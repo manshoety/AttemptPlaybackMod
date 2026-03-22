@@ -168,7 +168,7 @@ void GhostDistancePopup::layoutPreview_() {
 }
 
 void GhostDistancePopup::onSlide(CCObject* obj) {
-    auto* n = dynamic_cast<cocos2d::CCNode*>(obj);
+    auto* n = typeinfo_cast<cocos2d::CCNode*>(obj);
     while (n && !typeinfo_cast<Slider*>(n)) n = n->getParent();
     if (!n) return;
 

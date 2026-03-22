@@ -414,11 +414,17 @@ private:
 
     std::filesystem::path presetsDir_() const {
         auto dir = Mod::get()->getSaveDir() / "color-presets";
+
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
         if (ec) {
-            log::warn("[ColorPreset] create_directories failed: {} ({})", dir.string(), ec.message());
+            log::warn(
+                "[ColorPreset] create_directories failed: {} ({})",
+                geode::utils::string::pathToString(dir),
+                ec.message()
+            );
         }
+
         return dir;
     }
 
@@ -512,13 +518,17 @@ private:
                 }
 
                 std::error_code ec;
-                std::filesystem::create_directories(path.parent_path(), ec);
+                auto parent = path.parent_path();
+                if (!parent.empty()) {
+                    std::filesystem::create_directories(parent, ec);
 
-                if (ec) {
-                    log::warn("[ColorPreset] create_directories failed: {} ({})",
-                        geode::utils::string::pathToString(path.parent_path()),
-                        ec.message()
-                    );
+                    if (ec) {
+                        log::warn(
+                            "[ColorPreset] create_directories failed: {} ({})",
+                            geode::utils::string::pathToString(parent),
+                            ec.message()
+                        );
+                    }
                 }
 
                 auto wr = geode::utils::file::writeStringSafe(path, data);
