@@ -8,7 +8,7 @@
   },
   "id": "manshoety.attemptplayback",
   "name": "Attempt Playback",
-  "version": "v1.4.12",
+  "version": "v1.4.13",
   "developer": "manshoety",
   "description": "Allows you to see all past attempts as ghosts",
   "dependencies": {
@@ -22,7 +22,8 @@
     "content"
   ],
   "links": {
-    "source": "https://github.com/manshoety/AttemptPlaybackMod"
+    "source": "https://github.com/manshoety/AttemptPlaybackMod",
+    "community": "https://discord.gg/9MmXKBwvnA"
   },
   "settings": {
     "awesome-title": { "type": "title", "name": "Gamer Settings" },

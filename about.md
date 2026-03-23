@@ -14,6 +14,10 @@ Turn off Click Between Frames (during playback) to fix click state issues (neede
 
 Please do not switch start position while recording in practice mode as that will break the recording
 
+Frame Stepper currently breaks recordings
+
 # Limitations
+
+This mod is still early in developement so expect some bugs. Please report any bugs on [discord](https://discord.gg/9MmXKBwvnA) in the bug reports channel
 
 I have not tested platformer mode much so expect plenty of bugs. This mod is currently intended for calssic levels

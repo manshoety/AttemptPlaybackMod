@@ -136,7 +136,7 @@ protected:
                     .anchorPoint(0.5f, 0.5f)
                     .id("enable-all-button")
                     .pos(-234.f, -119.f)
-                    //.setSizeMult(kPopupButtonSizeMult)
+                    .scaleMult(kPopupButtonSizeMult)
                     .layout(Build<AnchorLayout>::create())
                     .children(
                         Build<CCLabelBMFont>::create("Enable all", "bigFont.fnt")

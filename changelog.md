@@ -1,6 +1,2 @@
-# 1.4.2
+# 1.4.13
 - We on Geode now!
-# 1.4.3
-- Default color mode: Player
-- Default random icons: false
-- Practice mode recording fix
