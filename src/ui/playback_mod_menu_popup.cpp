@@ -79,6 +79,12 @@ namespace {
     constexpr float kAttemptMbCost = 0.45f;
 }
 
+template <class T>static void showPopupNoElasticity_(T* popup) {
+    if (!popup) return;
+    popup->m_noElasticity = true;
+    popup->show();
+}
+
 PlaybackModMenu* PlaybackModMenu::create() {
     auto ret = new PlaybackModMenu();
     if (ret && ret->init(kPopupW, kPopupH)) {
@@ -93,7 +99,7 @@ PlaybackModMenu* PlaybackModMenu::create() {
 bool PlaybackModMenu::init(float width, float height) {
     if (!Popup::init(width, height))
         return false;
-    this->setID("playbackModMenu-popup");
+    this->setID("playbackModMenu-popup_spr");
 
     setTitle("");
 
@@ -109,22 +115,19 @@ bool PlaybackModMenu::init(float width, float height) {
     refreshToggles_();
     refreshColorsLabel_();
 
-    {
-        int v = 255;
-        auto* mod = Mod::get();
-        if (mod->hasSavedValue("ghost-opacity"))
-            v = (int)mod->getSavedValue<int64_t>("ghost-opacity");
-        v = std::clamp(v, 0, 255);
+    int v = 255;
+    auto* mod = Mod::get();
+    if (mod->hasSavedValue("ghost-opacity"))
+        v = (int)mod->getSavedValue<int64_t>("ghost-opacity");
+    v = std::clamp(v, 0, 255);
 
-        if (m_opacitySlider) {
-            m_opacitySlider->setValue(v / 255.f);
-        }
-        if (m_opacityLabel) {
-            m_opacityLabel->setString(("Ghost Opacity (" + std::to_string((int)(v/2.55)) + ")").c_str());
-        }
-        Ghosts::I().setOpacityVar((GLubyte)v);
-        
+    if (m_opacitySlider) {
+        m_opacitySlider->setValue(v / 255.f);
     }
+    if (m_opacityLabel) {
+        m_opacityLabel->setString(("Ghost Opacity (" + std::to_string((int)(v/2.55)) + ")").c_str());
+    }
+    Ghosts::I().setOpacityVar((GLubyte)v);
 
     cacheReplayButtons_();
     m_lastReplayingState = queryIsReplaying_();
@@ -153,21 +156,18 @@ void PlaybackModMenu::syncUIFromRuntime() {
     refreshReplayButtons_();
 }
 
+CCMenuItemToggler* mkToggler(CCObject* target, SEL_MenuHandler sel) {
+    auto on  = CCSprite::createWithSpriteFrameName("GJ_checkOn_001.png");
+    auto off = CCSprite::createWithSpriteFrameName("GJ_checkOff_001.png");
+    auto toggler = CCMenuItemToggler::create(off, on, target, sel);
+    toggler->setSizeMult(kPopupButtonSizeMult);
+    return toggler;
+}
+
 void PlaybackModMenu::buildTemplateUI_() {
     m_mainLayer->setLayout(AnchorLayout::create());
 
-    auto mkToggler = [&](SEL_MenuHandler sel) {
-        auto on  = CCSprite::createWithSpriteFrameName("GJ_checkOn_001.png");
-        auto off = CCSprite::createWithSpriteFrameName("GJ_checkOff_001.png");
-        return CCMenuItemToggler::create(off, on, this, sel);
-    };
-
-    CCSprite* gradient = CCSprite::create("GJ_gradientBG.png");
-    //if (!gradient) gradient = CCSprite::create("GJ_gradientBG-hd.png");
-    if (!gradient) {
-        log::warn("Failed to load GJ_gradientBG.png Using empty sprite.");
-        gradient = CCSprite::create();
-    }
+    CCSprite* gradient = createFullscreenGradient_();
 
     Build<CCMenu>::create()
         .contentSize(0.f, 0.f)
@@ -198,6 +198,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .intoMenuItem(this, menu_selector(PlaybackModMenu::onReplayBest))
                         .ignoreAnchorPointForPos(false)
                         .anchorPoint(0.5f, 0.5f)
+                        .scaleMult(kPopupButtonSizeMult)
                         .id("replay-best-button")
                         .layout(Build<AnchorLayout>::create())
                         .children(
@@ -215,7 +216,8 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .intoMenuItem(this, menu_selector(PlaybackModMenu::onReplayPractice))
                         .ignoreAnchorPointForPos(false)
                         .anchorPoint(0.5f, 0.5f)
-                        .id("text-button")
+                        .scaleMult(kPopupButtonSizeMult)
+                        .id("replay-practice-button")
                         .layout(Build<AnchorLayout>::create())
                         .children(
                             Build<CCLabelBMFont>::create("Replay Practice", "bigFont.fnt")
@@ -237,6 +239,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.5f, 0.5f)
                 .id("stop-replay-button")
                 .pos(0.f, 94.f)
+                .scaleMult(kPopupButtonSizeMult)
                 .visible(false)
                 .layout(Build<AnchorLayout>::create())
                 .children(
@@ -271,7 +274,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                     .autoGrow(0.f))
                 .children(
                     /*
-                    Build<CCMenuItemToggler>(mkToggler(menu_selector(PlaybackModMenu::onToggleRecording)))
+                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleRecording)))
                         .id("RecordingToggle")
                         .store(m_tgRecording)
                         .scale(1.f)
@@ -283,7 +286,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         ),*/
 
                     /*
-                    Build<CCMenuItemToggler>(mkToggler(menu_selector(PlaybackModMenu::onToggleInterpolation)))
+                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleInterpolation)))
                         .id("InterpolationToggle")
                         .store(m_tgInterp)
                         .scale(1.f)
@@ -293,7 +296,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                                 .anchorPoint(0.f, 0.f)
                                 .scale(0.725f)
                         ),*/
-                    Build<CCMenuItemToggler>(mkToggler(menu_selector(PlaybackModMenu::onToggleRandomIcons)))
+                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleRandomIcons)))
                         .id("RandomIconsToggle")
                         .store(m_tgRandomIcons)
                         .scale(1.f)
@@ -303,7 +306,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                                 .anchorPoint(0.f, 0.f)
                                 .scale(0.725f)
                         ),
-                    Build<CCMenuItemToggler>(mkToggler(menu_selector(PlaybackModMenu::onToggleGhostsExplodeSFX)))
+                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleGhostsExplodeSFX)))
                         .id("GhostsExplodeSFXToggle")
                         .store(m_tgGhostsExplodeSFX)
                         .scale(1.f)
@@ -313,7 +316,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                                 .anchorPoint(0.f, 0.f)
                                 .scale(0.725f)
                         ),
-                    Build<CCMenuItemToggler>(mkToggler(menu_selector(PlaybackModMenu::onToggleGhostsExplode)))
+                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleGhostsExplode)))
                         .id("GhostsExplodeToggle")
                         .store(m_tgGhostsExplode)
                         .scale(1.f)
@@ -323,7 +326,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                                 .anchorPoint(0.f, 0.f)
                                 .scale(0.725f)
                         ),
-                    Build<CCMenuItemToggler>(mkToggler(menu_selector(PlaybackModMenu::onToggleBlockRecording)))
+                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleBlockRecording)))
                         .id("BlockRecordingToggle")
                         .store(m_tgBlockRecording)
                         .scale(1.f)
@@ -334,7 +337,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                                 .scale(0.725f)
                         )
                         /*
-                    Build<CCMenuItemToggler>(mkToggler(menu_selector(PlaybackModMenu::onToggleReplayPreventCompletion)))
+                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleReplayPreventCompletion)))
                         .id("ReplayPreventCompletionToggle")
                         .store(m_tgReplayPreventCompletion)
                         .scale(1.f)
@@ -357,7 +360,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.11", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.12", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
@@ -371,7 +374,8 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .ignoreAnchorPointForPos(false)
                         .anchorPoint(0.5f, 0.5f)
                         .pos(-260.f, -118.f)
-                        .scale(0.8f)
+                        .scale(0.8f)/*not sure how to fix base scale being wrong when unpressed*/
+                        .scaleMult(kPopupButtonSizeMult)
                         .layoutOpts(Build<AxisLayoutOptions>::create()
                             .crossAlign(AxisAlignment::Start)
                         )
@@ -405,6 +409,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .intoMenuItem(this, menu_selector(PlaybackModMenu::onCycleGhostColors))
                         .ignoreAnchorPointForPos(false)
                         .anchorPoint(0.5f, 0.5f)
+                        .scaleMult(kPopupButtonSizeMult)
                         .layoutOpts(Build<AxisLayoutOptions>::create()
                             .crossAlign(AxisAlignment::Start)
                         )
@@ -425,6 +430,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .intoMenuItem(this, menu_selector(PlaybackModMenu::onOpenColorSelector))
                         .ignoreAnchorPointForPos(false)
                         .anchorPoint(0.5f, 0.5f)
+                        .scaleMult(kPopupButtonSizeMult)
                         .layoutOpts(Build<AxisLayoutOptions>::create()
                             .crossAlign(AxisAlignment::Start)
                         )
@@ -444,6 +450,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .intoMenuItem(this, menu_selector(PlaybackModMenu::onOpenGhostDistance))
                         .ignoreAnchorPointForPos(false)
                         .anchorPoint(0.5f, 0.5f)
+                        .scaleMult(kPopupButtonSizeMult)
                         .pos(-100.f, 0)
                         .layoutOpts(Build<AxisLayoutOptions>::create()
                             .crossAlign(AxisAlignment::Start)
@@ -463,6 +470,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .intoMenuItem(this, menu_selector(PlaybackModMenu::onFreeRobux))
                         .ignoreAnchorPointForPos(false)
                         .anchorPoint(0.5f, 0.5f)
+                        .scaleMult(kPopupButtonSizeMult)
                         .pos(-100.f, 0)
                         .layoutOpts(Build<AxisLayoutOptions>::create()
                             .crossAlign(AxisAlignment::Start)
@@ -481,6 +489,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .intoMenuItem(this, menu_selector(PlaybackModMenu::onDeleteSaveFile))
                         .ignoreAnchorPointForPos(false)
                         .anchorPoint(0.5f, 0.5f)
+                        .scaleMult(kPopupButtonSizeMult)
                         .pos(-100.f, 0)
                         .layoutOpts(Build<AxisLayoutOptions>::create()
                             .crossAlign(AxisAlignment::Start)
@@ -505,6 +514,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .intoMenuItem(this, menu_selector(PlaybackModMenu::onExitButton))
                 .ignoreAnchorPointForPos(false)
                 .anchorPoint(0.f, 1.f)
+                .scaleMult(kPopupButtonSizeMult)
                 .id("ExitButton")
                 .pos(-283.f, 158.f)
                 .scale(0.75f)
@@ -515,15 +525,6 @@ void PlaybackModMenu::buildTemplateUI_() {
         .parentAtPos(m_mainLayer, Anchor::Center)
         .collect();
 
-        if (auto* btn = typeinfo_cast<CCMenuItemSpriteExtra*>(
-            m_mainLayer->getChildByIDRecursive("PlaybackSettingsButton")
-        )) {
-            btn->stopAllActions();
-
-            btn->m_baseScale = btn->getScale();
-            btn->setScale(btn->m_baseScale);
-        }
-
         cacheReplayButtons_();
         refreshReplayButtons_();
 }
@@ -532,7 +533,8 @@ void PlaybackModMenu::onReplayBest(CCObject*) {
     replay_ui_detail::setFallbackFlag(true);
 
     if (auto* p = PreloadAttemptsPopup::create(ReplayKind::BestSingle)) {
-        CCDirector::sharedDirector()->getRunningScene()->addChild(p, 1000);
+        p->m_noElasticity = true;
+        p->show();
     } else {
         replay_ui_detail::setFallbackFlag(false);
         this->syncUIFromRuntime();
@@ -543,7 +545,8 @@ void PlaybackModMenu::onReplayPractice(CCObject*) {
     replay_ui_detail::setFallbackFlag(true);
 
     if (auto* p = PreloadAttemptsPopup::create(ReplayKind::PracticeComposite)) {
-        CCDirector::sharedDirector()->getRunningScene()->addChild(p, 1000);
+        p->m_noElasticity = true;
+        p->show();
     } else {
         replay_ui_detail::setFallbackFlag(false);
         this->syncUIFromRuntime();
@@ -670,7 +673,7 @@ void PlaybackModMenu::onDeleteSaveFile(CCObject*) {
 
                 if (auto* scene = CCDirector::sharedDirector()->getRunningScene()) {
                     if (auto* menu = typeinfo_cast<PlaybackModMenu*>(
-                            scene->getChildByIDRecursive("playbackModMenu-popup"))) {
+                            scene->getChildByIDRecursive("playbackModMenu-popup_spr"))) {
                         menu->syncUIFromRuntime();
                     }
                 }
@@ -794,19 +797,22 @@ void PlaybackModMenu::onCycleGhostColors(CCObject*) {
 
 void PlaybackModMenu::onOpenColorSelector(CCObject*) {
     if (auto* p = ColorSelectorPopup::create()) {
-        CCDirector::sharedDirector()->getRunningScene()->addChild(p, 999);
+        p->m_noElasticity = true;
+        p->show();
     }
 }
 
 void PlaybackModMenu::onOpenGhostDistance(CCObject*) {
-    if (auto* layer = GhostDistancePopup::create()) {
-        CCDirector::sharedDirector()->getRunningScene()->addChild(layer, 999);
+    if (auto* p = GhostDistancePopup::create()) {
+        p->m_noElasticity = true;
+        p->show();
     }
 }
 
 void PlaybackModMenu::onOpenPlaybackSettings(CCObject*) {
     if (auto* p = PlaybackSettingsPopup::create()) {
-        CCDirector::sharedDirector()->getRunningScene()->addChild(p, 1000);
+        p->m_noElasticity = true;
+        p->show();
     }
 }
 
@@ -885,6 +891,8 @@ PreloadAttemptsPopup* PreloadAttemptsPopup::create(ReplayKind kind) {
 bool PreloadAttemptsPopup::init(float width, float height) {
     if (!Popup::init(width, height))
         return false;
+
+    this->setID("preload-attempts-popup_spr");
     setTitle("");
 
     auto& G = Ghosts::I();
@@ -988,6 +996,7 @@ bool PreloadAttemptsPopup::init(float width, float height) {
                 .anchorPoint(0.5f, 0.5f)
                 .scale(0.925f)
                 .intoMenuItem(this, menu_selector(PreloadAttemptsPopup::onPressLoad))
+                .scaleMult(kPopupButtonSizeMult)
                 .id("LoadButton")
                 .store(m_loadBtn)
                 .pos(0.f, -73.f)
@@ -1006,6 +1015,7 @@ bool PreloadAttemptsPopup::init(float width, float height) {
                 .anchorPoint(0.5f, 0.5f)
                 .scale(1.325f)
                 .intoMenuItem(this, menu_selector(PreloadAttemptsPopup::onPressMax))
+                .scaleMult(kPopupButtonSizeMult)
                 .store(m_maxBtn)
                 .pos(124.f, 0.f),
 
@@ -1041,7 +1051,7 @@ void PreloadAttemptsPopup::onClose(CCObject* sender) {
     }
 
     if (auto* scene = CCDirector::sharedDirector()->getRunningScene()) {
-        if (auto* xs = typeinfo_cast<PlaybackModMenu*>(scene->getChildByIDRecursive("playbackModMenu-popup"))) {
+        if (auto* xs = typeinfo_cast<PlaybackModMenu*>(scene->getChildByIDRecursive("playbackModMenu-popup_spr"))) {
             xs->syncUIFromRuntime();
         }
     }
@@ -1217,15 +1227,11 @@ PlaybackSettingsPopup* PlaybackSettingsPopup::create() {
     return nullptr;
 }
 
-static CCMenuItemToggler* mkStdToggler(CCObject* target, SEL_MenuHandler sel) {
-    auto on  = CCSprite::createWithSpriteFrameName("GJ_checkOn_001.png");
-    auto off = CCSprite::createWithSpriteFrameName("GJ_checkOff_001.png");
-    return CCMenuItemToggler::create(off, on, target, sel);
-}
-
 bool PlaybackSettingsPopup::init(float width, float height) {
     if (!Popup::init(width, height))
         return false;
+
+    this->setID("playback-settings-popup_spr");
     setTitle("");
 
     // Pull initial state (defaults should be OFF if Ghosts has no saved state)
@@ -1238,12 +1244,6 @@ bool PlaybackSettingsPopup::init(float width, float height) {
         .anchorPoint(0.5f, 0.5f)
         .layoutOpts(Build<AnchorLayoutOptions>::create().anchor(Anchor::Center))
         .children(
-            // BG
-            Build<CCScale9Sprite>::create("GJ_square01.png")
-                .id("DONOTINCLUDETHISNODE")
-                .contentSize(300.f, 200.f)
-                .anchorPoint(0.5f, 0.5f)
-                .zOrder(-1),
 
             Build<CCLabelBMFont>::create("Playback Settings", "bigFont.fnt")
                 .id("TitleLabel")
@@ -1285,6 +1285,7 @@ bool PlaybackSettingsPopup::init(float width, float height) {
                         .intoMenuItem(this, menu_selector(PlaybackSettingsPopup::onOpenCustomDeathSoundFolder))
                         .id("OpenCustomDeathSoundFolderButton")
                         .pos(-70.f, 15.f)
+                        .scaleMult(kPopupButtonSizeMult)
                         .store(m_openCustomDeathSoundFolderBtn)
                         .layout(Build<AnchorLayout>::create())
                         .children(
@@ -1300,6 +1301,7 @@ bool PlaybackSettingsPopup::init(float width, float height) {
                         .intoMenuItem(this, menu_selector(PlaybackSettingsPopup::onDownloadMemeSounds))
                         .id("OpenCustomDeathSoundFolderButton")
                         .pos(70.f, 15.f)
+                        .scaleMult(kPopupButtonSizeMult)
                         .store(m_downloadMemeSoundsBtn)
                         .layout(Build<AnchorLayout>::create())
                         .children(
@@ -1330,7 +1332,7 @@ bool PlaybackSettingsPopup::init(float width, float height) {
         .children(
             /*
             // Limit visible ghosts toggle
-            Build<CCMenuItemToggler>(mkStdToggler(this, menu_selector(PlaybackSettingsPopup::onToggleLimitVisible)))
+            Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackSettingsPopup::onToggleLimitVisible)))
                 .id("LimitVisibleGhostsToggle")
                 .pos(-110.f, 50.f)
                 .anchorPoint(0.5f, 0.5f)
@@ -1345,7 +1347,7 @@ bool PlaybackSettingsPopup::init(float width, float height) {
                 ),*/
 
             // Custom Death Sound toggle
-            Build<CCMenuItemToggler>(mkStdToggler(this, menu_selector(PlaybackSettingsPopup::onToggleCustomDeathSound)))
+            Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackSettingsPopup::onToggleCustomDeathSound)))
                 .id("CustomDeathSoundToggle")
                 .pos(-110.f, 50.f)
                 .anchorPoint(0.5f, 0.5f)
@@ -1360,7 +1362,7 @@ bool PlaybackSettingsPopup::init(float width, float height) {
                 ),
 
             // Only attempts past N% toggle
-            Build<CCMenuItemToggler>(mkStdToggler(this, menu_selector(PlaybackSettingsPopup::onToggleOnlyPast)))
+            Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackSettingsPopup::onToggleOnlyPast)))
                 .id("OnlyPastPercentageGhostsToggle")
                 .pos(-110.f, -24.f)
                 .anchorPoint(0.5f, 0.5f)
@@ -1442,7 +1444,7 @@ void PlaybackSettingsPopup::onClose(CCObject* sender) {
     }
 
     if (auto* scene = CCDirector::sharedDirector()->getRunningScene()) {
-        if (auto* xs = typeinfo_cast<PlaybackModMenu*>(scene->getChildByIDRecursive("playbackModMenu-popup"))) {
+        if (auto* xs = typeinfo_cast<PlaybackModMenu*>(scene->getChildByIDRecursive("playbackModMenu-popup_spr"))) {
             xs->syncUIFromRuntime();
         }
     }

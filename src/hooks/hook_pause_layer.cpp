@@ -58,7 +58,10 @@ class $modify(MyPauseLayer, PauseLayer) {
         if (!Ghosts::I().isModEnabled())
             return;
 
-        PlaybackModMenu::create()->show();
+        if (auto* p = PlaybackModMenu::create()) {
+            p->m_noElasticity = true;
+            p->show();
+        }
     }
 
 private:

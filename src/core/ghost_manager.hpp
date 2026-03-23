@@ -59,6 +59,7 @@
 
 // Current visual bugs:
 // Wave trail wackyness when turning off (only show past percent) when replaying with waves at the start
+// Sometimes robots and spiders don't explode? Like they still are present after death. Seems like maybe it's an issue when there is a high number of ghosts on screen at the same time (maybe post queue system issue).
 
 // Features I'll (maybe) add:
 // Ability to only replay one practice session or multiple (maybe even name them and save names as a different file). This would be it's own UI. Also have ability to delete certain sessions and maybe even export and import sessions (practice and normal). It would be cool to be able to export your best attempt, and be able to import the best attempt of several people and replay the at the same time, and have the icons maybe exported and imported too? A lot of work but would be cool to have eventually.
@@ -5129,6 +5130,7 @@ private:
                         if (m_ghostsExplode) {
                             // ghost->playerDestroyed(false);
                             ghost->playDeathEffect();
+                            // ghost->setOpacity(0);
                         }
 
                         if (m_ghostsExplodeSFX && m_fmodEngine) {
@@ -5165,6 +5167,9 @@ private:
                     eolFrozen = true;
                 }
             }
+            //else {
+            //    if (m_ghostsExplode) ghost->setOpacity(0); //  Ensure invisible if dead and exploded
+            //}
 
             const Frame& f = frames[drawIdx];
             const size_t nextIdx = std::min(drawIdx + 1, lastIdx);

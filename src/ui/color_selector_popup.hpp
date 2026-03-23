@@ -43,6 +43,7 @@ namespace {
 
     constexpr float kColorBtnVisualScale = 0.65f;
     constexpr float kPressSizeMult = 1.f;
+    constexpr float kPopupButtonSizeMult = 1.15f;
 
     static constexpr std::array<float, 16> kRowX16 = {
         0.f, 24.f, 48.f, 72.f,
@@ -80,7 +81,7 @@ protected:
     bool init(float width, float height) {
         if (!Popup::init(width, height))
             return false;
-        this->setID("color-selector-popup");
+        this->setID("color-selector-popup_spr");
         setTitle("");
 
         // Murder the default close button
@@ -94,11 +95,7 @@ protected:
 
         loadMask_();
 
-        CCSprite* gradient = CCSprite::create("GJ_gradientBG.png");
-        if (!gradient) {
-            log::warn("Failed to load GJ_gradientBG.png (and -hd fallback). Using empty sprite.");
-            gradient = CCSprite::create();
-        }
+        CCSprite* gradient = createFullscreenGradient_();
 
         Build<CCMenu>::create()
             .id("ColorSelectorRoot")
@@ -139,6 +136,7 @@ protected:
                     .anchorPoint(0.5f, 0.5f)
                     .id("enable-all-button")
                     .pos(-234.f, -119.f)
+                    //.setSizeMult(kPopupButtonSizeMult)
                     .layout(Build<AnchorLayout>::create())
                     .children(
                         Build<CCLabelBMFont>::create("Enable all", "bigFont.fnt")
@@ -158,6 +156,7 @@ protected:
                     .anchorPoint(0.5f, 0.5f)
                     .id("disable-all-button")
                     .pos(-234.f, -144.f)
+                    .scaleMult(kPopupButtonSizeMult)
                     .layout(Build<AnchorLayout>::create())
                     .children(
                         Build<CCLabelBMFont>::create("Disable all", "bigFont.fnt")
@@ -176,6 +175,7 @@ protected:
                     .anchorPoint(0.5f, 0.5f)
                     .id("save-color-preset-button")
                     .pos(-140.f, -119.f)
+                    .scaleMult(kPopupButtonSizeMult)
                     .layout(Build<AnchorLayout>::create())
                     .children(
                         Build<CCLabelBMFont>::create("Save Preset", "bigFont.fnt")
@@ -194,6 +194,7 @@ protected:
                     .anchorPoint(0.5f, 0.5f)
                     .id("load-color-preset-button")
                     .pos(-140.f, -144.f)
+                    .scaleMult(kPopupButtonSizeMult)
                     .layout(Build<AnchorLayout>::create())
                     .children(
                         Build<CCLabelBMFont>::create("Load Preset", "bigFont.fnt")

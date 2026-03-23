@@ -1,5 +1,5 @@
 {
-  "geode": "5.4.0",
+  "geode": "5.4.1",
   "gd": {
     "win": "2.2081",
     "android": "2.2081",
@@ -8,7 +8,7 @@
   },
   "id": "manshoety.attemptplayback",
   "name": "Attempt Playback",
-  "version": "v1.4.11",
+  "version": "v1.4.12",
   "developer": "manshoety",
   "description": "Allows you to see all past attempts as ghosts",
   "dependencies": {

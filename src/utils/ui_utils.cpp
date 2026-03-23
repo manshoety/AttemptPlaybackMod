@@ -74,3 +74,30 @@ CCMenuItemSpriteExtra* findDefaultCloseButton(cocos2d::CCNode* root) {
     return nullptr;
 }
 
+CCSprite* createFullscreenGradient_() {
+    ccColor3B color = { 69, 60, 177 };
+    CCSprite* gradient = CCSprite::create("GJ_gradientBG.png");
+    if (!gradient) gradient = CCSprite::create("GJ_gradientBG-hd.png");
+
+    if (!gradient) {
+        log::warn("Failed to load GJ_gradientBG.png / GJ_gradientBG-hd.png. Using empty sprite.");
+        gradient = CCSprite::create();
+    }
+
+    gradient->setColor(color);
+    gradient->setAnchorPoint({ 0.5f, 0.5f });
+
+    const CCSize win = CCDirector::sharedDirector()->getWinSize();
+    const CCSize tex = gradient->getContentSize();
+
+    if (tex.width > 0.f && tex.height > 0.f) {
+        gradient->setScaleX((win.width + 32.f) / tex.width);
+        gradient->setScaleY((win.height + 32.f) / tex.height);
+    }
+    else {
+        gradient->setScaleX(64.f);
+        gradient->setScaleY(64.f);
+    }
+        return gradient;
+}
+
