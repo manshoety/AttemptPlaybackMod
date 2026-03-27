@@ -28,7 +28,7 @@ class $modify(MyPauseLayer, PauseLayer) {
         if (!leftMenu) return;
 
         // Prevent duplicates
-        if (leftMenu->getChildByID("attemptplayback-button")) return;
+        if (leftMenu->getChildByID("attemptplayback-button"_spr)) return;
 
         // Create spriteframe icon
         auto* spr = CCSprite::createWithSpriteFrameName("GJ_sRecentIcon_001.png");
@@ -47,7 +47,7 @@ class $modify(MyPauseLayer, PauseLayer) {
         auto* btn = CCMenuItemSpriteExtra::create(
             btnSprite, this, menu_selector(MyPauseLayer::onAttemptPlaybackPopup)
         );
-        btn->setID("attemptplayback-button");
+        btn->setID("attemptplayback-button"_spr);
 
         // Add to pause menu + relayout
         leftMenu->addChild(btn);
@@ -84,9 +84,9 @@ private:
             this->addChild(host, 9000);
         }
 
-        if (!host->getChildByID("attemptplayback-btn")) {
+        if (!host->getChildByID("attemptplayback-btn"_spr)) {
             auto* btn = makeButton("PM", this, menu_selector(MyPauseLayer::openMenu), 0.75f);
-            btn->setID("attemptplayback-btn");
+            btn->setID("attemptplayback-btn"_spr);
 
             btn->setPosition({ 268.5f, -113.f });
 

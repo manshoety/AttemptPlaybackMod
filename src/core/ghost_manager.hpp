@@ -3422,14 +3422,6 @@ public:
                         updateOpacityForAttempt(a, opacity);
                     }
 
-                    // Set visibility
-                    if (a.g1) a.setP1Visible(true);
-                    // If dead keep last visible state
-                    const double ghostTime = std::max(0.0, m_lastAttemptTime + a.ghostOffsetTime);
-                    const bool showP2 = a.hadDual && !a.p2.empty() &&
-                        (ghostTime >= a.p2.front().t - 0.0001);
-                    if (a.g2 && !a.eolFrozenP2) a.setP2Visible(showP2);
-
                     showable.push_back(ai);
                     GhostsVisibleThisFrame ++;
                     currentPreloaded++;
@@ -3459,9 +3451,6 @@ public:
                         continue;
                     }
 
-                    //log::info("[NOT OWNER] ai: {}", ai);
-
-                    // Time-based visibility calculation
                     const double ghostTime = std::max(0.0, m_lastAttemptTime + a.ghostOffsetTime);
                     const double firstTimeP1 = a.p1.front().t;
                     
@@ -3469,7 +3458,6 @@ public:
                         a.setP1Visible(false);
                         a.setP2Visible(false);
                         a.primedP1 = a.primedP2 = false;
-                        //log::info("[Bad Time] ai: {}", ai);
                         continue;
                     }
 
@@ -3494,67 +3482,30 @@ public:
                         }
                     }
 
-                    // Determine P2 visibility
                     const bool showP2 = a.hadDual && !a.p2.empty() &&
                         (ghostTime >= a.p2.front().t - 0.0001);
 
-
-                    // Prime if needed
-                    if (!a.primedP1 || (a.hadDual && showP2 && !a.primedP2)) {
-                        
+                    if (!a.primedP1 || (showP2 && !a.primedP2)) {
                         if ((m_playerObjectPool.inUseCount() < m_playerObjectPool.capacity() - 1)
                     || a.g1 || a.g2) {
-                            //log::info("Priming: {}", ai);
                             primeGhostToPX_(a, px, px2);
                             m_primedIndices.push_back(ai);
                             m_primedSet.insert(ai);
                         }
                         else {
-                            //log::info("No Priming space: {}", ai);
                             if (m_wantToPrimeSet.insert(ai).second) {
                                 m_wantToPrimeIndices.push_back(ai);
                             }
                             continue;
                         }
                     }
-                    //else {
-                    //    log::info("a.primedP1: {}, m_playerObjectPool.inUseCount(): {}, m_playerObjectPool.capacity(): {}", a.primedP1, m_playerObjectPool.inUseCount(), m_playerObjectPool.capacity());
-                    //}
 
-                    // Screen culling for unprimed ghosts
-                    /*
-                    if (!a.primedP1) {
-
-                        size_t checkIdx = idxForTimeBounded_(a.p1, a.acc1Time, ghostTime);
-                        float checkX = a.p1[checkIdx].x;
-                        float checkY = a.p1[checkIdx].y;
-                        
-                        if (checkX < tl.x || checkX > br.x || 
-                            checkY < br.y || checkY > tl.y) {
-                            a.setP1Visible(false);
-                            a.setP2Visible(false);
-                            // log::info("[CULLED np] ai: {} at time-pos ({:.1f}, {:.1f})", ai, checkX, checkY);
-                            continue;
-                        }
-                    }*/
-
-                    // Setup colors and opacity once per visible attempt
                     if (!a.colorsAssigned) {
                         refreshAttemptColors_(a);
                     }
                     if (a.opacity != opacity) {
                         updateOpacityForAttempt(a, opacity);
                     }
-
-                    // Set visibility
-                    if (a.g1) a.setP1Visible(true);
-                    // If dead keep last visible state
-                    if (a.g2 && !a.eolFrozenP2) a.setP2Visible(showP2);
-
-                    //log::info("[VISIBLE GHOST] serial: {}", ai);
-                    //if (!a.g1) log::info("[VISIBLE GHOST] NO PLAYER OBJECT");
-                    //if (!a.p1Visible) log::info("[VISIBLE GHOST] NOT VISIBLE");
-                    //log::info("[VISIBLE GHOST] px: {} gx: {}", px, a.p1[a.d1].x);
 
                     showable.push_back(ai);
                     GhostsVisibleThisFrame ++;
@@ -5106,9 +5057,8 @@ private:
             const double lastT = frames.back().t;
 
             double tStart = getTimeMs();  
-
             if (!eolFrozen) {
-
+                
                 size_t previousIDX = frameIdx;
                 
                 // Time-based index lookup
@@ -5119,13 +5069,11 @@ private:
                 }
                 drawIdx = std::min(frameIdx, lastIdx);
 
-                if (frameIdx == previousIDX) return;
-
-                //log::info("[TIME TAKEN] updateghost advance {:.8f}", getTimeMs() - tStart);
-                //tStart = getTimeMs();  
+                const bool atLastFrame = (drawIdx >= lastIdx);
+                const bool atEndTime   = (ghostTime >= lastT - kEolTimeTolerance);
 
                 // EOL freeze check
-                if (ghostTime >= lastT - kEolTimeTolerance) {
+                if (atLastFrame || atEndTime) {
                     if (ghost) {
                         if (m_ghostsExplode) {
                             // ghost->playerDestroyed(false);
@@ -5166,6 +5114,13 @@ private:
                     // Need another name for these?
                     eolFrozen = true;
                 }
+
+                if (frameIdx == previousIDX) return;
+
+                //log::info("[TIME TAKEN] updateghost advance {:.8f}", getTimeMs() - tStart);
+                //tStart = getTimeMs();  
+
+                
             }
             //else {
             //    if (m_ghostsExplode) ghost->setOpacity(0); //  Ensure invisible if dead and exploded
@@ -5266,11 +5221,8 @@ private:
             // if (f.mode == IconType::Spider) ghost->playDynamicSpiderRun();
 
             // Visibility
-            if (!isP2) {
-                a.setP1Visible(f.isVisible);
-            } else {
-                a.setP2Visible(f.isVisible);
-            }
+            if (!isP2) a.setP1Visible(f.isVisible && (!eolFrozen || !m_ghostsExplode));
+            else a.setP2Visible(f.isVisible && (!eolFrozen || !m_ghostsExplode));
 
             ghost->setZOrder(0);
 

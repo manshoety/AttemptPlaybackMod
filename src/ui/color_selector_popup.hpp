@@ -44,6 +44,7 @@ namespace {
     constexpr float kColorBtnVisualScale = 0.65f;
     constexpr float kPressSizeMult = 1.f;
     constexpr float kPopupButtonSizeMult = 1.15f;
+    constexpr float kPopupBigButtonSizeMult = 1.05f;
 
     static constexpr std::array<float, 16> kRowX16 = {
         0.f, 24.f, 48.f, 72.f,
@@ -81,7 +82,7 @@ protected:
     bool init(float width, float height) {
         if (!Popup::init(width, height))
             return false;
-        this->setID("color-selector-popup_spr");
+        this->setID("color-selector-popup"_spr);
         setTitle("");
 
         // Murder the default close button
@@ -98,7 +99,7 @@ protected:
         CCSprite* gradient = createFullscreenGradient_();
 
         Build<CCMenu>::create()
-            .id("ColorSelectorRoot")
+            .id("ColorSelectorRoot"_spr)
             .contentSize(0.f, 0.f)
             .layoutOpts(Build<AnchorLayoutOptions>::create().anchor(Anchor::Center))
             .children(
@@ -123,87 +124,69 @@ protected:
                     .intoMenuItem(this, menu_selector(ColorSelectorPopup::onExit_))
                     .ignoreAnchorPointForPos(false)
                     .anchorPoint(0.f, 1.f)
-                    .id("ExitButton")
+                    .id("ExitButton"_spr)
                     .pos(-283.f, 158.f)
-                    .scale(0.75f),
+                    .scale(0.75f)
+                    .scaleMult(0.8),
 
-                // enable all button
-                Build<CCScale9Sprite>::create("GJ_button_01.png")
-                    .contentSize(164.f, 40.f)
-                    .scale(0.55f)
-                    .intoMenuItem(this, menu_selector(ColorSelectorPopup::onEnableAll_))
-                    .ignoreAnchorPointForPos(false)
-                    .anchorPoint(0.5f, 0.5f)
-                    .id("enable-all-button")
-                    .pos(-234.f, -119.f)
-                    .scaleMult(kPopupButtonSizeMult)
-                    .layout(Build<AnchorLayout>::create())
-                    .children(
-                        Build<CCLabelBMFont>::create("Enable all", "bigFont.fnt")
-                            .id("EnableAllLabel")
-                            .anchorPoint(0.5f, 0.5f)
-                            .scale(0.4f)
-                            .layoutOpts(Build<AnchorLayoutOptions>::create().anchor(Anchor::Center))
-                    )
-                    .updateLayout(),
+                // I'll reorganize to something like this when I have time, less messy
 
-                // disable all button
-                Build<CCScale9Sprite>::create("GJ_button_06.png")
-                    .contentSize(164.f, 40.f)
-                    .scale(0.55f)
-                    .intoMenuItem(this, menu_selector(ColorSelectorPopup::onDisableAll_))
-                    .ignoreAnchorPointForPos(false)
-                    .anchorPoint(0.5f, 0.5f)
-                    .id("disable-all-button")
-                    .pos(-234.f, -144.f)
-                    .scaleMult(kPopupButtonSizeMult)
-                    .layout(Build<AnchorLayout>::create())
-                    .children(
-                        Build<CCLabelBMFont>::create("Disable all", "bigFont.fnt")
-                            .id("DisableAllLabel")
-                            .anchorPoint(0.5f, 0.5f)
-                            .scale(0.4f)
-                            .layoutOpts(Build<AnchorLayoutOptions>::create().anchor(Anchor::Center))
-                    )
-                    .updateLayout(),
+                createTextButton_(
+                    this,
+                    /*spriteFrame*/"GJ_button_01.png",
+                    /*text*/"Enable all",
+                    /*callback*/menu_selector(ColorSelectorPopup::onEnableAll_),
+                    /*node_id*/"enable-all-button"_spr,
+                    /*pos*/{-234.f, -119.f},
+                    /*width*/164.f,
+                    /*height*/40.f,
+                    /*spriteScale*/0.55f,
+                    /*labelScale*/0.4f,
+                    /*sizeMult*/kPopupBigButtonSizeMult
+                    ),
 
-                Build<CCScale9Sprite>::create("GJ_button_02.png")
-                    .contentSize(164.f, 40.f)
-                    .scale(0.55f)
-                    .intoMenuItem(this, menu_selector(ColorSelectorPopup::onSaveColorPreset_))
-                    .ignoreAnchorPointForPos(false)
-                    .anchorPoint(0.5f, 0.5f)
-                    .id("save-color-preset-button")
-                    .pos(-140.f, -119.f)
-                    .scaleMult(kPopupButtonSizeMult)
-                    .layout(Build<AnchorLayout>::create())
-                    .children(
-                        Build<CCLabelBMFont>::create("Save Preset", "bigFont.fnt")
-                            .id("SavePresetLabel")
-                            .anchorPoint(0.5f, 0.5f)
-                            .scale(0.4f)
-                            .layoutOpts(Build<AnchorLayoutOptions>::create().anchor(Anchor::Center))
-                    )
-                    .updateLayout(),
+                createTextButton_(
+                    this,
+                    /*spriteFrame*/"GJ_button_06.png",
+                    /*text*/"Disable all",
+                    /*callback*/menu_selector(ColorSelectorPopup::onDisableAll_),
+                    /*node_id*/"disable-all-button"_spr,
+                    /*pos*/{-234.f, -144.f},
+                    /*width*/164.f,
+                    /*height*/40.f,
+                    /*spriteScale*/0.55f,
+                    /*labelScale*/0.4f,
+                    /*sizeMult*/kPopupBigButtonSizeMult
+                    ),
 
-                Build<CCScale9Sprite>::create("GJ_button_02.png")
-                    .contentSize(164.f, 40.f)
-                    .scale(0.55f)
-                    .intoMenuItem(this, menu_selector(ColorSelectorPopup::onLoadColorPreset_))
-                    .ignoreAnchorPointForPos(false)
-                    .anchorPoint(0.5f, 0.5f)
-                    .id("load-color-preset-button")
-                    .pos(-140.f, -144.f)
-                    .scaleMult(kPopupButtonSizeMult)
-                    .layout(Build<AnchorLayout>::create())
-                    .children(
-                        Build<CCLabelBMFont>::create("Load Preset", "bigFont.fnt")
-                            .id("LoadPresetLabel")
-                            .anchorPoint(0.5f, 0.5f)
-                            .scale(0.4f)
-                            .layoutOpts(Build<AnchorLayoutOptions>::create().anchor(Anchor::Center))
-                    )
-                    .updateLayout(),
+
+                createTextButton_(
+                    this,
+                    /*spriteFrame*/"GJ_button_02.png",
+                    /*text*/"Save Preset",
+                    /*callback*/menu_selector(ColorSelectorPopup::onSaveColorPreset_),
+                    /*node_id*/"save-color-preset-button"_spr,
+                    /*pos*/{-140.f, -119.f},
+                    /*width*/164.f,
+                    /*height*/40.f,
+                    /*spriteScale*/0.55f,
+                    /*labelScale*/0.4f,
+                    /*sizeMult*/kPopupBigButtonSizeMult
+                    ),
+
+                createTextButton_(
+                    this,
+                    /*spriteFrame*/"GJ_button_02.png",
+                    /*text*/"Load Preset",
+                    /*callback*/menu_selector(ColorSelectorPopup::onLoadColorPreset_),
+                    /*node_id*/"load-color-preset-button"_spr,
+                    /*pos*/{-140.f, -144.f},
+                    /*width*/164.f,
+                    /*height*/40.f,
+                    /*spriteScale*/0.55f,
+                    /*labelScale*/0.4f,
+                    /*sizeMult*/kPopupBigButtonSizeMult
+                    ),
 
                 Build<CCLabelBMFont>::create("Colors used when Color Mode: Random", "bigFont.fnt")
                     .pos(113.f, -116.f)
@@ -216,18 +199,18 @@ protected:
                     .scale(0.325f),
 
                 Build<CCNode>::create()
-                    .id("ColorButtonsNode")
+                    .id("ColorButtonsNode"_spr)
                     .pos(-216.f, 48.f)
                     .scale(1.1f)
                     .children(
-                        Build<CCNode>::create().id("colorButtonsRow1").pos(0.f,  48.f),
-                        Build<CCNode>::create().id("colorButtonsRow2").pos(0.f,  24.f),
-                        Build<CCNode>::create().id("colorButtonsRow3").pos(0.f,   0.f),
-                        Build<CCNode>::create().id("colorButtonsRow4").pos(0.f, -36.f),
-                        Build<CCNode>::create().id("colorButtonsRow5").pos(0.f, -60.f),
-                        Build<CCNode>::create().id("colorButtonsRow6").pos(0.f, -84.f),
-                        Build<CCNode>::create().id("colorButtonsRow7").pos(0.f,-108.f),
-                        Build<CCNode>::create().id("colorButtonsRow8").pos(0.f,-120.f)
+                        Build<CCNode>::create().id("colorButtonsRow1"_spr).pos(0.f,  48.f),
+                        Build<CCNode>::create().id("colorButtonsRow2"_spr).pos(0.f,  24.f),
+                        Build<CCNode>::create().id("colorButtonsRow3"_spr).pos(0.f,   0.f),
+                        Build<CCNode>::create().id("colorButtonsRow4"_spr).pos(0.f, -36.f),
+                        Build<CCNode>::create().id("colorButtonsRow5"_spr).pos(0.f, -60.f),
+                        Build<CCNode>::create().id("colorButtonsRow6"_spr).pos(0.f, -84.f),
+                        Build<CCNode>::create().id("colorButtonsRow7"_spr).pos(0.f,-108.f),
+                        Build<CCNode>::create().id("colorButtonsRow8"_spr).pos(0.f,-120.f)
                     )
             )
             .updateLayout()
@@ -326,18 +309,18 @@ private:
     void buildColorButtons_() {
         if (!m_uiRoot) return;
 
-        auto* buttonsNode = m_uiRoot->getChildByIDRecursive("ColorButtonsNode");
+        auto* buttonsNode = m_uiRoot->getChildByIDRecursive("ColorButtonsNode"_spr);
         if (!buttonsNode) return;
 
         int slot = 0;
-        slot = fillRow_(buttonsNode, "colorButtonsRow1", slot, kRowX16, false);
-        slot = fillRow_(buttonsNode, "colorButtonsRow2", slot, kRowX16, false);
-        slot = fillRow_(buttonsNode, "colorButtonsRow3", slot, kRowX16, false);
-        slot = fillRow_(buttonsNode, "colorButtonsRow4", slot, kRowX16, false);
-        slot = fillRow_(buttonsNode, "colorButtonsRow5", slot, kRowX16, false);
-        slot = fillRow_(buttonsNode, "colorButtonsRow6", slot, kRowX16, false);
-        slot = fillRow_(buttonsNode, "colorButtonsRow7", slot, kRowX4,  false);
-        slot = fillRow_(buttonsNode, "colorButtonsRow8", slot, kRowX8,  false);
+        slot = fillRow_(buttonsNode, "colorButtonsRow1"_spr, slot, kRowX16, false);
+        slot = fillRow_(buttonsNode, "colorButtonsRow2"_spr, slot, kRowX16, false);
+        slot = fillRow_(buttonsNode, "colorButtonsRow3"_spr, slot, kRowX16, false);
+        slot = fillRow_(buttonsNode, "colorButtonsRow4"_spr, slot, kRowX16, false);
+        slot = fillRow_(buttonsNode, "colorButtonsRow5"_spr, slot, kRowX16, false);
+        slot = fillRow_(buttonsNode, "colorButtonsRow6"_spr, slot, kRowX16, false);
+        slot = fillRow_(buttonsNode, "colorButtonsRow7"_spr, slot, kRowX4,  false);
+        slot = fillRow_(buttonsNode, "colorButtonsRow8"_spr, slot, kRowX8,  false);
 
         if (slot != kRandomColorSlots) {
             log::warn("[ColorSelectorPopup] Filled {} slots but expected {}", slot, kRandomColorSlots);

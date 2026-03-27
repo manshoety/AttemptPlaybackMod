@@ -99,7 +99,7 @@ PlaybackModMenu* PlaybackModMenu::create() {
 bool PlaybackModMenu::init(float width, float height) {
     if (!Popup::init(width, height))
         return false;
-    this->setID("playbackModMenu-popup_spr");
+    this->setID("playbackModMenu-popup"_spr);
 
     setTitle("");
 
@@ -184,7 +184,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.5f, 0.5f),
 
             Build<CCMenu>::create()
-                .id("playbackButtonsRow")
+                .id("playbackButtonsRow"_spr)
                 .pos(0.f, 94.f)
                 .contentSize(485.f, 40.f)
                 .layout(Build<AxisLayout>::create()
@@ -193,63 +193,50 @@ void PlaybackModMenu::buildTemplateUI_() {
                     .autoScale(false)
                     .autoGrow(0.f))
                 .children(
-                    Build<CCScale9Sprite>::create("GJ_button_01.png")
-                        .contentSize(190.f, 40.f)
-                        .intoMenuItem(this, menu_selector(PlaybackModMenu::onReplayBest))
-                        .ignoreAnchorPointForPos(false)
-                        .anchorPoint(0.5f, 0.5f)
-                        .scaleMult(kPopupButtonSizeMult)
-                        .id("replay-best-button")
-                        .layout(Build<AnchorLayout>::create())
-                        .children(
-                            Build<CCLabelBMFont>::create("Replay Best", "bigFont.fnt")
-                                .id("Button Label")
-                                .anchorPoint(0.5f, 0.5f)
-                                .scale(0.8f)
-                                .tag(0)
-                                .layoutOpts(Build<AnchorLayoutOptions>::create()
-                                    .anchor(Anchor::Center)))
-                        .updateLayout(),
+                    createTextButton_(
+                    this,
+                    /*spriteFrame*/"GJ_button_01.png",
+                    /*text*/"Replay Best",
+                    /*callback*/menu_selector(PlaybackModMenu::onReplayBest),
+                    /*node_id*/"replay-best-button"_spr,
+                    /*pos*/{0.f, 0.f},
+                    /*width*/190.f,
+                    /*height*/40.f,
+                    /*spriteScale*/1.f,
+                    /*labelScale*/0.8f,
+                    /*sizeMult*/kPopupBigButtonSizeMult
+                    ),
 
-                    Build<CCScale9Sprite>::create("GJ_button_01.png")
-                        .contentSize(241.f, 40.f)
-                        .intoMenuItem(this, menu_selector(PlaybackModMenu::onReplayPractice))
-                        .ignoreAnchorPointForPos(false)
-                        .anchorPoint(0.5f, 0.5f)
-                        .scaleMult(kPopupButtonSizeMult)
-                        .id("replay-practice-button")
-                        .layout(Build<AnchorLayout>::create())
-                        .children(
-                            Build<CCLabelBMFont>::create("Replay Practice", "bigFont.fnt")
-                                .id("Button Label")
-                                .anchorPoint(0.5f, 0.5f)
-                                .scale(0.8f)
-                                .tag(0)
-                                .layoutOpts(Build<AnchorLayoutOptions>::create()
-                                    .anchor(Anchor::Center)))
-                        .updateLayout())
+                    createTextButton_(
+                    this,
+                    /*spriteFrame*/"GJ_button_01.png",
+                    /*text*/"Replay Practice",
+                    /*callback*/menu_selector(PlaybackModMenu::onReplayPractice),
+                    /*node_id*/"replay-practice-button"_spr,
+                    /*pos*/{0.f, 0.f},
+                    /*width*/241.f,
+                    /*height*/40.f,
+                    /*spriteScale*/1.f,
+                    /*labelScale*/0.8f,
+                    /*sizeMult*/kPopupBigButtonSizeMult
+                    ))
                 .updateLayout()
                 .ignoreAnchorPointForPos(false)
                 .anchorPoint(0.5f, 0.5f),
-
-            Build<CCScale9Sprite>::create("GJ_button_01.png")
-                .contentSize(485.f, 40.f)
-                .intoMenuItem(this, menu_selector(PlaybackModMenu::onStopReplay))
-                .ignoreAnchorPointForPos(false)
-                .anchorPoint(0.5f, 0.5f)
-                .id("stop-replay-button")
-                .pos(0.f, 94.f)
-                .scaleMult(kPopupButtonSizeMult)
-                .visible(false)
-                .layout(Build<AnchorLayout>::create())
-                .children(
-                    Build<CCLabelBMFont>::create("Stop Replay", "bigFont.fnt")
-                        .id("Button Label")
-                        .anchorPoint(0.5f, 0.5f)
-                        .scale(0.8f)
-                        .layoutOpts(Build<AnchorLayoutOptions>::create()
-                            .anchor(Anchor::Center)))
-                .updateLayout(),
+            
+            createTextButton_(
+                    this,
+                    /*spriteFrame*/"GJ_button_01.png",
+                    /*text*/"Stop Replay",
+                    /*callback*/menu_selector(PlaybackModMenu::onStopReplay),
+                    /*node_id*/"stop-replay-button"_spr,
+                    /*pos*/{0.f, 94.f},
+                    /*width*/485.f,
+                    /*height*/40.f,
+                    /*spriteScale*/1.f,
+                    /*labelScale*/0.8f,
+                    /*sizeMult*/kPopupBigButtonSizeMult
+                    ).visible(false),
 
             Build<CCLabelBMFont>::create("Ghost Opacity (100)", "bigFont.fnt")
                         .scale(0.5f)
@@ -257,14 +244,14 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .store(m_opacityLabel),
 
             Build<Slider>::create(this, menu_selector(PlaybackModMenu::onSliderInt), 0.9f)
-                        .id("ghost-opacity")
+                        .id("ghost-opacity"_spr)
                         .scale(0.78f)
                         .pos(125.f, 40.f)
                         .anchorPoint(0.f, 0.f)
                         .store(m_opacitySlider),
 
             Build<CCMenu>::create()
-                .id("togglesColumn")
+                .id("togglesColumn"_spr)
                 .pos(-240.f, 63.f)
                 .contentSize(35.f, 74.f)
                 .layout(Build<AxisLayout>::create()
@@ -273,31 +260,8 @@ void PlaybackModMenu::buildTemplateUI_() {
                     .autoScale(false)
                     .autoGrow(0.f))
                 .children(
-                    /*
-                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleRecording)))
-                        .id("RecordingToggle")
-                        .store(m_tgRecording)
-                        .scale(1.f)
-                        .children(
-                            Build<CCLabelBMFont>::create("Recording", "bigFont.fnt")
-                                .pos(38.f, 5.f)
-                                .anchorPoint(0.f, 0.f)
-                                .scale(0.725f)
-                        ),*/
-
-                    /*
-                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleInterpolation)))
-                        .id("InterpolationToggle")
-                        .store(m_tgInterp)
-                        .scale(1.f)
-                        .children(
-                            Build<CCLabelBMFont>::create("Interpolation", "bigFont.fnt")
-                                .pos(38.f, 5.f)
-                                .anchorPoint(0.f, 0.f)
-                                .scale(0.725f)
-                        ),*/
                     Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleRandomIcons)))
-                        .id("RandomIconsToggle")
+                        .id("RandomIconsToggle"_spr)
                         .store(m_tgRandomIcons)
                         .scale(1.f)
                         .children(
@@ -307,7 +271,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                                 .scale(0.725f)
                         ),
                     Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleGhostsExplodeSFX)))
-                        .id("GhostsExplodeSFXToggle")
+                        .id("GhostsExplodeSFXToggle"_spr)
                         .store(m_tgGhostsExplodeSFX)
                         .scale(1.f)
                         .children(
@@ -317,7 +281,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                                 .scale(0.725f)
                         ),
                     Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleGhostsExplode)))
-                        .id("GhostsExplodeToggle")
+                        .id("GhostsExplodeToggle"_spr)
                         .store(m_tgGhostsExplode)
                         .scale(1.f)
                         .children(
@@ -327,7 +291,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                                 .scale(0.725f)
                         ),
                     Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleBlockRecording)))
-                        .id("BlockRecordingToggle")
+                        .id("BlockRecordingToggle"_spr)
                         .store(m_tgBlockRecording)
                         .scale(1.f)
                         .children(
@@ -336,17 +300,6 @@ void PlaybackModMenu::buildTemplateUI_() {
                                 .anchorPoint(0.f, 0.f)
                                 .scale(0.725f)
                         )
-                        /*
-                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleReplayPreventCompletion)))
-                        .id("ReplayPreventCompletionToggle")
-                        .store(m_tgReplayPreventCompletion)
-                        .scale(1.f)
-                        .children(
-                            Build<CCLabelBMFont>::create("Replay Prevent Completion", "bigFont.fnt")
-                                .pos(38.f, 5.f)
-                                .anchorPoint(0.f, 0.f)
-                                .scale(0.525f)
-                        )*/
                     
                     )
                 .updateLayout()
@@ -360,7 +313,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.13", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.15", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
@@ -379,7 +332,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .layoutOpts(Build<AxisLayoutOptions>::create()
                             .crossAlign(AxisAlignment::Start)
                         )
-                        .id("PlaybackSettingsButton")
+                        .id("PlaybackSettingsButton"_spr)
                         .children(
                             Build<CCLabelBMFont>::create("Playback\nSettings", "bigFont.fnt")
                                 .alignment(kCCTextAlignmentCenter)
@@ -389,7 +342,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         ),
 
             Build<CCMenu>::create()
-                .id("MoreOptionsColumn")
+                .id("MoreOptionsColumn"_spr)
                 .pos(168.f, -149.f)
                 .contentSize(234.5f, 146.9187f)
                 .scale(0.8f)
@@ -413,7 +366,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .layoutOpts(Build<AxisLayoutOptions>::create()
                             .crossAlign(AxisAlignment::Start)
                         )
-                        .id("ColorModeButton")
+                        .id("ColorModeButton"_spr)
                         .children(
                             Build<CCLabelBMFont>::create("Color Mode: Player", "bigFont.fnt")
                                 .alignment(kCCTextAlignmentCenter)
@@ -434,7 +387,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .layoutOpts(Build<AxisLayoutOptions>::create()
                             .crossAlign(AxisAlignment::Start)
                         )
-                        .id("AllowedRandomColorsButton")
+                        .id("AllowedRandomColorsButton"_spr)
                         .children(
                             Build<CCLabelBMFont>::create("Color Selector", "bigFont.fnt")
                                 .alignment(kCCTextAlignmentCenter)
@@ -455,7 +408,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .layoutOpts(Build<AxisLayoutOptions>::create()
                             .crossAlign(AxisAlignment::Start)
                         )
-                        .id("GhostDistanceButton")
+                        .id("GhostDistanceButton"_spr)
                         .children(
                             Build<CCLabelBMFont>::create("Ghost Distance", "bigFont.fnt")
                                 .alignment(kCCTextAlignmentCenter)
@@ -475,7 +428,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .layoutOpts(Build<AxisLayoutOptions>::create()
                             .crossAlign(AxisAlignment::Start)
                         )
-                        .id("FreeRobuxButton")
+                        .id("FreeRobuxButton"_spr)
                         .children(
                             Build<CCLabelBMFont>::create("Free Robux", "bigFont.fnt")
                                 .alignment(kCCTextAlignmentCenter)
@@ -494,7 +447,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         .layoutOpts(Build<AxisLayoutOptions>::create()
                             .crossAlign(AxisAlignment::Start)
                         )
-                        .id("DeleteSaveFileButton")
+                        .id("DeleteSaveFileButton"_spr)
                         .children(
                             Build<CCLabelBMFont>::create("Delete Attempts", "bigFont.fnt")
                                 .alignment(kCCTextAlignmentCenter)
@@ -514,8 +467,8 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .intoMenuItem(this, menu_selector(PlaybackModMenu::onExitButton))
                 .ignoreAnchorPointForPos(false)
                 .anchorPoint(0.f, 1.f)
-                .scaleMult(kPopupButtonSizeMult)
-                .id("ExitButton")
+                .scaleMult(0.8)
+                .id("ExitButton"_spr)
                 .pos(-283.f, 158.f)
                 .scale(0.75f)
         )
@@ -555,8 +508,8 @@ void PlaybackModMenu::onReplayPractice(CCObject*) {
 
 void PlaybackModMenu::cacheReplayButtons_() {
     if (!m_mainLayer) return;
-    m_playbackButtonsRow = typeinfo_cast<CCMenu*>(m_mainLayer->getChildByIDRecursive("playbackButtonsRow"));
-    m_stopReplayBtn = typeinfo_cast<CCMenuItem*>(m_mainLayer->getChildByIDRecursive("stop-replay-button"));
+    m_playbackButtonsRow = typeinfo_cast<CCMenu*>(m_mainLayer->getChildByIDRecursive("playbackButtonsRow"_spr));
+    m_stopReplayBtn = typeinfo_cast<CCMenuItem*>(m_mainLayer->getChildByIDRecursive("stop-replay-button"_spr));
 }
 
 bool PlaybackModMenu::queryIsReplaying_() const {
@@ -673,7 +626,7 @@ void PlaybackModMenu::onDeleteSaveFile(CCObject*) {
 
                 if (auto* scene = CCDirector::sharedDirector()->getRunningScene()) {
                     if (auto* menu = typeinfo_cast<PlaybackModMenu*>(
-                            scene->getChildByIDRecursive("playbackModMenu-popup_spr"))) {
+                            scene->getChildByIDRecursive("playbackModMenu-popup"_spr))) {
                         menu->syncUIFromRuntime();
                     }
                 }
@@ -892,7 +845,7 @@ bool PreloadAttemptsPopup::init(float width, float height) {
     if (!Popup::init(width, height))
         return false;
 
-    this->setID("preload-attempts-popup_spr");
+    this->setID("preload-attempts-popup"_spr);
     setTitle("");
 
     auto& G = Ghosts::I();
@@ -954,13 +907,13 @@ bool PreloadAttemptsPopup::init(float width, float height) {
                 .zOrder(-1),
 
             Build<CCLabelBMFont>::create("Preload Attempts", "bigFont.fnt")
-                .id("TitleLabel")
+                .id("TitleLabel"_spr)
                 .pos(0.f, 83.f)
                 .anchorPoint(0.5f, 0.5f)
                 .scale(0.825f),
 
             Build<CCLabelBMFont>::create("Load 0 of 0", "bigFont.fnt")
-                .id("NumAttemptsLoadingLabel")
+                .id("NumAttemptsLoadingLabel"_spr)
                 .pos(0.f, -27.f)
                 .anchorPoint(0.5f, 0.5f)
                 .scale(0.525f)
@@ -968,7 +921,7 @@ bool PreloadAttemptsPopup::init(float width, float height) {
 
             
             Build<CCLabelBMFont>::create("(Estimated RAM: 0MB)", "bigFont.fnt")
-                .id("EstimatedRAMLabel")
+                .id("EstimatedRAMLabel"_spr)
                 .pos(0.f, -43.f)
                 .anchorPoint(0.5f, 0.5f)
                 .scale(0.425f)
@@ -976,7 +929,7 @@ bool PreloadAttemptsPopup::init(float width, float height) {
 
             Build<TextInput>::create(200.f, "Type number", "bigFont.fnt")
                 .$build_wrap(setString(std::to_string(startVal)))
-                .id("numberTextInput")
+                .id("numberTextInput"_spr)
                 .store(m_numAttemptsToLoad)
                 .contentSize(200.f, 30.f)
                 .anchorPoint(0.5f, 0.5f)
@@ -991,25 +944,19 @@ bool PreloadAttemptsPopup::init(float width, float height) {
         .layoutOpts(Build<AnchorLayoutOptions>::create()
             .anchor(Anchor::Center))
         .children(
-            Build<CCScale9Sprite>::create("GJ_button_01.png")
-                .contentSize(150.f, 40.f)
-                .anchorPoint(0.5f, 0.5f)
-                .scale(0.925f)
-                .intoMenuItem(this, menu_selector(PreloadAttemptsPopup::onPressLoad))
-                .scaleMult(kPopupButtonSizeMult)
-                .id("LoadButton")
-                .store(m_loadBtn)
-                .pos(0.f, -73.f)
-                .layout(Build<AnchorLayout>::create())
-                .children(
-                    Build<CCLabelBMFont>::create("Load", "bigFont.fnt")
-                        .id("LoadButtonLabel")
-                        .anchorPoint(0.5f, 0.5f)
-                        .scale(0.8f)
-                        .tag(0)
-                        .layoutOpts(Build<AnchorLayoutOptions>::create()
-                            .anchor(Anchor::Center)))
-                .updateLayout(),
+            createTextButton_(
+                    this,
+                    /*spriteFrame*/"GJ_button_01.png",
+                    /*text*/"Load",
+                    /*callback*/menu_selector(PreloadAttemptsPopup::onPressLoad),
+                    /*node_id*/"load-button"_spr,
+                    /*pos*/{0.f, -73.f},
+                    /*width*/150.f,
+                    /*height*/40.f,
+                    /*spriteScale*/0.925f,
+                    /*labelScale*/0.8f,
+                    /*sizeMult*/kPopupBigButtonSizeMult
+                    ).store(m_loadBtn),
 
             Build<CCSprite>::createSpriteName("GJ_plus2Btn_001.png")
                 .anchorPoint(0.5f, 0.5f)
@@ -1020,18 +967,10 @@ bool PreloadAttemptsPopup::init(float width, float height) {
                 .pos(124.f, 0.f),
 
             Build<CCLabelBMFont>::create("Max", "bigFont.fnt")
-                .id("maxLabel")
+                .id("maxLabel"_spr)
                 .pos(124.f, 24.f)
                 .anchorPoint(0.5f, 0.5f)
                 .scale(0.425f)
-            //Build<CCLabelBMFont>::create("X attempts are already preloaded\n(exit the level to unload them)", "bigFont.fnt")
-            //.alignment(kCCTextAlignmentCenter)
-            //.id("AlreadyPreloadedLabel")
-            //.pos(0.f, 61.f)
-            //.anchorPoint(0.5f, 0.5f)
-            //.scale(0.275f)
-            //.store(m_alreadyPreloadedLabel)
-            //.visible(false)
         )
         .parentAtPos(m_mainLayer, Anchor::Center)
         .collect();
@@ -1051,7 +990,7 @@ void PreloadAttemptsPopup::onClose(CCObject* sender) {
     }
 
     if (auto* scene = CCDirector::sharedDirector()->getRunningScene()) {
-        if (auto* xs = typeinfo_cast<PlaybackModMenu*>(scene->getChildByIDRecursive("playbackModMenu-popup_spr"))) {
+        if (auto* xs = typeinfo_cast<PlaybackModMenu*>(scene->getChildByIDRecursive("playbackModMenu-popup"_spr))) {
             xs->syncUIFromRuntime();
         }
     }
@@ -1231,7 +1170,7 @@ bool PlaybackSettingsPopup::init(float width, float height) {
     if (!Popup::init(width, height))
         return false;
 
-    this->setID("playback-settings-popup_spr");
+    this->setID("playback-settings-popup"_spr);
     setTitle("");
 
     // Pull initial state (defaults should be OFF if Ghosts has no saved state)
@@ -1246,76 +1185,51 @@ bool PlaybackSettingsPopup::init(float width, float height) {
         .children(
 
             Build<CCLabelBMFont>::create("Playback Settings", "bigFont.fnt")
-                .id("TitleLabel")
+                .id("TitleLabel"_spr)
                 .pos(0.f, 83.f)
                 .anchorPoint(0.5f, 0.5f)
                 .scale(0.825f),
 
-            /*
-            Build<TextInput>::create(100.f, "Type number", "bigFont.fnt")
-                .$build_wrap(setCommonFilter(CommonFilter::Uint))
-                .$build_wrap(setString("100"))
-                .$build_wrap(setWidth(100.f))
-                .id("MaxVisibleGhostsNumberInput")
-                .store(m_maxVisibleInput)
-                .pos(57.f, 18.f)
-                .contentSize(100.f, 30.f)
-                .anchorPoint(0.5f, 0.5f)
-                .children(
-                    Build<CCLabelBMFont>::create("Max Visible\nGhosts", "bigFont.fnt")
-                        .alignment(kCCTextAlignmentCenter)
-                        .id("MaxVisibleGhostsLabel")
-                        .pos(-59.f, 15.f)
-                        .anchorPoint(0.5f, 0.5f)
-                        .scale(0.475f)
-                        .store(m_maxVisibleLabel)
-                ),*/
-
             Build<CCMenu>::create()
-                .id("CustomDeathSoundMenu")
+                .id("CustomDeathSoundMenu"_spr)
                 .store(m_customDeathSoundMenu)
                 .pos(57.f, 18.f)
                 .contentSize(100.f, 30.f)
                 .anchorPoint(0.5f, 0.5f)
                 .ignoreAnchorPointForPos(false)
                 .children(
-                    Build<CCScale9Sprite>::create("GJ_button_01.png")
-                        .contentSize(110.f, 30.f)
-                        .anchorPoint(0.5f, 0.5f)
-                        .intoMenuItem(this, menu_selector(PlaybackSettingsPopup::onOpenCustomDeathSoundFolder))
-                        .id("OpenCustomDeathSoundFolderButton")
-                        .pos(-70.f, 15.f)
-                        .scaleMult(kPopupButtonSizeMult)
-                        .store(m_openCustomDeathSoundFolderBtn)
-                        .layout(Build<AnchorLayout>::create())
-                        .children(
-                            Build<CCLabelBMFont>::create("Open Folder", "bigFont.fnt")
-                                .anchorPoint(0.5f, 0.5f)
-                                .scale(0.35f)
-                                .layoutOpts(Build<AnchorLayoutOptions>::create().anchor(Anchor::Center))
-                        )
-                        .updateLayout(),
-                    Build<CCScale9Sprite>::create("GJ_button_01.png")
-                        .contentSize(110.f, 30.f)
-                        .anchorPoint(0.5f, 0.5f)
-                        .intoMenuItem(this, menu_selector(PlaybackSettingsPopup::onDownloadMemeSounds))
-                        .id("OpenCustomDeathSoundFolderButton")
-                        .pos(70.f, 15.f)
-                        .scaleMult(kPopupButtonSizeMult)
-                        .store(m_downloadMemeSoundsBtn)
-                        .layout(Build<AnchorLayout>::create())
-                        .children(
-                            Build<CCLabelBMFont>::create("Install Meme SFX", "bigFont.fnt")
-                                .anchorPoint(0.5f, 0.5f)
-                                .scale(0.35f)
-                                .layoutOpts(Build<AnchorLayoutOptions>::create().anchor(Anchor::Center))
-                        )
-                        .updateLayout()
+                    createTextButton_(
+                    this,
+                    /*spriteFrame*/"GJ_button_01.png",
+                    /*text*/"Open Folder",
+                    /*callback*/menu_selector(PlaybackSettingsPopup::onOpenCustomDeathSoundFolder),
+                    /*node_id*/"open-custom-death-sound-folder-button"_spr,
+                    /*pos*/{-70.f, 15.f},
+                    /*width*/100.f,
+                    /*height*/30.f,
+                    /*spriteScale*/1.f,
+                    /*labelScale*/0.35f,
+                    /*sizeMult*/kPopupButtonSizeMult
+                    ).store(m_openCustomDeathSoundFolderBtn),
+
+                    createTextButton_(
+                    this,
+                    /*spriteFrame*/"GJ_button_01.png",
+                    /*text*/"Install Meme SFX",
+                    /*callback*/menu_selector(PlaybackSettingsPopup::onDownloadMemeSounds),
+                    /*node_id*/"install-meme-sfx-button"_spr,
+                    /*pos*/{70.f, 15.f},
+                    /*width*/120.f,
+                    /*height*/30.f,
+                    /*spriteScale*/1.f,
+                    /*labelScale*/0.35f,
+                    /*sizeMult*/kPopupButtonSizeMult
+                    ).store(m_downloadMemeSoundsBtn)
                 ),
 
             Build<CCLabelBMFont>::create("Only showing ghosts of attempts\nthat passed 50%", "bigFont.fnt")
                 .alignment(kCCTextAlignmentCenter)
-                .id("OnlyPastPercentDynamicLabel")
+                .id("OnlyPastPercentDynamicLabel"_spr)
                 .pos(0.f, -80.f)
                 .anchorPoint(0.5f, 0.5f)
                 .scale(0.325f)
@@ -1330,32 +1244,17 @@ bool PlaybackSettingsPopup::init(float width, float height) {
         .ignoreAnchorPointForPos(false)
         .layoutOpts(Build<AnchorLayoutOptions>::create().anchor(Anchor::Center))
         .children(
-            /*
-            // Limit visible ghosts toggle
-            Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackSettingsPopup::onToggleLimitVisible)))
-                .id("LimitVisibleGhostsToggle")
-                .pos(-110.f, 50.f)
-                .anchorPoint(0.5f, 0.5f)
-                .scale(0.8f)
-                .store(m_tgLimitVisible)
-                .children(
-                    Build<CCLabelBMFont>::create("Limit Visible Ghosts", "bigFont.fnt")
-                        .id("LimitVisibleGhostsLabel")
-                        .pos(142.f, 18.f)
-                        .anchorPoint(0.5f, 0.5f)
-                        .scale(0.575f)
-                ),*/
 
             // Custom Death Sound toggle
             Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackSettingsPopup::onToggleCustomDeathSound)))
-                .id("CustomDeathSoundToggle")
+                .id("CustomDeathSoundToggle"_spr)
                 .pos(-110.f, 50.f)
                 .anchorPoint(0.5f, 0.5f)
                 .scale(0.8f)
                 .store(m_tgCustomDeathSound)
                 .children(
                     Build<CCLabelBMFont>::create("Custom Death Sound", "bigFont.fnt")
-                        .id("CustomDeathSoundToggleLabel")
+                        .id("CustomDeathSoundToggleLabel"_spr)
                         .pos(142.f, 18.f)
                         .anchorPoint(0.5f, 0.5f)
                         .scale(0.575f)
@@ -1363,7 +1262,7 @@ bool PlaybackSettingsPopup::init(float width, float height) {
 
             // Only attempts past N% toggle
             Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackSettingsPopup::onToggleOnlyPast)))
-                .id("OnlyPastPercentageGhostsToggle")
+                .id("OnlyPastPercentageGhostsToggle"_spr)
                 .pos(-110.f, -24.f)
                 .anchorPoint(0.5f, 0.5f)
                 .scale(0.8f)
@@ -1371,7 +1270,7 @@ bool PlaybackSettingsPopup::init(float width, float height) {
                 .children(
                     Build<CCLabelBMFont>::create("Only Attempts that\npassed n%", "bigFont.fnt")
                         .alignment(kCCTextAlignmentCenter)
-                        .id("OnlyPastPercentageGhostsLabel")
+                        .id("OnlyPastPercentageGhostsLabel"_spr)
                         .pos(142.f, 18.f)
                         .anchorPoint(0.5f, 0.5f)
                         .scale(0.575f)
@@ -1382,7 +1281,7 @@ bool PlaybackSettingsPopup::init(float width, float height) {
                 .$build_wrap(setWidth(100.f))
                 .$build_wrap(setFilter("0123456789."))
                 .$build_wrap(setMaxCharCount(6))
-                .id("OnlyPastPercentInput")
+                .id("OnlyPastPercentInput"_spr)
                 .store(m_percentInput)
                 .pos(57.f, -55.f)
                 .contentSize(100.f, 30.f)
@@ -1390,7 +1289,7 @@ bool PlaybackSettingsPopup::init(float width, float height) {
                 .children(
                     Build<CCLabelBMFont>::create("Passed\nPercent", "bigFont.fnt")
                         .alignment(kCCTextAlignmentCenter)
-                        .id("OnlyPastPercentInputLabel")
+                        .id("OnlyPastPercentInputLabel"_spr)
                         .pos(-59.f, 15.f)
                         .anchorPoint(0.5f, 0.5f)
                         .scale(0.475f)
@@ -1444,7 +1343,7 @@ void PlaybackSettingsPopup::onClose(CCObject* sender) {
     }
 
     if (auto* scene = CCDirector::sharedDirector()->getRunningScene()) {
-        if (auto* xs = typeinfo_cast<PlaybackModMenu*>(scene->getChildByIDRecursive("playbackModMenu-popup_spr"))) {
+        if (auto* xs = typeinfo_cast<PlaybackModMenu*>(scene->getChildByIDRecursive("playbackModMenu-popup"_spr))) {
             xs->syncUIFromRuntime();
         }
     }

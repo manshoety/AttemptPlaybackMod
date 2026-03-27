@@ -27,7 +27,7 @@ GhostDistancePopup* GhostDistancePopup::create() {
 bool GhostDistancePopup::init(float width, float height) {
     if (!Popup::init(width, height))
             return false;
-    this->setID("ghostDistance-popup");
+    this->setID("ghostDistance-popup"_spr);
     setTitle("Ghost Distance");
 
     m_mainLayer->setLayout(AnchorLayout::create());
@@ -87,7 +87,7 @@ void GhostDistancePopup::buildUI_() {
     root->addChild(m_menu);
 
     m_slider = Slider::create(this, menu_selector(GhostDistancePopup::onSlide), 0.9f);
-    m_slider->setID("ghost-distance-limit");
+    m_slider->setID("ghost-distance-limit"_spr);
     m_slider->setScale(0.85f);
     m_slider->setPosition({ 0.f, -10.f });
     m_slider->setAnchorPoint({0.0f, 0.0f});

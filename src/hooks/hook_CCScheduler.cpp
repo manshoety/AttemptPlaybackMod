@@ -7,7 +7,7 @@
 
 using namespace geode::prelude;
 
-// dankmeme01 is goated for this (allows WAY faster player oject creation)
+// dankmeme01 is goated for this (allows WAY faster player object creation)
 class $modify(CCScheduler) {
     void scheduleUpdateForTarget(CCObject* pTarget, int nPriority, bool bPaused) {
         if (g_disableUpdate && typeinfo_cast<CCParticleSystem*>(pTarget))
