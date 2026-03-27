@@ -5075,6 +5075,7 @@ private:
                 // EOL freeze check
                 if (atLastFrame || atEndTime) {
                     if (ghost) {
+                        ghost->stopDashing();
                         if (m_ghostsExplode) {
                             // ghost->playerDestroyed(false);
                             ghost->playDeathEffect();
