@@ -1485,6 +1485,9 @@ public:
         clearGhostBatches_();
         getOrCreateBatch_();
 
+        customLastWrite = {};
+        refreshCustomExplodeSfx_(customSfx, customLastWrite);
+
         clearAllGhostNodes();
         m_preloadedIndices.clear();
         m_preloadedSet.clear();
@@ -3128,6 +3131,18 @@ public:
         }
     }
 
+    bool removeReverseOrDuplicateFrames(std::vector<Frame> frames, double t) {
+        // Reverse frames
+        while (!frames.empty() && t < frames.back().t) {
+            frames.pop_back();
+        }
+
+        // Duplicate frame
+        if (!frames.empty() && t == frames.back().t) return false;
+
+        return true;
+    }
+
     void recordCurrentFrame_(bool isPlayer1) {
         if (!m_pl) return;
         if (m_justDied) return;
@@ -3137,18 +3152,8 @@ public:
         double absoluteTime = m_pl->m_attemptTime + m_current.baseTimeOffset;
         
         if (m_pl->m_player1 && isPlayer1) {
-            if (!m_current.p1.empty()) {
-                double last_t = m_current.p1.back().t;
-                // Don't record the same frame again (frame stepper)
-                if (absoluteTime == last_t) return;
-                // If we moved backwards in time (some mods can do that)
-                while (absoluteTime < last_t) {
-                    // log::info("Delete P1 frames");
-                    m_current.p1.pop_back();
-                    if (m_current.p1.empty()) break;
-                    last_t = m_current.p1.back().t;
-                }
-            }
+            if (!removeReverseOrDuplicateFrames(m_current.p1, absoluteTime)) return;
+
             auto* p1 = m_pl->m_player1;
             Frame f;
             f.t = absoluteTime;
@@ -3182,18 +3187,7 @@ public:
         }
         
         if (m_pl->m_player2 && m_pl->m_player2->getPositionX() != 0.f && !isPlayer1) {
-            if (!m_current.p2.empty()) {
-                double last_t2 = m_current.p2.back().t;
-                // Don't record the same frame again (frame stepper)
-                if (absoluteTime == last_t2) return;
-                // If we moved backwards in time (some mods can do that)
-                while (absoluteTime < last_t2) {
-                    // log::info("Delete P2 frames");
-                    m_current.p2.pop_back();
-                    if (m_current.p2.empty()) break;
-                    last_t2 = m_current.p2.back().t;
-                }
-            }
+            if (!removeReverseOrDuplicateFrames(m_current.p2, absoluteTime)) return;
             m_current.hadDual = true;
             auto* p2 = m_pl->m_player2;
             Frame f;
