@@ -4,9 +4,296 @@
 #include <cstring>
 #include <cstdint>
 #include <vector>
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include "types.hpp"
 #include "apx_format.hpp"
 #include "apx_io.hpp"
+
+static constexpr double kAPXPosScale_  = 64.0;    // 1/64 px
+static constexpr double kAPXRotScale_  = 16.0;     // 1/16 deg
+static constexpr double kAPXSizeScale_ = 256.0;    // 1/256
+static constexpr double kAPXTimeScale_ = 48000;  // up to 48k Hz (so any large weird physics update people set won't look jittery)
+static constexpr size_t kAPXKeyEvery_  = 64;
+
+enum : uint8_t {
+    kAPXRec_Key_     = 1 << 0,
+    kAPXRec_Mode_    = 1 << 1,
+    kAPXRec_Flags_   = 1 << 2,
+    kAPXRec_Vehicle_ = 1 << 3,
+    kAPXRec_Wave_    = 1 << 4,
+};
+
+struct APXQuantState_ {
+    int32_t xQ = 0;
+    int32_t yQ = 0;
+    int32_t rotQ = 0;
+    uint16_t vehicleQ = 1;
+    uint16_t waveQ = 1;
+    uint32_t tQ = 0;
+    uint8_t mode = static_cast<uint8_t>(IconType::Cube);
+    uint8_t flags = 0;
+};
+
+template <class T>
+static inline void appendPod_(std::vector<uint8_t>& dst, T const& v) {
+    const size_t old = dst.size();
+    dst.resize(old + sizeof(T));
+    std::memcpy(dst.data() + old, &v, sizeof(T));
+}
+
+template <class T>
+static inline bool readPod_(const uint8_t*& cur, const uint8_t* end, T& out) {
+    if ((size_t)(end - cur) < sizeof(T)) return false;
+    std::memcpy(&out, cur, sizeof(T));
+    cur += sizeof(T);
+    return true;
+}
+
+static inline uint8_t attemptFlagsFromAttempt_(Attempt const& a) {
+    uint8_t flags = 0;
+    if (a.practiceAttempt) flags |= 1u;
+    if (a.completed)       flags |= (1u << 1);
+    if (a.hadDual)         flags |= (1u << 2);
+    return flags;
+}
+
+static inline void applyAttemptFlags_(uint8_t flags, Attempt& a) {
+    a.practiceAttempt = (flags & 1u) != 0;
+    a.completed = (flags & (1u << 1)) != 0;
+    a.hadDual = (flags & (1u << 2)) != 0;
+}
+
+static inline int32_t quantPos_(float v) {
+    return static_cast<int32_t>(std::llround(static_cast<double>(v) * kAPXPosScale_));
+}
+
+static inline int32_t quantRot_(float v) {
+    return static_cast<int32_t>(std::llround(static_cast<double>(v) * kAPXRotScale_));
+}
+
+static inline uint16_t quantSize_(float v) {
+    long long q = std::llround(static_cast<double>(v) * kAPXSizeScale_);
+    if (q < 0) q = 0;
+    if (q > std::numeric_limits<uint16_t>::max()) q = std::numeric_limits<uint16_t>::max();
+    return static_cast<uint16_t>(q);
+}
+
+static inline uint32_t quantTime_(double v) {
+    if (v < 0.0) v = 0.0;
+    unsigned long long q = static_cast<unsigned long long>(std::llround(v * kAPXTimeScale_));
+    if (q > std::numeric_limits<uint32_t>::max()) q = std::numeric_limits<uint32_t>::max();
+    return static_cast<uint32_t>(q);
+}
+
+static inline float dequantPos_(int32_t q) {
+    return static_cast<float>(static_cast<double>(q) / kAPXPosScale_);
+}
+
+static inline float dequantRot_(int32_t q) {
+    return static_cast<float>(static_cast<double>(q) / kAPXRotScale_);
+}
+
+static inline float dequantSize_(uint16_t q) {
+    return static_cast<float>(static_cast<double>(q) / kAPXSizeScale_);
+}
+
+static inline double dequantTime_(uint32_t q) {
+    return static_cast<double>(q) / kAPXTimeScale_;
+}
+
+static inline APXQuantState_ makeQuantState_(Frame const& f) {
+    APXQuantState_ q;
+    q.xQ = quantPos_(f.x);
+    q.yQ = quantPos_(f.y);
+    q.rotQ = quantRot_(f.rot);
+    q.vehicleQ = quantSize_(f.vehicleSize);
+    q.waveQ = quantSize_(f.waveSize);
+    q.tQ = quantTime_(f.t);
+    q.mode = static_cast<uint8_t>(f.mode);
+    q.flags = flagsFromFrame_(f);
+    return q;
+}
+
+static inline Frame makeFrame_(APXQuantState_ const& s, size_t i) {
+    Frame f{};
+    f.x = dequantPos_(s.xQ);
+    f.y = dequantPos_(s.yQ);
+    f.rot = dequantRot_(s.rotQ);
+    f.vehicleSize = dequantSize_(s.vehicleQ);
+    f.waveSize = dequantSize_(s.waveQ);
+    f.mode = static_cast<IconType>(s.mode);
+    f.t = dequantTime_(s.tQ);
+    f.frame = i;
+    frameFromFlags_(s.flags, f);
+    return f;
+}
+
+static std::vector<uint8_t> encodeTrackCompact_(std::vector<Frame> const& frames) {
+    std::vector<uint8_t> out;
+    if (frames.empty()) return out;
+
+    out.reserve(frames.size() * 10 + 32);
+
+    APXQuantState_ prev{};
+    bool havePrev = false;
+    size_t sinceKey = 0;
+
+    for (size_t i = 0; i < frames.size(); ++i) {
+        const APXQuantState_ cur = makeQuantState_(frames[i]);
+
+        bool needKey = !havePrev || sinceKey >= kAPXKeyEvery_;
+        if (!needKey) {
+            const long long dx = static_cast<long long>(cur.xQ) - static_cast<long long>(prev.xQ);
+            const long long dy = static_cast<long long>(cur.yQ) - static_cast<long long>(prev.yQ);
+            const long long dr = static_cast<long long>(cur.rotQ) - static_cast<long long>(prev.rotQ);
+            const unsigned long long dt =
+                (cur.tQ >= prev.tQ)
+                    ? static_cast<unsigned long long>(cur.tQ - prev.tQ)
+                    : std::numeric_limits<unsigned long long>::max();
+
+            if (dx < std::numeric_limits<int16_t>::min() || dx > std::numeric_limits<int16_t>::max() ||
+                dy < std::numeric_limits<int16_t>::min() || dy > std::numeric_limits<int16_t>::max() ||
+                dr < std::numeric_limits<int16_t>::min() || dr > std::numeric_limits<int16_t>::max() ||
+                dt > std::numeric_limits<uint16_t>::max()) {
+                needKey = true;
+            }
+        }
+
+        if (needKey) {
+            const uint8_t tag = kAPXRec_Key_;
+
+            APXFrameKeyCompact rec{};
+            rec.xQ = cur.xQ;
+            rec.yQ = cur.yQ;
+            rec.rotQ = cur.rotQ;
+            rec.vehicleQ = cur.vehicleQ;
+            rec.waveQ = cur.waveQ;
+            rec.tQ = cur.tQ;
+            rec.mode = cur.mode;
+            rec.flags = cur.flags;
+
+            appendPod_(out, tag);
+            appendPod_(out, rec);
+
+            prev = cur;
+            havePrev = true;
+            sinceKey = 0;
+            continue;
+        }
+
+        uint8_t tag = 0;
+        if (cur.mode != prev.mode)         tag |= kAPXRec_Mode_;
+        if (cur.flags != prev.flags)       tag |= kAPXRec_Flags_;
+        if (cur.vehicleQ != prev.vehicleQ) tag |= kAPXRec_Vehicle_;
+        if (cur.waveQ != prev.waveQ)       tag |= kAPXRec_Wave_;
+
+        APXFrameDeltaCompact rec{};
+        rec.dxQ = static_cast<int16_t>(cur.xQ - prev.xQ);
+        rec.dyQ = static_cast<int16_t>(cur.yQ - prev.yQ);
+        rec.drotQ = static_cast<int16_t>(cur.rotQ - prev.rotQ);
+        rec.dtQ = static_cast<uint16_t>(cur.tQ - prev.tQ);
+
+        appendPod_(out, tag);
+        appendPod_(out, rec);
+
+        if (tag & kAPXRec_Mode_)    appendPod_(out, cur.mode);
+        if (tag & kAPXRec_Flags_)   appendPod_(out, cur.flags);
+        if (tag & kAPXRec_Vehicle_) appendPod_(out, cur.vehicleQ);
+        if (tag & kAPXRec_Wave_)    appendPod_(out, cur.waveQ);
+
+        prev = cur;
+        ++sinceKey;
+    }
+
+    return out;
+}
+
+static bool decodeTrackCompact_(
+    const uint8_t* data,
+    size_t byteSize,
+    uint32_t frameCount,
+    std::vector<Frame>& outFrames
+) {
+    outFrames.clear();
+    outFrames.reserve(frameCount);
+
+    const uint8_t* cur = data;
+    const uint8_t* end = data + byteSize;
+
+    APXQuantState_ prev{};
+    bool havePrev = false;
+
+    for (uint32_t i = 0; i < frameCount; ++i) {
+        uint8_t tag = 0;
+        if (!readPod_(cur, end, tag)) return false;
+
+        APXQuantState_ s{};
+
+        if (tag & kAPXRec_Key_) {
+            APXFrameKeyCompact rec{};
+            if (!readPod_(cur, end, rec)) return false;
+
+            s.xQ = rec.xQ;
+            s.yQ = rec.yQ;
+            s.rotQ = rec.rotQ;
+            s.vehicleQ = rec.vehicleQ;
+            s.waveQ = rec.waveQ;
+            s.tQ = rec.tQ;
+            s.mode = rec.mode;
+            s.flags = rec.flags;
+        } else {
+            if (!havePrev) return false;
+
+            APXFrameDeltaCompact rec{};
+            if (!readPod_(cur, end, rec)) return false;
+
+            s = prev;
+            s.xQ += rec.dxQ;
+            s.yQ += rec.dyQ;
+            s.rotQ += rec.drotQ;
+            s.tQ += rec.dtQ;
+
+            if (tag & kAPXRec_Mode_) {
+                if (!readPod_(cur, end, s.mode)) return false;
+            }
+            if (tag & kAPXRec_Flags_) {
+                if (!readPod_(cur, end, s.flags)) return false;
+            }
+            if (tag & kAPXRec_Vehicle_) {
+                if (!readPod_(cur, end, s.vehicleQ)) return false;
+            }
+            if (tag & kAPXRec_Wave_) {
+                if (!readPod_(cur, end, s.waveQ)) return false;
+            }
+        }
+
+        outFrames.push_back(makeFrame_(s, i));
+        prev = s;
+        havePrev = true;
+    }
+
+    return true;
+}
+
+static inline void finalizeLoadedAttempt_(Attempt& a) {
+    if (!a.p1.empty()) {
+        a.startX = a.p1.front().x;
+        a.startY = a.p1.front().y;
+        a.endX = a.p1.back().x;
+    } else if (!a.p2.empty()) {
+        a.startX = a.p2.front().x;
+        a.startY = a.p2.front().y;
+        a.endX = a.p2.back().x;
+    } else {
+        a.endX = a.startX;
+    }
+
+    if (!a.p2.empty()) a.hadDual = true;
+    a.persistedOnDisk = true;
+    a.recordedThisSession = false;
+}
 
 bool writeAPXPracticePath(std::ostream& out, const PracticePath& path) {
     if (!out.good()) return false;
@@ -207,5 +494,95 @@ bool readAPXPracticePath(std::istream& in, uint32_t chunkSize, PracticePath& pat
     }
     
     //log::info("[APX load] PATH loaded: {} sessions, version {}", path.sessions.size(), hdr.version);
+    return true;
+}
+
+bool writeAPXAttemptCompact(std::ostream& out, Attempt const& attempt) {
+    if (!out.good()) return false;
+
+    const std::vector<uint8_t> p1Bytes = encodeTrackCompact_(attempt.p1);
+    const std::vector<uint8_t> p2Bytes = encodeTrackCompact_(attempt.p2);
+
+    APXMetaCompact meta{};
+    meta.serial = static_cast<uint32_t>(attempt.serial);
+    meta.startPercent = attempt.startPercent;
+    meta.endPercent = attempt.endPercent;
+    meta.flags = attemptFlagsFromAttempt_(attempt);
+    meta.streamVersion = kAPXCompactAttemptVersion;
+    meta.p1Count = static_cast<uint32_t>(attempt.p1.size());
+    meta.p2Count = static_cast<uint32_t>(attempt.p2.size());
+    meta.startX = attempt.startX;
+    meta.startY = attempt.startY;
+    meta.startCheckpointId = attempt.startCheckpointId;
+    meta.baseTimeOffset = attempt.baseTimeOffset;
+    meta.seed = static_cast<uint64_t>(attempt.seed);
+
+    APXTrackHeaderCompact p1Hdr{};
+    p1Hdr.byteSize = static_cast<uint32_t>(p1Bytes.size());
+
+    APXTrackHeaderCompact p2Hdr{};
+    p2Hdr.byteSize = static_cast<uint32_t>(p2Bytes.size());
+
+    const uint32_t payloadSz =
+        static_cast<uint32_t>(sizeof(APXMetaCompact)) +
+        static_cast<uint32_t>(sizeof(APXTrackHeaderCompact)) + p1Hdr.byteSize +
+        static_cast<uint32_t>(sizeof(APXTrackHeaderCompact)) + p2Hdr.byteSize;
+
+    const uint32_t type = kChunk_ATT3;
+
+    out.write(reinterpret_cast<const char*>(&type), sizeof(type));
+    out.write(reinterpret_cast<const char*>(&payloadSz), sizeof(payloadSz));
+    out.write(reinterpret_cast<const char*>(&meta), sizeof(meta));
+    out.write(reinterpret_cast<const char*>(&p1Hdr), sizeof(p1Hdr));
+    if (!p1Bytes.empty()) {
+        out.write(reinterpret_cast<const char*>(p1Bytes.data()), static_cast<std::streamsize>(p1Bytes.size()));
+    }
+    out.write(reinterpret_cast<const char*>(&p2Hdr), sizeof(p2Hdr));
+    if (!p2Bytes.empty()) {
+        out.write(reinterpret_cast<const char*>(p2Bytes.data()), static_cast<std::streamsize>(p2Bytes.size()));
+    }
+
+    return out.good();
+}
+
+bool readAPXAttemptCompact(std::istream& in, uint32_t chunkSize, Attempt& attempt) {
+    attempt = Attempt{};
+
+    std::vector<uint8_t> buf(chunkSize);
+    if (chunkSize != 0) {
+        in.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
+        if (!in) return false;
+    }
+
+    const uint8_t* cur = buf.data();
+    const uint8_t* end = buf.data() + buf.size();
+
+    APXMetaCompact meta{};
+    if (!readPod_(cur, end, meta)) return false;
+    if (meta.streamVersion != kAPXCompactAttemptVersion) return false;
+
+    attempt.serial = static_cast<int>(meta.serial);
+    attempt.startPercent = meta.startPercent;
+    attempt.endPercent = meta.endPercent;
+    attempt.startX = meta.startX;
+    attempt.startY = meta.startY;
+    attempt.startCheckpointId = meta.startCheckpointId;
+    attempt.baseTimeOffset = meta.baseTimeOffset;
+    attempt.seed = static_cast<uintptr_t>(meta.seed);
+    applyAttemptFlags_(meta.flags, attempt);
+
+    APXTrackHeaderCompact p1Hdr{};
+    if (!readPod_(cur, end, p1Hdr)) return false;
+    if ((size_t)(end - cur) < p1Hdr.byteSize) return false;
+    if (!decodeTrackCompact_(cur, p1Hdr.byteSize, meta.p1Count, attempt.p1)) return false;
+    cur += p1Hdr.byteSize;
+
+    APXTrackHeaderCompact p2Hdr{};
+    if (!readPod_(cur, end, p2Hdr)) return false;
+    if ((size_t)(end - cur) < p2Hdr.byteSize) return false;
+    if (!decodeTrackCompact_(cur, p2Hdr.byteSize, meta.p2Count, attempt.p2)) return false;
+    cur += p2Hdr.byteSize;
+
+    finalizeLoadedAttempt_(attempt);
     return true;
 }

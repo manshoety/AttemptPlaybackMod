@@ -125,7 +125,44 @@ struct PoseCache {
 #pragma pack(push, 1)
 struct APXHeader { 
     char magic[4] = {'A','P','X','2'}; 
-    uint32_t version = 5;
+    uint32_t version = 6;
+};
+struct APXMetaCompact {
+    uint32_t serial;
+    float startPercent;
+    float endPercent;
+    uint8_t flags;
+    uint8_t _pad1;
+    uint16_t streamVersion;
+    uint32_t p1Count;
+    uint32_t p2Count;
+    float startX;
+    float startY;
+    int32_t startCheckpointId;
+    double baseTimeOffset;
+    uint64_t seed;
+};
+
+struct APXTrackHeaderCompact {
+    uint32_t byteSize;
+};
+
+struct APXFrameKeyCompact {
+    int32_t xQ;
+    int32_t yQ;
+    int32_t rotQ;
+    uint16_t vehicleQ;
+    uint16_t waveQ;
+    uint32_t tQ;
+    uint8_t mode;
+    uint8_t flags;
+};
+
+struct APXFrameDeltaCompact {
+    int16_t dxQ;
+    int16_t dyQ;
+    int16_t drotQ;
+    uint16_t dtQ;
 };
 struct APXMeta {
     uint32_t serial;

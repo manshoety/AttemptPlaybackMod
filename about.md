@@ -6,6 +6,8 @@ Mod menu button is on the left of the pause screen
 
 Visit the mod settings to disable the mod and change some stuff (like Player Object pooling)
 
+Warning: Understand that recording a large number of attempts may lead to a large attempt save file (which may slow down loading a level if large enough)
+
 # IMPORTANT
 
 Completing a level with the playback bot prevents completion, but can still count as a full run to some mods like Death Tracker

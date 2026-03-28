@@ -1010,8 +1010,6 @@ public:
         m_pl = pl;
         m_levelIDOnAttach = levelID;
         refreshLevelName(levelID);
-        //LoadFilter f;
-        //loadFromDisk_(levelID, f);
     }
 
     void renumberCurrentAttemptIfFresh() {
@@ -1020,66 +1018,83 @@ public:
         }
     }
 
-    void appendAttemptChunk_(std::ofstream& out, Attempt const& a) {
-        const uint32_t p1N = static_cast<uint32_t>(a.p1.size());
-        const uint32_t p2N = static_cast<uint32_t>(a.p2.size());
+    bool rewriteWholeFileToV6_(std::filesystem::path const& path) {
+        auto tmp = path;
+        tmp += ".tmp";
 
-        APXMeta m{};
-        m.serial = static_cast<uint32_t>(a.serial);
-        m.startPercent = a.startPercent;
-        m.endPercent = a.endPercent;
-        m.flags = 0;
-        if (a.practiceAttempt) m.flags |= 1u;
-        if (a.completed) m.flags |= (1u << 1);
-        if (a.hadDual) m.flags |= (1u << 2);
-        m.p1Count = p1N;
-        m.p2Count = p2N;
-        m.startX = a.startX;
-        m.startY = a.startY;
-        m.startCheckpointId = a.startCheckpointId;
-        m.baseTimeOffset = a.baseTimeOffset;
-        m.seed = static_cast<uint64_t>(a.seed);
-
-        const uint32_t payloadSz =
-            static_cast<uint32_t>(sizeof(APXMeta)) +
-            p1N * static_cast<uint32_t>(sizeof(APXFrame)) +
-            p2N * static_cast<uint32_t>(sizeof(APXFrame));
-
-        const uint32_t type = kChunk_ATTZ;
-
-        out.write(reinterpret_cast<const char*>(&type), sizeof(type));
-        out.write(reinterpret_cast<const char*>(&payloadSz), sizeof(payloadSz));
-        out.write(reinterpret_cast<const char*>(&m), sizeof(m));
-
-        // Write frames
-        auto writeFrames = [&](std::vector<Frame> const& src) {
-            for (auto const& f : src) {
-                APXFrame s{};
-                s.x = f.x;
-                s.y = f.y;
-                s.rot = f.rot;
-                s.vehicleSize = f.vehicleSize;
-                s.waveSize = f.waveSize;
-                s.mode = static_cast<uint8_t>(f.mode);
-                s.t = f.t;
-                flagsFromFrame_(f, s);
-                out.write(reinterpret_cast<const char*>(&s), sizeof(s));
+        {
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            if (!out) {
+                log::warn(
+                    "[APX save] failed to open temp migration file: {}",
+                    geode::utils::string::pathToString(tmp)
+                );
+                return false;
             }
-        };
-        writeFrames(a.p1);
-        writeFrames(a.p2);
-    }
 
+            APXHeader h{};
+            std::memcpy(h.magic, "APX2", 4);
+            h.version = kAPXVersion;
+            out.write(reinterpret_cast<const char*>(&h), sizeof(h));
+            if (!out.good()) return false;
+
+            for (auto const& a : attempts) {
+                if (!attemptHasData_(a)) continue;
+                if (!writeAPXAttemptCompact(out, a)) return false;
+            }
+
+            if (!writeAPXPracticePath(out, m_checkpointMgr.getPath())) {
+                return false;
+            }
+
+            out.flush();
+            if (!out.good()) return false;
+        }
+
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        ec.clear();
+        std::filesystem::rename(tmp, path, ec);
+        if (ec) {
+            log::warn(
+                "[APX save] migration rename failed {} -> {}: {}",
+                geode::utils::string::pathToString(tmp),
+                geode::utils::string::pathToString(path),
+                ec.message()
+            );
+            std::error_code ec2;
+            std::filesystem::remove(tmp, ec2);
+            return false;
+        }
+
+        for (auto& a : attempts) {
+            if (attemptHasData_(a)) a.persistedOnDisk = true;
+        }
+
+        m_needsMigrationRewrite = false;
+        m_loadedFileWasLegacyAttempts = false;
+        return true;
+    }
 
     int saveNewAttemptsForLevel_(int levelID) {
         if (!m_pl) return 0;
         if (m_isSaving) return 0;
         m_isSaving = true;
-        
+
         auto path = fileForLevel_(levelID);
         std::error_code ec;
         std::filesystem::create_directories(path.parent_path(), ec);
-        ensureHeader_(path);
+
+        int written = 0;
+
+        if (m_needsMigrationRewrite) {
+            if (!rewriteWholeFileToV6_(path)) {
+                m_isSaving = false;
+                return 0;
+            }
+        } else {
+            ensureHeader_(path);
+        }
 
         std::ofstream out(path, std::ios::binary | std::ios::app);
         if (!out) {
@@ -1087,14 +1102,15 @@ public:
             return 0;
         }
 
-        int written = 0;
-        
         for (auto& a : attempts) {
             if (!attemptHasData_(a)) continue;
             if (!a.recordedThisSession) continue;
             if (a.persistedOnDisk) continue;
 
-            appendAttemptChunk_(out, a);
+            if (!writeAPXAttemptCompact(out, a)) {
+                m_isSaving = false;
+                return written;
+            }
             a.persistedOnDisk = true;
             ++written;
         }
@@ -1108,8 +1124,7 @@ public:
         }
 
         out.flush();
-        //log::info("[APX save] Saved {} attempt(s) to {}", written, geode::utils::string::pathToString(path));
-        
+
         m_isSaving = false;
         return written;
     }
@@ -1123,31 +1138,27 @@ public:
         if (m_loadedLevelID != levelID) {
             m_checkpointMgr = CheckpointManager();
             if (m_pl) m_checkpointMgr.attach(m_pl);
+            m_needsMigrationRewrite = false;
+            m_loadedFileWasLegacyAttempts = false;
         }
 
-        if (m_loadedLevelID == levelID && !attempts.empty()) {
-            return 0;
-        }
-        
         auto path = fileForLevel_(levelID);
         std::ifstream in(path, std::ios::binary);
         if (!in) {
             return 0;
         }
 
-        // Validate header
         APXHeader h{};
         in.read(reinterpret_cast<char*>(&h), sizeof(h));
-        if (!in || std::string(h.magic, h.magic + 4) != "APX2") {
+        if (!in || std::memcmp(h.magic, "APX2", 4) != 0) {
             log::warn("[APX load] bad header for {}", geode::utils::string::pathToString(path));
             return 0;
         }
 
-        const bool isVersion5 = (h.version >= 5);
-        const bool isVersion4 = (h.version == 4);
-        const bool isVersion3 = (h.version == 3);
-        const bool isVersion2 = (h.version == 2);
-        // log::info("[APX load] File version {}", h.version);
+        const bool headerIsLegacy = (h.version < kAPXVersion);
+        if (headerIsLegacy) {
+            m_needsMigrationRewrite = true;
+        }
 
         size_t loaded = 0;
         size_t nonPracticeLoaded = 0;
@@ -1161,109 +1172,140 @@ public:
 
             std::streampos chunkStart = in.tellg();
 
-            if (type == kChunk_ATTZ) {
+            if (type == kChunk_ATT3) {
+                Attempt a{};
+                if (!readAPXAttemptCompact(in, sz, a)) {
+                    break;
+                }
+
+                if (m_loadedSerials.count(a.serial)) {
+                    continue;
+                }
+
+                maxSerialSeen = std::max(maxSerialSeen, static_cast<uint32_t>(a.serial));
+
+                const bool isPractice = a.practiceAttempt;
+                bool loadThis = true;
+
+                if (flt.practice.has_value() && flt.practice.value() != isPractice) loadThis = false;
+                if (flt.minPct.has_value() && a.startPercent < flt.minPct.value()) loadThis = false;
+                if (flt.maxPct.has_value() && a.startPercent > flt.maxPct.value()) loadThis = false;
+                if (loadThis && !isPractice && flt.maxNonPractice > 0
+                    && nonPracticeLoaded >= flt.maxNonPractice) loadThis = false;
+
+                if (!loadThis) {
+                    continue;
+                }
+
+                m_loadedSerials.insert(a.serial);
+                pushAttempt(std::move(a), false);
+
+                ++loaded;
+                if (!isPractice) ++nonPracticeLoaded;
+            }
+            else if (type == kChunk_ATTZ) {
+                m_loadedFileWasLegacyAttempts = true;
+                m_needsMigrationRewrite = true;
+
                 std::streampos attzChunkStart = in.tellg();
 
-                if (isVersion5) {
-                    APXMeta m{};
-                    in.read(reinterpret_cast<char*>(&m), sizeof(m));
-                    if (!in) break;
+                APXMeta m{};
+                in.read(reinterpret_cast<char*>(&m), sizeof(m));
+                if (!in) break;
 
-                    if (m_loadedSerials.count((int)m.serial)) {
-                        auto now = in.tellg();
-                        auto readSoFar = (std::streamoff)(now - attzChunkStart);
-                        auto remain = (std::streamoff)sz - readSoFar;
-                        if (remain > 0) in.seekg(remain, std::ios::cur);
-                        continue;
-                    }
+                if (m_loadedSerials.count((int)m.serial)) {
+                    auto now = in.tellg();
+                    auto readSoFar = (std::streamoff)(now - attzChunkStart);
+                    auto remain = (std::streamoff)sz - readSoFar;
+                    if (remain > 0) in.seekg(remain, std::ios::cur);
+                    continue;
+                }
 
-                    maxSerialSeen = std::max(maxSerialSeen, m.serial);
+                maxSerialSeen = std::max(maxSerialSeen, m.serial);
 
-                    const bool isPractice = (m.flags & 1u) != 0;
-                    bool loadThis = true;
+                const bool isPractice = (m.flags & 1u) != 0;
+                bool loadThis = true;
 
-                    if (flt.practice.has_value() && flt.practice.value() != isPractice) loadThis = false;
-                    if (flt.minPct.has_value() && m.startPercent < flt.minPct.value()) loadThis = false;
-                    if (flt.maxPct.has_value() && m.startPercent > flt.maxPct.value()) loadThis = false;
-                    if (loadThis && !isPractice && flt.maxNonPractice > 0
-                        && nonPracticeLoaded >= flt.maxNonPractice) loadThis = false;
+                if (flt.practice.has_value() && flt.practice.value() != isPractice) loadThis = false;
+                if (flt.minPct.has_value() && m.startPercent < flt.minPct.value()) loadThis = false;
+                if (flt.maxPct.has_value() && m.startPercent > flt.maxPct.value()) loadThis = false;
+                if (loadThis && !isPractice && flt.maxNonPractice > 0
+                    && nonPracticeLoaded >= flt.maxNonPractice) loadThis = false;
 
-                    auto skipToEndOfChunk = [&]() {
-                        auto now = in.tellg();
-                        auto readSoFar = static_cast<std::streamoff>(now - attzChunkStart);
-                        auto remain = static_cast<std::streamoff>(sz) - readSoFar;
-                        if (remain > 0) in.seekg(remain, std::ios::cur);
-                    };
-
-                    // Read frames
-                    auto readFrames = [&](std::vector<Frame>& dst, uint32_t n) {
-                        dst.resize(n);
-                        for (uint32_t i = 0; i < n; ++i) {
-                            APXFrame s{};
-                            in.read(reinterpret_cast<char*>(&s), sizeof(s));
-                            Frame f{};
-                            f.x = s.x;
-                            f.y = s.y;
-                            f.rot = s.rot;
-                            f.vehicleSize = s.vehicleSize;
-                            f.waveSize = s.waveSize;
-                            f.mode = static_cast<IconType>(s.mode);
-                            f.t = s.t;
-                            frameFromFlags_(s, f);
-                            f.frame = i;
-                            dst[i] = f;
-                        }
-                    };
-
-                    if (!loadThis) {
-                        skipToEndOfChunk();
-                        continue;
-                    }
-
-                    Attempt a{};
-                    a.serial = static_cast<int>(m.serial);
-                    a.startPercent = m.startPercent;
-                    a.endPercent = m.endPercent;
-                    a.practiceAttempt = isPractice;
-                    a.completed = (m.flags & (1u << 1)) != 0;
-                    a.hadDual = (m.flags & (1u << 2)) != 0;
-                    a.startX = m.startX;
-                    a.startY = m.startY;
-                    a.startCheckpointId = m.startCheckpointId;
-                    a.baseTimeOffset = m.baseTimeOffset;
-                    a.seed = static_cast<uintptr_t>(m.seed);
-
-                    readFrames(a.p1, m.p1Count);
-                    readFrames(a.p2, m.p2Count);
-
-                    if (!a.p1.empty()) {
-                        a.startX = a.p1.front().x;
-                        a.startY = a.p1.front().y;
-                        a.endX = a.p1.back().x;
-                    } else if (!a.p2.empty()) {
-                        a.startX = a.p2.front().x;
-                        a.startY = a.p2.front().y;
-                        a.endX = a.p2.back().x;
-                    }
-
-                    a.persistedOnDisk = true;
-                    a.recordedThisSession = false;
-
-                    m_loadedSerials.insert(a.serial);
-                    pushAttempt(std::move(a), /*spawnNow=*/false);
-
-                    ++loaded;
-                    if (!isPractice) ++nonPracticeLoaded;
-
+                auto skipToEndOfChunk = [&]() {
                     auto now = in.tellg();
                     auto readSoFar = static_cast<std::streamoff>(now - attzChunkStart);
                     auto remain = static_cast<std::streamoff>(sz) - readSoFar;
                     if (remain > 0) in.seekg(remain, std::ios::cur);
+                };
+
+                auto readFrames = [&](std::vector<Frame>& dst, uint32_t n) {
+                    dst.resize(n);
+                    for (uint32_t i = 0; i < n; ++i) {
+                        APXFrame s{};
+                        in.read(reinterpret_cast<char*>(&s), sizeof(s));
+                        Frame f{};
+                        f.x = s.x;
+                        f.y = s.y;
+                        f.rot = s.rot;
+                        f.vehicleSize = s.vehicleSize;
+                        f.waveSize = s.waveSize;
+                        f.mode = static_cast<IconType>(s.mode);
+                        f.t = s.t;
+                        frameFromFlags_(s, f);
+                        f.frame = i;
+                        dst[i] = f;
+                    }
+                };
+
+                if (!loadThis) {
+                    skipToEndOfChunk();
+                    continue;
                 }
 
-            } else if (type == kChunk_PATH) {
+                Attempt a{};
+                a.serial = static_cast<int>(m.serial);
+                a.startPercent = m.startPercent;
+                a.endPercent = m.endPercent;
+                a.practiceAttempt = isPractice;
+                a.completed = (m.flags & (1u << 1)) != 0;
+                a.hadDual = (m.flags & (1u << 2)) != 0;
+                a.startX = m.startX;
+                a.startY = m.startY;
+                a.startCheckpointId = m.startCheckpointId;
+                a.baseTimeOffset = m.baseTimeOffset;
+                a.seed = static_cast<uintptr_t>(m.seed);
+
+                readFrames(a.p1, m.p1Count);
+                readFrames(a.p2, m.p2Count);
+
+                if (!a.p1.empty()) {
+                    a.startX = a.p1.front().x;
+                    a.startY = a.p1.front().y;
+                    a.endX = a.p1.back().x;
+                } else if (!a.p2.empty()) {
+                    a.startX = a.p2.front().x;
+                    a.startY = a.p2.front().y;
+                    a.endX = a.p2.back().x;
+                }
+
+                a.persistedOnDisk = true;
+                a.recordedThisSession = false;
+
+                m_loadedSerials.insert(a.serial);
+                pushAttempt(std::move(a), false);
+
+                ++loaded;
+                if (!isPractice) ++nonPracticeLoaded;
+
+                auto now = in.tellg();
+                auto readSoFar = static_cast<std::streamoff>(now - attzChunkStart);
+                auto remain = static_cast<std::streamoff>(sz) - readSoFar;
+                if (remain > 0) in.seekg(remain, std::ios::cur);
+            }
+            else if (type == kChunk_PATH) {
                 PracticePath loadedPath;
-                
+
                 if (readAPXPracticePath(in, sz, loadedPath)) {
                     m_checkpointMgr.restorePath(loadedPath);
                 } else {
@@ -1274,10 +1316,8 @@ public:
                 }
             }
             else if (type == kChunk_CheckpointZ2 || type == kChunk_SEGZ) {
-                // Legacy chunks - skip
                 in.seekg(static_cast<std::streamoff>(sz), std::ios::cur);
             } else {
-                // Unknown chunk - skip
                 in.seekg(static_cast<std::streamoff>(sz), std::ios::cur);
             }
         }
@@ -1288,7 +1328,17 @@ public:
             m_nextAttemptSerial = static_cast<int>(maxSerialSeen) + 1;
         }
 
-        log::info("[APX load] Loaded {} attempts from {} (version {})", loaded, geode::utils::string::pathToString(path), h.version);
+        log::info(
+            "[APX load] Loaded {} attempts from {} (version {})",
+            loaded,
+            geode::utils::string::pathToString(path),
+            h.version
+        );
+
+        log::info(
+            "[APX load] migration={}",
+            m_needsMigrationRewrite ? "yes" : "no"
+        );
         return static_cast<int>(loaded);
     }
 
@@ -2769,11 +2819,6 @@ public:
         m_current.immuneToIgnorePractice = true;
         m_current.ignoreInPractice = false;
         
-        const Checkpoint* topCheckpoint = m_checkpointMgr.topCheckpoint();
-        if (topCheckpoint) {
-            m_current.startCheckpointId = topCheckpoint->id;
-        }
-        
         currentAttemptImmune = true;
         attemptBuffer.clear();
         
@@ -2787,9 +2832,6 @@ public:
     void onPracticeUndoCheckpoint() {
         if (!m_freezeRemoveCheckpointDuringCompletionCleanup) {
             m_checkpointMgr.onCheckpointRemoved();
-            
-            const Checkpoint* topCheckpoint = m_checkpointMgr.topCheckpoint();
-            m_current.startCheckpointId = topCheckpoint ? topCheckpoint->id : -1;
             
             if (botActive && m_useCheckpointsRoute) {
                 buildCompositePracticePath();
@@ -3701,6 +3743,8 @@ private:
     float m_autosaveAccum = 0.f;
     std::unordered_set<int> m_loadedSerials;
     int m_loadedLevelID = 0;
+    bool m_needsMigrationRewrite = false;
+    bool m_loadedFileWasLegacyAttempts = false;
 
     bool m_allow_platformer = false;
 
@@ -4376,6 +4420,7 @@ private:
 
         APXHeader h{};
         std::memcpy(h.magic, "APX2", 4);
+        h.version = 6;
         hout.write(reinterpret_cast<const char*>(&h), sizeof(h));
         hout.flush();
     }
