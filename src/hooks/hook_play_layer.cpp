@@ -60,14 +60,13 @@ class $modify(PLHook, PlayLayer) {
     $override void levelComplete() {
         //log::info("[PlayLayer] levelComplete");
         if (Ghosts::I().isModEnabled()) {
-            if (!Ghosts::I().safeMode_enabled) {
-                Ghosts::I().onComplete();
-                PlayLayer::levelComplete();
-            }
             if (Ghosts::I().safeMode_enabled) {
                 onQuit();
+                return;
             }
+            Ghosts::I().onComplete();
         }
+        PlayLayer::levelComplete();
     } 
     $override void destroyPlayer(PlayerObject* p0, GameObject* p1) {
         //log::info("[PlayLayer] destroyPlayer m_isStartPos: {}, m_uniqueID: {}", p1->m_isStartPos, p1->m_uniqueID);

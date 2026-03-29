@@ -7,3 +7,4 @@
 - High attempt count playback ghost primming fix (massive lag reduction on insane replays)
 # 1.4.20
 - UI scaling fix for that one tablet user
+- Softlock fix
