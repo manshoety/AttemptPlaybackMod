@@ -85,6 +85,8 @@ protected:
         this->setID("color-selector-popup"_spr);
         setTitle("");
 
+        setChildrenInvisible(m_mainLayer);
+
         // Murder the default close button
         if (CCMenuItemSpriteExtra* close = findDefaultCloseButton(m_mainLayer)) {
             close->stopAllActions();
@@ -220,6 +222,8 @@ protected:
             .store(m_uiRoot)
             .collect();
 
+        scaleUIForThatOneTabletUser(kColorPopupW, kColorPopupH);
+
         buildColorButtons_();
         refreshAllX_();
 
@@ -239,6 +243,15 @@ private:
 
     std::bitset<kRandomColorSlots> m_allowed{};
     std::array<CCLabelBMFont*, kRandomColorSlots> m_xMark{};
+
+    void scaleUIForThatOneTabletUser(float designWidth, float designHeight) {
+        if (!m_mainLayer) return;
+
+        const auto size = fitPopupToWindow_(designWidth, designWidth);
+        const float scale = computeFitScale_(size.width, size.height, designWidth, designHeight);
+
+        m_mainLayer->setScale(scale);
+    }
 
     void onExit_(CCObject*) { this->onClose(nullptr); }
 

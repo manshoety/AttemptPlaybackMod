@@ -101,6 +101,8 @@ bool PlaybackModMenu::init(float width, float height) {
         return false;
     this->setID("playbackModMenu-popup"_spr);
 
+    setChildrenInvisible(m_mainLayer);
+
     setTitle("");
 
     // Murder the default close button
@@ -313,7 +315,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.19", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.20", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
@@ -478,8 +480,19 @@ void PlaybackModMenu::buildTemplateUI_() {
         .parentAtPos(m_mainLayer, Anchor::Center)
         .collect();
 
+        scaleUIForThatOneTabletUser(kPopupW, kPopupH);
+
         cacheReplayButtons_();
         refreshReplayButtons_();
+}
+
+void PlaybackModMenu::scaleUIForThatOneTabletUser(float designWidth, float designHeight) {
+    if (!m_mainLayer) return;
+
+    const auto size = fitPopupToWindow_(designWidth, designHeight);
+    const float scale = computeFitScale_(size.width, size.height, designWidth, designHeight);
+
+    m_mainLayer->setScale(scale);
 }
 
 void PlaybackModMenu::onReplayBest(CCObject*) {

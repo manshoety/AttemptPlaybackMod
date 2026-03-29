@@ -74,6 +74,13 @@ CCMenuItemSpriteExtra* findDefaultCloseButton(cocos2d::CCNode* root) {
     return nullptr;
 }
 
+void setChildrenInvisible(cocos2d::CCNode* root) {
+    if (!root) return;
+    for (auto* child : root->getChildrenExt()) {
+        child->setVisible(false);
+    }
+}
+
 CCSprite* createFullscreenGradient_() {
     ccColor3B color = { 69, 60, 177 };
     CCSprite* gradient = CCSprite::create("GJ_gradientBG.png");
@@ -100,4 +107,35 @@ CCSprite* createFullscreenGradient_() {
     }
         return gradient;
 }
+
+float kPopupMinW = 260.f;
+float kPopupMinH = 180.f;
+
+cocos2d::CCSize fitPopupToWindow_(float designW, float designH) {
+    auto win = cocos2d::CCDirector::sharedDirector()->getWinSize();
+
+    float maxW = std::max(kPopupMinW, win.width);
+    float maxH = std::max(kPopupMinH, win.height);
+
+    return {
+        std::min(designW, maxW),
+        std::min(designH, maxH)
+    };
+}
+
+float computeFitScale_(float actualW, float actualH, float designW, float designH) {
+    if (designW <= 0.f || designH <= 0.f) return 1.f;
+
+    float sx = actualW / designW;
+    float sy = actualH / designH;
+    float s = std::min({ 1.f, sx, sy });
+    s *= 1.06f; // Fit properly
+
+    // log::info("Scale: actual: {} {} normal: {} {}", actualW, actualH, designW, designH);
+    return s;
+}
+
+
+
+
 

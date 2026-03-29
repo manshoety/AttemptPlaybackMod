@@ -83,6 +83,7 @@ private:
 
 private:
     void buildTemplateUI_();
+    void scaleUIForThatOneTabletUser(float designWidth, float designHeight);
 
     void onReplayBest(cocos2d::CCObject*);
     void onReplayPractice(cocos2d::CCObject*);

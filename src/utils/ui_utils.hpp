@@ -30,8 +30,10 @@ CCMenuItemSpriteExtra* makeButton(const char* text, cocos2d::CCObject* target,
                                       cocos2d::SEL_MenuHandler cb, float scale = 1.0f);
 cocos2d::CCLabelBMFont* findLabelRecursive(cocos2d::CCNode* n);
 CCMenuItemSpriteExtra* findDefaultCloseButton(cocos2d::CCNode* root);
+void setChildrenInvisible(cocos2d::CCNode* root);
 cocos2d::CCSprite* createFullscreenGradient_();
-
+cocos2d::CCSize fitPopupToWindow_(float designW, float designH);
+float computeFitScale_(float actualW, float actualH, float designW, float designH);
 
 template <class PopupT>
 auto createTextButton_(

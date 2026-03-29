@@ -36,6 +36,11 @@ class $modify(PLHook, PlayLayer) {
             Ghosts::I().setResetting(false);
         }
     }
+    // Someone crashed here? Who knows why.
+    //$override void updateTimeLabel(int seconds, int centiseconds, bool decimals) {
+    //    log::info("[PlayLayer] updateTimeLabel seconds: {}, centiseconds: {}, decimals: {}", seconds, centiseconds, decimals);
+    //    PlayLayer::updateTimeLabel(seconds, centiseconds, decimals);
+    //}
     //$override void onExit() { Pausing?
     //    //log::info("[PlayLayer] onExit");
     //    PlayLayer::onExit();
