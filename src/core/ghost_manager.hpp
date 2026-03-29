@@ -3444,23 +3444,24 @@ public:
                     size_t ai = *it;
                     Attempt& a = attempts[ai];
 
-                    primeGhostToPX_(a, px, px2);
+                    // false when the ghost would start already dead
+                    if (primeGhostToPX_(a, px, px2)) {
+                        m_primedIndices.push_back(ai);
+                        m_primedSet.insert(ai);
 
-                    m_primedIndices.push_back(ai);
-                    m_primedSet.insert(ai);
+                        if (!a.colorsAssigned) {
+                            refreshAttemptColors_(a);
+                        }
+                        if (a.opacity != opacity) {
+                            updateOpacityForAttempt(a, opacity);
+                        }
 
+                        showable.push_back(ai);
+                        GhostsVisibleThisFrame ++;
+                        currentPreloaded++;
+                    }
                     it = m_wantToPrimeIndices.erase(it);
 
-                    if (!a.colorsAssigned) {
-                        refreshAttemptColors_(a);
-                    }
-                    if (a.opacity != opacity) {
-                        updateOpacityForAttempt(a, opacity);
-                    }
-
-                    showable.push_back(ai);
-                    GhostsVisibleThisFrame ++;
-                    currentPreloaded++;
                 }
 
                 // Main candidate processing loop
@@ -3524,9 +3525,11 @@ public:
                     if (!a.primedP1 || (showP2 && !a.primedP2)) {
                         if ((m_playerObjectPool.inUseCount() < m_playerObjectPool.capacity() - 1)
                     || a.g1 || a.g2) {
-                            primeGhostToPX_(a, px, px2);
-                            m_primedIndices.push_back(ai);
-                            m_primedSet.insert(ai);
+                            // false when the ghost would start already dead
+                            if (primeGhostToPX_(a, px, px2)) {
+                                m_primedIndices.push_back(ai);
+                                m_primedSet.insert(ai);
+                            }
                         }
                         else {
                             if (m_wantToPrimeSet.insert(ai).second) {
@@ -4703,10 +4706,11 @@ private:
         p->setOpacity(opacity);
     }
 
-    void primeGhostToPX_(Attempt& a, float pxw, float px2w) {
+    bool primeGhostToPX_(Attempt& a, float pxw, float px2w) {
         //log::info("Priming");
         double ghostTime = m_lastAttemptTime + a.ghostOffsetTime;
         if (ghostTime < 0.0) ghostTime = 0.0;
+        if (!a.p1.empty() && ghostTime > a.p1.back().t) return false;
         
         if (!a.p1.empty() && !a.primedP1) {
             //log::info("p1 not created");
@@ -4816,6 +4820,7 @@ private:
 
             refreshAttemptColors_(a);
         }
+        return true;
     }
 
     static inline bool attemptHasData_(const Attempt& a) {
