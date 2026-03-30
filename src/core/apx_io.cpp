@@ -11,9 +11,9 @@
 #include "apx_format.hpp"
 #include "apx_io.hpp"
 
-static constexpr double kAPXPosScale_  = 64.0;    // 1/64 px
-static constexpr double kAPXRotScale_  = 16.0;     // 1/16 deg
-static constexpr double kAPXSizeScale_ = 256.0;    // 1/256
+static constexpr double kAPXPosScale_  = 64.0;   // 1/64 px
+static constexpr double kAPXRotScale_  = 16.0;   // 1/16 deg
+static constexpr double kAPXSizeScale_ = 256.0;  // 1/256
 static constexpr double kAPXTimeScale_ = 48000;  // up to 48k Hz (so any large weird physics update people set won't look jittery)
 static constexpr size_t kAPXKeyEvery_  = 64;
 
@@ -35,6 +35,8 @@ struct APXQuantState_ {
     uint8_t mode = static_cast<uint8_t>(IconType::Cube);
     uint8_t flags = 0;
 };
+
+// File stuff (3.5x smaller)
 
 template <class T>
 static inline void appendPod_(std::vector<uint8_t>& dst, T const& v) {
@@ -105,27 +107,26 @@ static inline double dequantTime_(uint32_t q) {
 
 static inline APXQuantState_ makeQuantState_(Frame const& f) {
     APXQuantState_ q;
-    q.xQ = quantPos_(f.x);
-    q.yQ = quantPos_(f.y);
-    q.rotQ = quantRot_(f.rot);
-    q.vehicleQ = quantSize_(f.vehicleSize);
-    q.waveQ = quantSize_(f.waveSize);
-    q.tQ = quantTime_(f.t);
+    q.xQ = f.x.q;
+    q.yQ = f.y.q;
+    q.rotQ = f.rot.q;
+    q.vehicleQ = f.vehicleSize.q;
+    q.waveQ = f.waveSize.q;
+    q.tQ = f.t.q;
     q.mode = static_cast<uint8_t>(f.mode);
     q.flags = flagsFromFrame_(f);
     return q;
 }
 
-static inline Frame makeFrame_(APXQuantState_ const& s, size_t i) {
+static inline Frame makeFrame_(APXQuantState_ const& s) {
     Frame f{};
-    f.x = dequantPos_(s.xQ);
-    f.y = dequantPos_(s.yQ);
-    f.rot = dequantRot_(s.rotQ);
-    f.vehicleSize = dequantSize_(s.vehicleQ);
-    f.waveSize = dequantSize_(s.waveQ);
+    f.x.q = s.xQ;
+    f.y.q = s.yQ;
+    f.rot.q = s.rotQ;
+    f.vehicleSize.q = s.vehicleQ;
+    f.waveSize.q = s.waveQ;
     f.mode = static_cast<IconType>(s.mode);
-    f.t = dequantTime_(s.tQ);
-    f.frame = i;
+    f.t.q = s.tQ;
     frameFromFlags_(s.flags, f);
     return f;
 }
@@ -269,7 +270,7 @@ static bool decodeTrackCompact_(
             }
         }
 
-        outFrames.push_back(makeFrame_(s, i));
+        outFrames.push_back(makeFrame_(s));
         prev = s;
         havePrev = true;
     }
@@ -279,13 +280,13 @@ static bool decodeTrackCompact_(
 
 static inline void finalizeLoadedAttempt_(Attempt& a) {
     if (!a.p1.empty()) {
-        a.startX = a.p1.front().x;
-        a.startY = a.p1.front().y;
-        a.endX = a.p1.back().x;
+        a.startX = static_cast<float>(a.p1.front().x);
+        a.startY = static_cast<float>(a.p1.front().y);
+        a.endX = static_cast<float>(a.p1.back().x);
     } else if (!a.p2.empty()) {
-        a.startX = a.p2.front().x;
-        a.startY = a.p2.front().y;
-        a.endX = a.p2.back().x;
+        a.startX = static_cast<float>(a.p2.front().x);
+        a.startY = static_cast<float>(a.p2.front().y);
+        a.endX = static_cast<float>(a.p2.back().x);
     } else {
         a.endX = a.startX;
     }
@@ -586,3 +587,4 @@ bool readAPXAttemptCompact(std::istream& in, uint32_t chunkSize, Attempt& attemp
     finalizeLoadedAttempt_(attempt);
     return true;
 }
+

@@ -4,6 +4,7 @@
 #include <iosfwd>
 #include "types.hpp"
 #include "apx_format.hpp"
+#include <Geode/binding/PlayerObject.hpp>
 
 bool writeAPXPracticePath(std::ostream& os, const PracticePath& path);
 bool readAPXPracticePath(std::istream& in, uint32_t chunkSize, PracticePath& path);
@@ -40,3 +41,4 @@ inline void frameFromFlags_(uint8_t flags, Frame& d) {
 inline void frameFromFlags_(APXFrame const& s, Frame& d) {
     frameFromFlags_(s.flags, d);
 }
+

@@ -22,6 +22,183 @@ enum class ReplayKind : uint8_t {
     BestSingle = 1
 };
 
+// runtime stuff (should give 42.86% memory reduction, but at what cost to my sanity)
+
+static constexpr double kAPXPosScaleRuntime_  = 64.0;     // 1/64 px
+static constexpr double kAPXRotScaleRuntime_  = 16.0;     // 1/16 deg
+static constexpr double kAPXSizeScaleRuntime_ = 256.0;    // 1/256
+static constexpr double kAPXTimeScaleRuntime_ = 48000.0;  // 1/48000 sec
+
+static inline int32_t runtimeQuantPosQ_(float v) {
+    return static_cast<int32_t>(std::llround(static_cast<double>(v) * kAPXPosScaleRuntime_));
+}
+
+static inline int32_t runtimeQuantRotQ_(float v) {
+    return static_cast<int32_t>(std::llround(static_cast<double>(v) * kAPXRotScaleRuntime_));
+}
+
+static inline uint16_t runtimeQuantSizeQ_(float v) {
+    long long q = std::llround(static_cast<double>(v) * kAPXSizeScaleRuntime_);
+    if (q < 0) q = 0;
+    if (q > std::numeric_limits<uint16_t>::max()) q = std::numeric_limits<uint16_t>::max();
+    return static_cast<uint16_t>(q);
+}
+
+static inline uint32_t runtimeQuantTimeQ_(double v) {
+    if (v < 0.0) v = 0.0;
+    unsigned long long q = static_cast<unsigned long long>(std::llround(v * kAPXTimeScaleRuntime_));
+    if (q > std::numeric_limits<uint32_t>::max()) q = std::numeric_limits<uint32_t>::max();
+    return static_cast<uint32_t>(q);
+}
+
+static inline float runtimeDequantPos_(int32_t q) {
+    return static_cast<float>(static_cast<double>(q) / kAPXPosScaleRuntime_);
+}
+
+static inline float runtimeDequantRot_(int32_t q) {
+    return static_cast<float>(static_cast<double>(q) / kAPXRotScaleRuntime_);
+}
+
+static inline float runtimeDequantSize_(uint16_t q) {
+    return static_cast<float>(static_cast<double>(q) / kAPXSizeScaleRuntime_);
+}
+
+static inline double runtimeDequantTime_(uint32_t q) {
+    return static_cast<double>(q) / kAPXTimeScaleRuntime_;
+}
+
+struct QuantPos32 {
+    int32_t q = 0;
+
+    QuantPos32() = default;
+    QuantPos32(float v) { *this = v; }
+
+    QuantPos32& operator=(float v) {
+        q = runtimeQuantPosQ_(v);
+        return *this;
+    }
+
+    operator float() const {
+        return runtimeDequantPos_(q);
+    }
+};
+
+struct QuantRot32 {
+    int32_t q = 0;
+
+    QuantRot32() = default;
+    QuantRot32(float v) { *this = v; }
+
+    QuantRot32& operator=(float v) {
+        q = runtimeQuantRotQ_(v);
+        return *this;
+    }
+
+    operator float() const {
+        return runtimeDequantRot_(q);
+    }
+};
+
+struct QuantSize16 {
+    uint16_t q = runtimeQuantSizeQ_(1.0f);
+
+    QuantSize16() = default;
+    QuantSize16(float v) { *this = v; }
+
+    QuantSize16& operator=(float v) {
+        q = runtimeQuantSizeQ_(v);
+        return *this;
+    }
+
+    operator float() const {
+        return runtimeDequantSize_(q);
+    }
+};
+
+struct QuantTime32 {
+    uint32_t q = 0;
+
+    QuantTime32() = default;
+    QuantTime32(double v) { *this = v; }
+
+    QuantTime32& operator=(double v) {
+        q = runtimeQuantTimeQ_(v);
+        return *this;
+    }
+
+    operator double() const {
+        return runtimeDequantTime_(q);
+    }
+};
+
+struct Frame {
+    QuantPos32 x{};
+    QuantPos32 y{};
+    QuantRot32 rot{};
+    QuantSize16 vehicleSize{1.f};
+    QuantSize16 waveSize{1.f};
+
+    union {
+        struct {
+            uint8_t upsideDown     : 1;
+            uint8_t hold           : 1;
+            uint8_t holdL          : 1;
+            uint8_t holdR          : 1;
+            uint8_t isDashing      : 1;
+            uint8_t isVisible      : 1;
+            uint8_t stateDartSlide : 1;
+            uint8_t _unused        : 1;
+        };
+        uint8_t flags;
+    };
+
+    IconType mode;
+    QuantTime32 t{};
+
+    Frame()
+      : flags(0), mode(IconType::Cube), t(0.0) {
+        isVisible = true;
+    }
+};
+
+struct FrameAccelTime {
+    uint32_t baseTQ = 0;
+    uint32_t binWQ = 600; // 0.0125 sec * 48000
+    int bins = 0;
+
+    struct BinRange { uint32_t lo, hi; };
+    std::vector<BinRange> range;
+    std::vector<uint32_t> idx;
+    std::vector<uint32_t> timesQ; // timesQ[i] == v[i].t.q
+
+    inline int binOfQ(uint32_t tQ) const {
+        if (tQ <= baseTQ) return 0;
+        uint32_t dtQ = tQ - baseTQ;
+        int b = static_cast<int>(dtQ / binWQ);
+        if (b < 0) return 0;
+        if (b >= bins) return bins - 1;
+        return b;
+    }
+
+    inline bool valid() const {
+        return bins > 0 && !range.empty();
+    }
+
+    inline bool hasTimes(size_t n) const {
+        return timesQ.size() == n;
+    }
+
+    inline void reset() {
+        baseTQ = 0;
+        binWQ = 600;
+        bins = 0;
+        range.clear();
+        idx.clear();
+        timesQ.clear();
+    }
+};
+
+/*
 struct Frame {
     float x=0;
     float y=0;
@@ -79,7 +256,7 @@ struct FrameAccelTime {
         times.clear();
     }
 };
-
+*/
 struct FrameAccel {
     float baseX = 0.f;
     float invBinW = 1.f / 64.f;

@@ -100,7 +100,7 @@ class $modify(MyPlayerObject, PlayerObject) {
                         
                         Ghosts::I().updateClickState(/*isPlayer1*/true);
                         Ghosts::I().applySegmentBasedReplay_(/*isPlayer1*/true);
-
+                        
                         Ghosts::I().beginPostUpdateTick_();
 
                         Ghosts::I().preUpdate();

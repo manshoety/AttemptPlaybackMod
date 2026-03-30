@@ -59,11 +59,11 @@
 
 // Current visual bugs:
 // Wave trail wackyness when turning off (only show past percent) when replaying with waves at the start
-// Sometimes robots and spiders don't explode? Like they still are present after death. Seems like maybe it's an issue when there is a high number of ghosts on screen at the same time (maybe post queue system issue).
 
 // Features I'll (maybe) add:
 // Ability to only replay one practice session or multiple (maybe even name them and save names as a different file). This would be it's own UI. Also have ability to delete certain sessions and maybe even export and import sessions (practice and normal). It would be cool to be able to export your best attempt, and be able to import the best attempt of several people and replay the at the same time, and have the icons maybe exported and imported too? A lot of work but would be cool to have eventually.
 // Platformer mode isn't implimented when there are checkpoints yet (practice mode works but not normal)
+// Ability to load and export attempt files so you can send them to people
 
 using namespace geode::prelude;
 
@@ -519,7 +519,7 @@ public:
     ) {
         auto getEndT = [&](int attemptIndex) -> double {
             const Attempt& a = attempts[attemptIndex];
-            return (!a.p1.empty()) ? a.p1.back().t : 0.0;
+            return (!a.p1.empty()) ? static_cast<double>(a.p1.back().t) : 0.0;
         };
 
         std::vector<uint32_t> sorted = preloadOrder;
@@ -567,7 +567,7 @@ public:
 
         auto getEndT = [&](int attemptIndex) -> double {
             const Attempt& a = attempts[attemptIndex];
-            return (!a.p1.empty()) ? a.p1.back().t : 0.0;
+            return (!a.p1.empty()) ? static_cast<double>(a.p1.back().t) : 0.0;
         };
 
         candidateIds = m_preloadableIndexesInAttemptsList;
@@ -1244,6 +1244,7 @@ public:
                     for (uint32_t i = 0; i < n; ++i) {
                         APXFrame s{};
                         in.read(reinterpret_cast<char*>(&s), sizeof(s));
+
                         Frame f{};
                         f.x = s.x;
                         f.y = s.y;
@@ -1253,7 +1254,7 @@ public:
                         f.mode = static_cast<IconType>(s.mode);
                         f.t = s.t;
                         frameFromFlags_(s, f);
-                        f.frame = i;
+
                         dst[i] = f;
                     }
                 };
@@ -1280,13 +1281,13 @@ public:
                 readFrames(a.p2, m.p2Count);
 
                 if (!a.p1.empty()) {
-                    a.startX = a.p1.front().x;
-                    a.startY = a.p1.front().y;
-                    a.endX = a.p1.back().x;
+                    a.startX = static_cast<float>(a.p1.front().x);
+                    a.startY = static_cast<float>(a.p1.front().y);
+                    a.endX = static_cast<float>(a.p1.back().x);
                 } else if (!a.p2.empty()) {
-                    a.startX = a.p2.front().x;
-                    a.startY = a.p2.front().y;
-                    a.endX = a.p2.back().x;
+                    a.startX = static_cast<float>(a.p2.front().x);
+                    a.startY = static_cast<float>(a.p2.front().y);
+                    a.endX = static_cast<float>(a.p2.back().x);
                 }
 
                 a.persistedOnDisk = true;
@@ -2270,14 +2271,19 @@ public:
 
     static FORCE_INLINE void applyPoseHard(PlayerObject* po, const Frame& f, PlayLayer* pl) {
         if (!po) return;
-        // setPOFrameForIcon(po, f.mode, a, m_randomIcons);
+
+        const float vehicleSize = f.vehicleSize;
+        const float rot = f.rot;
+        const float x = f.x;
+        const float y = f.y;
+
         syncGhostGravity(po, f.upsideDown, pl);
-        if (po->m_vehicleSize != f.vehicleSize) {
-            po->m_vehicleSize = f.vehicleSize;
+        if (po->m_vehicleSize != vehicleSize) {
+            po->m_vehicleSize = vehicleSize;
             po->updatePlayerScale();
         }
-        po->setRotation(f.rot);
-        po->setPosition({ f.x, f.y });
+        po->setRotation(rot);
+        po->setPosition({ x, y });
     }
 
     void buildCompositeFromAttempt(size_t idx) {
@@ -3173,7 +3179,8 @@ public:
         }
     }
 
-    bool removeReverseOrDuplicateFrames(std::vector<Frame> frames, double t) {
+    // How did I forget the silly &
+    bool removeReverseOrDuplicateFrames(std::vector<Frame>& frames, double t) {
         // Reverse frames
         while (!frames.empty() && t < frames.back().t) {
             frames.pop_back();
@@ -3209,8 +3216,8 @@ public:
             f.isVisible = p1->isVisible();
 
             if (!m_current.p1.empty()) {
-                const float prevY = m_current.p1.back().y;
-                f.stateDartSlide = std::fabs(f.y - prevY) <= kYEqualEps;
+                const float prevY = static_cast<float>(m_current.p1.back().y);
+                f.stateDartSlide = std::fabs(static_cast<float>(f.y) - prevY) <= kYEqualEps;
             } else {
                 f.stateDartSlide = false;
             }
@@ -3219,11 +3226,9 @@ public:
             f.hold = p1Hold;
             f.holdL = p1LHold;
             f.holdR = p1RHold;
-            f.frame = (m_frameCounter >= m_currentAttemptStart) ? 
-                    (m_frameCounter - m_currentAttemptStart) : 0;
 
             m_current.p1.push_back(f);
-            m_lastRecordedX = f.x;
+            m_lastRecordedX = static_cast<float>(f.x);
             float currentPercent = m_pl->getCurrentPercent();
             if (currentPercent > m_current.endPercent) m_current.endPercent = currentPercent;
         }
@@ -3244,8 +3249,8 @@ public:
             f.isVisible = p2->isVisible();
 
             if (!m_current.p2.empty()) {
-                const float prevY = m_current.p2.back().y;
-                f.stateDartSlide = std::fabs(f.y - prevY) <= kYEqualEps;
+                const float prevY = static_cast<float>(m_current.p2.back().y);
+                f.stateDartSlide = std::fabs(static_cast<float>(f.y) - prevY) <= kYEqualEps;
             } else {
                 f.stateDartSlide = false;
             }
@@ -3254,8 +3259,6 @@ public:
             f.hold = p2Hold;
             f.holdL = p2LHold;
             f.holdR = p2RHold;
-            f.frame = (m_frameCounter >= m_currentAttemptStart) ? 
-                    (m_frameCounter - m_currentAttemptStart) : 0;
             m_current.p2.push_back(f);
         }
         
@@ -3988,98 +3991,101 @@ private:
 
     static void buildAccelTime(const std::vector<Frame>& v,
                            FrameAccelTime& a,
-                           double binW = 0.0125,
+                           uint32_t binWQ = 600,
                            bool buildTimes = true) {
         a.reset();
         const size_t n = v.size();
         if (n == 0) return;
 
-        const double minT = v.front().t;
-        const double maxT = v.back().t;
+        const uint32_t minTQ = v.front().t.q;
+        const uint32_t maxTQ = v.back().t.q;
 
-        if (!std::isfinite(minT) || !std::isfinite(maxT) || maxT < minT) {
-            log::warn("[buildAccelTime] Invalid time data: minT={}, maxT={}", minT, maxT);
+        if (maxTQ < minTQ) {
+            log::warn("[buildAccelTime] Invalid time data: minTQ={}, maxTQ={}", minTQ, maxTQ);
             return;
         }
-        if (maxT - minT < 1e-9) {
-            // log::warn("[buildAccelTime] Time range too small, skipping accel build");
+        if (maxTQ == minTQ) {
             return;
         }
 
-        a.baseT = minT;
-        a.binW = binW;
-        a.invBinW = 1.0 / binW;
+        a.baseTQ = minTQ;
+        a.binWQ = std::max<uint32_t>(1u, binWQ);
 
-        int bins = (int)std::ceil((maxT - minT) * a.invBinW) + 1;
+        const uint64_t spanQ = static_cast<uint64_t>(maxTQ) - static_cast<uint64_t>(minTQ);
+        int bins = static_cast<int>((spanQ + a.binWQ - 1) / a.binWQ) + 1;
+
         if (bins <= 0 || bins > 10000000) {
-            log::warn("[buildAccelTime] Invalid bin count: {}, minT={}, maxT={}, binW={}",
-                    bins, minT, maxT, binW);
+            log::warn("[buildAccelTime] Invalid bin count: {}, minTQ={}, maxTQ={}, binWQ={}",
+                    bins, minTQ, maxTQ, a.binWQ);
             a.reset();
             return;
         }
 
         if (bins > 100000) {
-            a.binW = (maxT - minT) / 99999.0;
-            a.invBinW = 1.0 / a.binW;
+            a.binWQ = std::max<uint32_t>(1u, static_cast<uint32_t>((spanQ + 99998ull) / 99999ull));
             bins = 100000;
         }
 
         a.bins = bins;
-
-        a.range.resize((size_t)bins);
-        a.idx.resize((size_t)bins);
+        a.range.resize(static_cast<size_t>(bins));
+        a.idx.resize(static_cast<size_t>(bins));
 
         if (buildTimes) {
-            a.times.resize(n);
-            for (size_t i = 0; i < n; ++i) a.times[i] = v[i].t;
+            a.timesQ.resize(n);
+            for (size_t i = 0; i < n; ++i) a.timesQ[i] = v[i].t.q;
         } else {
-            a.times.clear();
+            a.timesQ.clear();
         }
 
-        const double* tarr = (buildTimes ? a.times.data() : nullptr);
-        const Frame*  parr = (!buildTimes ? v.data() : nullptr);
-
-        auto getT = [&](size_t i) -> double {
-            return tarr ? tarr[i] : parr[i].t;
+        const uint32_t* tarr = buildTimes ? a.timesQ.data() : nullptr;
+        auto getTQ = [&](size_t i) -> uint32_t {
+            return tarr ? tarr[i] : v[i].t.q;
         };
 
         size_t iHi = 0;
-        double binEnd = minT + a.binW;
+        uint32_t binEndQ = minTQ + a.binWQ;
 
         for (int b = 0; b < bins; ++b) {
             const size_t iLo = iHi;
 
-            while (iHi + 1 < n && getT(iHi + 1) < binEnd) ++iHi;
+            while (iHi + 1 < n && getTQ(iHi + 1) < binEndQ) ++iHi;
 
-            a.range[(size_t)b] = FrameAccelTime::BinRange{ (uint32_t)iLo, (uint32_t)iHi };
+            a.range[static_cast<size_t>(b)] = FrameAccelTime::BinRange{
+                static_cast<uint32_t>(iLo),
+                static_cast<uint32_t>(iHi)
+            };
+            a.idx[static_cast<size_t>(b)] = static_cast<uint32_t>(iLo);
 
-            a.idx[(size_t)b] = (uint32_t)iLo;
-
-            binEnd += a.binW;
+            if (UINT32_MAX - binEndQ < a.binWQ) {
+                binEndQ = UINT32_MAX;
+            } else {
+                binEndQ += a.binWQ;
+            }
         }
     }
 
     static size_t idxForTime(const FrameAccelTime& acc, const std::vector<Frame>& v, double t) {
         if (v.empty()) return 0;
-        
+
+        const uint32_t wantTQ = runtimeQuantTimeQ_(t);
         size_t idx = 0;
+
         if (acc.valid()) {
-            idx = acc.idx[(size_t)acc.binOf(t)];
+            idx = acc.idx[static_cast<size_t>(acc.binOfQ(wantTQ))];
             if (idx >= v.size()) idx = v.size() - 1;
-            // Advance to find exact position
-            while (idx + 1 < v.size() && v[idx + 1].t <= t) ++idx;
-            // Rewind if overshot
-            while (idx > 0 && v[idx].t > t) --idx;
+
+            while (idx + 1 < v.size() && v[idx + 1].t.q <= wantTQ) ++idx;
+            while (idx > 0 && v[idx].t.q > wantTQ) --idx;
         } else {
-            // Binary search fallback
             size_t lo = 0, hi = v.size();
             while (lo < hi) {
-                size_t mid = (lo + hi) >> 1;
-                if (v[mid].t < t) lo = mid + 1;
+                const size_t mid = (lo + hi) >> 1;
+                if (v[mid].t.q < wantTQ) lo = mid + 1;
                 else hi = mid;
             }
             idx = lo ? lo - 1 : 0;
         }
+
         return idx;
     }
 
@@ -4089,40 +4095,41 @@ private:
         const size_t n = v.size();
         if (n == 0) return 0;
 
-        const double frontT = v.front().t;
-        const double backT  = v.back().t;
-        if (t <= frontT) return 0;
-        if (t >= backT)  return n - 1;
+        const uint32_t wantTQ  = runtimeQuantTimeQ_(t);
+        const uint32_t frontTQ = v.front().t.q;
+        const uint32_t backTQ  = v.back().t.q;
+
+        if (wantTQ <= frontTQ) return 0;
+        if (wantTQ >= backTQ)  return n - 1;
 
         const bool useTimes = a.hasTimes(n);
-        const double* times = useTimes ? a.times.data() : nullptr;
-        const Frame*  parr  = useTimes ? nullptr : v.data();
+        const uint32_t* timesQ = useTimes ? a.timesQ.data() : nullptr;
 
-        auto getT = [&](size_t i) -> double {
-            return times ? times[i] : parr[i].t;
+        auto getTQ = [&](size_t i) -> uint32_t {
+            return timesQ ? timesQ[i] : v[i].t.q;
         };
 
         if (!a.valid()) {
-            // binary search (upper_bound - 1)
             size_t lo = 0, hi = n;
             while (lo < hi) {
-                size_t mid = (lo + hi) >> 1;
-                if (getT(mid) <= t) lo = mid + 1;
+                const size_t mid = (lo + hi) >> 1;
+                if (getTQ(mid) <= wantTQ) lo = mid + 1;
                 else hi = mid;
             }
             return lo - 1;
         }
 
-        const int b = a.binOf(t);
-        size_t L = (size_t)a.range[(size_t)b].lo;
-        size_t R = (size_t)a.range[(size_t)b].hi;
+        const int b = a.binOfQ(wantTQ);
+        size_t L = static_cast<size_t>(a.range[static_cast<size_t>(b)].lo);
+        size_t R = static_cast<size_t>(a.range[static_cast<size_t>(b)].hi);
+
         if (R >= n) R = n - 1;
         if (L > R) L = R;
 
         size_t lo = L, hi = R + 1;
         while (lo < hi) {
-            size_t mid = (lo + hi) >> 1;
-            if (getT(mid) <= t) lo = mid + 1;
+            const size_t mid = (lo + hi) >> 1;
+            if (getTQ(mid) <= wantTQ) lo = mid + 1;
             else hi = mid;
         }
         return lo - 1;
@@ -4135,46 +4142,48 @@ private:
         const size_t n = v.size();
         if (n == 0) return;
 
-        const bool useTimes = a.hasTimes(n);
-        const double* times = useTimes ? a.times.data() : nullptr;
-        const Frame*  parr  = useTimes ? nullptr : v.data();
+        const uint32_t wantTQ = runtimeQuantTimeQ_(t);
 
-        auto getT = [&](size_t i) -> double {
-            return times ? times[i] : parr[i].t;
+        const bool useTimes = a.hasTimes(n);
+        const uint32_t* timesQ = useTimes ? a.timesQ.data() : nullptr;
+
+        auto getTQ = [&](size_t i) -> uint32_t {
+            return timesQ ? timesQ[i] : v[i].t.q;
         };
 
         if (LIKELY(a.valid())) {
-            const int b = a.binOf(t);
-            idx = (size_t)a.idx[(size_t)b]; // or a.range[b].lo if dropping idx later
+            const int b = a.binOfQ(wantTQ);
+            idx = static_cast<size_t>(a.idx[static_cast<size_t>(b)]);
             if (idx >= n) idx = n - 1;
         }
 
-        while (idx + 1 < n && getT(idx + 1) <= t) ++idx;
-        while (idx > 0 && getT(idx) > t) --idx;
+        while (idx + 1 < n && getTQ(idx + 1) <= wantTQ) ++idx;
+        while (idx > 0 && getTQ(idx) > wantTQ) --idx;
     }
 
     static FORCE_INLINE void rewindUsingAccelTime_(const std::vector<Frame>& v,
-                                                const FrameAccelTime& a,
-                                                size_t& idx,
-                                                double t) {
+                                               const FrameAccelTime& a,
+                                               size_t& idx,
+                                               double t) {
         const size_t n = v.size();
         if (n == 0) { idx = 0; return; }
 
-        const bool useTimes = a.hasTimes(n);
-        const double* times = useTimes ? a.times.data() : nullptr;
-        const Frame*  parr  = useTimes ? nullptr : v.data();
+        const uint32_t wantTQ = runtimeQuantTimeQ_(t);
 
-        auto getT = [&](size_t i) -> double {
-            return times ? times[i] : parr[i].t;
+        const bool useTimes = a.hasTimes(n);
+        const uint32_t* timesQ = useTimes ? a.timesQ.data() : nullptr;
+
+        auto getTQ = [&](size_t i) -> uint32_t {
+            return timesQ ? timesQ[i] : v[i].t.q;
         };
 
         if (a.valid()) {
-            const int b = a.binOf(t);
-            size_t hint = (size_t)a.idx[(size_t)b];
+            const int b = a.binOfQ(wantTQ);
+            size_t hint = static_cast<size_t>(a.idx[static_cast<size_t>(b)]);
             if (hint < idx) idx = hint;
         }
 
-        while (idx > 0 && getT(idx) > t) --idx;
+        while (idx > 0 && getTQ(idx) > wantTQ) --idx;
     }
 
     FORCE_INLINE bool isAttemptPreloaded_(Attempt const& a) const { return a.preloaded; }
@@ -4242,7 +4251,7 @@ private:
     }
 
     static inline float lastXOf_(const std::vector<Frame>& v) {
-        return v.empty() ? 0.f : v.back().x;
+        return v.empty() ? 0.f : static_cast<float>(v.back().x);
     }
 
     float attemptSpanX_(Attempt const& a) const
@@ -4251,12 +4260,12 @@ private:
         float maxX = std::numeric_limits<float>::lowest();
 
         if (!a.p1.empty()) {
-            minX = std::min(minX, a.p1.front().x);
-            maxX = std::max(maxX, a.p1.back().x);
+            minX = std::min<float>(minX, static_cast<float>(a.p1.front().x));
+            maxX = std::max<float>(maxX, static_cast<float>(a.p1.back().x));
         }
         if (a.hadDual && !a.p2.empty()) {
-            minX = std::min(minX, a.p2.front().x);
-            maxX = std::max(maxX, a.p2.back().x);
+            minX = std::min<float>(minX, static_cast<float>(a.p2.front().x));
+            maxX = std::max<float>(maxX, static_cast<float>(a.p2.back().x));
         }
 
         if (maxX <= minX)
@@ -4299,7 +4308,7 @@ private:
         }
 
         auto lastT = [](const std::vector<Frame>& v) -> double {
-            return v.empty() ? 0.0 : v.back().t;
+            return v.empty() ? 0.0 : static_cast<double>(v.back().t);
         };
         const double endT = std::max(lastT(a.p1), lastT(a.p2));
 
@@ -4755,10 +4764,10 @@ private:
                 applyPoseHard(a.g1, f, m_pl);
                 // setPOFrameForIcon(a.g1, f.mode, a, m_randomIcons);
                 refreshAttemptColors_(a);
-                pc.x = f.x;
-                pc.y = f.y;
-                pc.rot = f.rot;
-                pc.vehicleSize = f.vehicleSize;
+                pc.x = static_cast<float>(f.x);
+                pc.y = static_cast<float>(f.y);
+                pc.rot = static_cast<float>(f.rot);
+                pc.vehicleSize = static_cast<float>(f.vehicleSize);
                 pc.upsideDown = f.upsideDown;
                 a.g1->stopDashing();
                 pc.isDashing = false;
@@ -4799,10 +4808,10 @@ private:
                 PoseCache& pc2 = a.last2;
                 applyPoseHard(a.g2, f2, m_pl);
                 refreshAttemptColors_(a);
-                pc2.x = f2.x;
-                pc2.y = f2.y;
-                pc2.rot = f2.rot;
-                pc2.vehicleSize = f2.vehicleSize;
+                pc2.x = static_cast<float>(f2.x);
+                pc2.y = static_cast<float>(f2.y);
+                pc2.rot = static_cast<float>(f2.rot);
+                pc2.vehicleSize = static_cast<float>(f2.vehicleSize);
                 pc2.upsideDown = f2.upsideDown;
 
                 a.g2->stopDashing();
@@ -4828,7 +4837,7 @@ private:
     }
 
     static inline float attemptLastX_(const Attempt& a)  {
-        return a.p1.empty() ? 0.f : a.p1.back().x;
+        return a.p1.empty() ? 0.f : static_cast<float>(a.p1.back().x);
     }
 
     static FORCE_INLINE bool matchesPracticeFilter_(const Attempt& a, std::optional<bool> wantPractice) {
@@ -5175,24 +5184,32 @@ private:
             const size_t nextIdx = std::min(drawIdx + 1, lastIdx);
             const Frame& fNext = frames[nextIdx];
 
-            //log::info("[TIME TAKEN] updateghost death {:.8f}", getTimeMs() - tStart);
-            //tStart = getTimeMs();  
+            const float fx = f.x;
+            const float fy = f.y;
+            const float fr = f.rot;
+            const float fv = f.vehicleSize;
+            const float fw = f.waveSize;
+            const double ft = f.t;
 
-            // Interpolation
-            float ix = f.x, iy = f.y, irot = f.rot;
-            float iveh = f.vehicleSize, iwave = f.waveSize;
+            const float nx = fNext.x;
+            const float ny = fNext.y;
+            const float nr = fNext.rot;
+            const float nv = fNext.vehicleSize;
+            const float nw = fNext.waveSize;
+            const double nt = fNext.t;
+
+            float ix = fx, iy = fy, irot = fr;
+            float iveh = fv, iwave = fw;
 
             if (m_useInterpolation && !eolFrozen && nextIdx != drawIdx) {
-                const double denom = fNext.t - f.t;
-                log::info("[m_useInterpolation] denom: {}", denom);
+                const double denom = nt - ft;
                 if (denom > 1e-9) {
-                    const float tt = static_cast<float>(clamp01_((ghostTime - f.t) / denom));
-                    log::info("[m_useInterpolation] ghostTime -> mid -> next: {} -> {} -> {}", ghostTime, tt, f.t);
-                    ix = lerp_(f.x, fNext.x, tt);
-                    iy = lerp_(f.y, fNext.y, tt);
-                    irot = lerpAngleDeg_(f.rot, fNext.rot, tt);
-                    iveh = lerp_(f.vehicleSize, fNext.vehicleSize, tt);
-                    iwave = lerp_(f.waveSize, fNext.waveSize, tt);
+                    const float tt = static_cast<float>(clamp01_((ghostTime - ft) / denom));
+                    ix = lerp_(fx, nx, tt);
+                    iy = lerp_(fy, ny, tt);
+                    irot = lerpAngleDeg_(fr, nr, tt);
+                    iveh = lerp_(fv, nv, tt);
+                    iwave = lerp_(fw, nw, tt);
                 }
             }
 
@@ -5484,50 +5501,23 @@ private:
         const size_t last = n - 1;
         if (idx > last) idx = last;
 
-        const double frontT = v.front().t;
-        const double backT  = v.back().t;
-        if (t <= frontT) { idx = 0; return; }
-        if (t >= backT)  { idx = last; return; }
+        const uint32_t wantTQ  = runtimeQuantTimeQ_(t);
+        const uint32_t frontTQ = v.front().t.q;
+        const uint32_t backTQ  = v.back().t.q;
 
-        if (UNLIKELY(mustRewind) || UNLIKELY(v[idx].t > t)) {
-            while (idx > 0 && v[idx].t > t) --idx;
-            while (idx + 1 <= last && v[idx + 1].t <= t) ++idx;
+        if (wantTQ <= frontTQ) { idx = 0; return; }
+        if (wantTQ >= backTQ)  { idx = last; return; }
+
+        if (UNLIKELY(mustRewind) || UNLIKELY(v[idx].t.q > wantTQ)) {
+            while (idx > 0 && v[idx].t.q > wantTQ) --idx;
+            while (idx + 1 <= last && v[idx + 1].t.q <= wantTQ) ++idx;
             return;
         }
 
-        if (LIKELY(idx + 1 <= last) && v[idx + 1].t <= t) {
+        if (LIKELY(idx + 1 <= last) && v[idx + 1].t.q <= wantTQ) {
             do { ++idx; }
-            while (idx + 1 <= last && v[idx + 1].t <= t);
+            while (idx + 1 <= last && v[idx + 1].t.q <= wantTQ);
         }
-    }
-    
-
-    static void sliceAppendByXClosedOpen_(const std::vector<Frame>& src, 
-                                       float x0_incl, float x1_excl, 
-                                       std::vector<Frame>& dst) {
-        if (src.empty() || x1_excl <= x0_incl) return;
-        
-        auto it0 = std::lower_bound(src.begin(), src.end(), x0_incl,
-            [](const Frame& f, float x) { return f.x < x; });
-        auto it1 = std::lower_bound(it0, src.end(), x1_excl,
-            [](const Frame& f, float x) { return f.x < x; });
-        
-        dst.reserve(dst.size() + std::distance(it0, it1));
-        for (auto it = it0; it != it1; ++it) {
-            dst.push_back(*it);
-        }
-    }
-
-    static void sliceAppendByXClosed_(const std::vector<Frame>& src, 
-                                    float x0_incl, 
-                                    std::vector<Frame>& dst) {
-        if (src.empty()) return;
-        
-        auto it = std::lower_bound(src.begin(), src.end(), x0_incl,
-            [](const Frame& f, float x) { return f.x < x; });
-        
-        dst.reserve(dst.size() + std::distance(it, src.end()));
-        dst.insert(dst.end(), it, src.end());
     }
 
     CheckpointNode& nodeById_(int id) {
@@ -5620,7 +5610,7 @@ private:
         float best=-1.f;
         size_t bestIdx=0;
         for (size_t i=0; i<attempts.size(); ++i) {
-            float lastX = !attempts[i].p1.empty() ? attempts[i].p1.back().x : 0.f;
+            float lastX = !attempts[i].p1.empty() ? static_cast<float>(attempts[i].p1.back().x) : 0.f;
             if (lastX > best) {
                 best=lastX;
                 bestIdx=i;
@@ -5870,9 +5860,6 @@ private:
         }
 
         //geode::log::info("[pushAttempt] serial {} endPercent {}", a.serial, a.endPercent);
-
-        for (size_t i = 0; i < a.p1.size(); ++i) a.p1[i].frame = i;
-        for (size_t i = 0; i < a.p2.size(); ++i) a.p2[i].frame = i;
 
         if (isPureRecordingMode_()) {
             a.preloaded = false;
