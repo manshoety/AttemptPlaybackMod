@@ -66,6 +66,11 @@ class $modify(MyPlayerObject, PlayerObject) {
         const bool isP1 = pl && this == pl->m_player1;
         const bool isP2 = pl && this == pl->m_player2;
 
+        //log::info("Setting player pos: isP1: {}", isP1);
+        //log::info("Next lets check if the position is valid");
+        //log::info("x: {}, y: {}", position.x, position.y);
+        //log::info("Position is valid");
+
         if (ghosts.isModEnabled() && ghosts.isBotActive()) {
             if (ghosts.isResetting()) {
                 PlayerObject::setPosition(position);
@@ -73,6 +78,7 @@ class $modify(MyPlayerObject, PlayerObject) {
             }
 
             if (ghosts.isdisablePlayerMove()) {
+                //log::info("Disable update");
                 if (isP1) {
                     PlayerObject::setPosition(ghosts.forceSetPosP1);
                     return;
@@ -82,6 +88,7 @@ class $modify(MyPlayerObject, PlayerObject) {
                     return;
                 }
             } else {
+                //log::info("Not disabled update");
                 if (isP1) ghosts.forceSetPosP1 = position;
                 else if (isP2) ghosts.forceSetPosP2 = position;
             }

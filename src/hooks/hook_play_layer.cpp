@@ -12,6 +12,7 @@ class $modify(PLHook, PlayLayer) {
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
         Ghosts::I().updateModEnabled();
         if (Ghosts::I().isModEnabled()) {
+            // log::info("Attaching to level");
             Ghosts::I().prepareLevelPersistence(level->m_levelID, this);
             Ghosts::I().attach(this);
 

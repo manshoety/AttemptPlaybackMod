@@ -1506,6 +1506,8 @@ public:
     void attach(PlayLayer* pl) {
         //log::info("[Ghosts] attach(entry)");
 
+        setdisablePlayerMove(false);
+
         onQuit();
 
         for (auto& a : attempts) {
@@ -2123,6 +2125,7 @@ public:
         m_is_quitting = false;
 
         m_playerObjectPool.clearAfterGhostPoolCleared();
+        setdisablePlayerMove(false);
     }
 
     void onComplete() {

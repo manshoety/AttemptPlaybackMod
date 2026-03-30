@@ -315,7 +315,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.21", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.22", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
@@ -1095,7 +1095,7 @@ void PreloadAttemptsPopup::refreshInfoLabels_(int clampedN) {
 
     if (m_estimatedRamLabel) { // Robert Tobert player objects are not RAM efficient
         //float mb = clampedN * kAttemptMbCost;
-        float mb = getSettingIntOrDefault_(Mod::get(), "real-player-objects", 1000) * kAttemptMbCost;
+        float mb = std::min(getSettingIntOrDefault_(Mod::get(), "real-player-objects", 1000), clampedN) * kAttemptMbCost;
         std::ostringstream ss;
         ss << "(Estimated RAM: " << std::fixed << std::setprecision(1) << mb << "MB)";
         m_estimatedRamLabel->setString(ss.str().c_str());
