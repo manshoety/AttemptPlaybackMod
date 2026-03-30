@@ -295,7 +295,6 @@ public:
     void setPlaybackOnlyPastPercentEnabled(bool on) {
         m_onlyShowGhostsThatPassedPercent = on;
         Mod::get()->setSavedValue("only-show-ghosts-that-passed-percent", on);
-        restartLevel();
     }
 
     void setPlaybackMaxVisibleGhosts(int maxVisible) {

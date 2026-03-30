@@ -1,4 +1,6 @@
-# 1.4.21
+# 1.4.23
+- Yet another crash fix
+# 1.4.22
 - Crash fix (thank you MagLight for the help debugging)
 - RAM indicator fix
 # 1.4.21
