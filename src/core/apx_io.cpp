@@ -1,6 +1,9 @@
 // apx_io.cpp
 #include <ostream>
 #include <istream>
+#include <fstream>
+#include <filesystem>
+#include <system_error>
 #include <cstring>
 #include <cstdint>
 #include <vector>
@@ -16,6 +19,15 @@ static constexpr double kAPXRotScale_  = 16.0;   // 1/16 deg
 static constexpr double kAPXSizeScale_ = 256.0;  // 1/256
 static constexpr double kAPXTimeScale_ = 48000;  // up to 48k Hz (so any large weird physics update people set won't look jittery)
 static constexpr size_t kAPXKeyEvery_  = 64;
+static constexpr uint32_t kAPXMaxChunkSize_ = 0x7fffffffu; // 2 GB hard cap (Already like impossibly high and would not happen unless an error occurred)
+static constexpr uint32_t kAPXMaxFramesPerTrack_ = 10'000'000u; // Who in the world is doing over 10M attempts (also aint no way any PC could run that many replaying at once)
+static constexpr uint32_t kAPXMaxPracticeSessions_ = 100'000u; // You better not be doing 100k practice sessions on a level or you need to go outside
+static constexpr uint32_t kAPXMaxPracticeItemsPerSession_ = 1'000'000u; // 1M practice attempt session would be crazy
+
+// I like how I added all of this, and the user who crashed had an old pre-release file format which the public release code doesn't support
+// They said they only used the official Geode release, but the file that crashed their game was created March 25th and the mod was released March 28th
+// How in the world did that file get in their game folder????
+// Still good to have to avoid a crash if a file is to corrupted
 
 enum : uint8_t {
     kAPXRec_Key_     = 1 << 0,
@@ -218,7 +230,13 @@ static bool decodeTrackCompact_(
     std::vector<Frame>& outFrames
 ) {
     outFrames.clear();
-    outFrames.reserve(frameCount);
+
+    if (frameCount > kAPXMaxFramesPerTrack_) return false;
+
+    // compact stream needs at least one tag byte per frame
+    if (frameCount > byteSize) return false;
+
+    outFrames.reserve(static_cast<size_t>(frameCount));
 
     const uint8_t* cur = data;
     const uint8_t* end = data + byteSize;
@@ -300,7 +318,7 @@ bool writeAPXPracticePath(std::ostream& out, const PracticePath& path) {
     if (!out.good()) return false;
 
     APXPathHeaderV2 hdr{};
-    hdr.version = 4;  // Version 4 with saved session stuff
+    hdr.version = kAPXPathVersion_V5;  // Version 5 without saved checkpoints / active chain
     hdr.numSessions = static_cast<uint32_t>(path.sessions.size());
     hdr.activeSessionId = path.activeSessionId;
     hdr.selectedSessionId = path.selectedSessionId;
@@ -311,11 +329,9 @@ bool writeAPXPracticePath(std::ostream& out, const PracticePath& path) {
     // Calculate total size
     uint32_t totalSize = sizeof(APXPathHeaderV2);
     for (const auto& session : path.sessions) {
-        totalSize += sizeof(APXSessionHeader);
-        totalSize += static_cast<uint32_t>(session.checkpoints.size() * sizeof(APXCheckpoint));
-        totalSize += static_cast<uint32_t>(session.activeChain.size() * sizeof(int32_t));
+        totalSize += sizeof(APXSessionHeaderV5_);
         totalSize += static_cast<uint32_t>(session.allAttemptSerials.size() * sizeof(int32_t));
-        totalSize += static_cast<uint32_t>(session.segments.size() * sizeof(APXSegment));
+        totalSize += static_cast<uint32_t>(session.segments.size() * sizeof(APXSegmentV5_));
     }
 
     out.write(reinterpret_cast<const char*>(&type), sizeof(type));
@@ -324,10 +340,8 @@ bool writeAPXPracticePath(std::ostream& out, const PracticePath& path) {
     if (!out.good()) return false;
 
     for (const auto& session : path.sessions) {
-        APXSessionHeader shdr{};
+        APXSessionHeaderV5_ shdr{};
         shdr.sessionId = session.sessionId;
-        shdr.numCheckpoints = static_cast<uint32_t>(session.checkpoints.size());
-        shdr.numActiveIDs = static_cast<uint32_t>(session.activeChain.size());
         shdr.numAttemptSerials = static_cast<uint32_t>(session.allAttemptSerials.size());
         shdr.numSegments = static_cast<uint32_t>(session.segments.size());
         shdr.startX = session.startX;
@@ -338,25 +352,6 @@ bool writeAPXPracticePath(std::ostream& out, const PracticePath& path) {
 
         out.write(reinterpret_cast<const char*>(&shdr), sizeof(shdr));
 
-        // Write checkpoints with time data
-        for (const auto& checkpoint : session.checkpoints) {
-            APXCheckpoint acheckpoint{};
-            acheckpoint.id = checkpoint.id;
-            acheckpoint.x = checkpoint.x;
-            acheckpoint.y = checkpoint.y;
-            acheckpoint.rot1 = checkpoint.rot1;
-            acheckpoint.rot2 = checkpoint.rot2;
-            acheckpoint.rot1Valid = checkpoint.rot1Valid ? 1 : 0;
-            acheckpoint.rot2Valid = checkpoint.rot2Valid ? 1 : 0;
-            acheckpoint.checkpointTime = checkpoint.checkpointTime;
-            out.write(reinterpret_cast<const char*>(&acheckpoint), sizeof(acheckpoint));
-        }
-
-        // Write active chain
-        for (int32_t id : session.activeChain) {
-            out.write(reinterpret_cast<const char*>(&id), sizeof(id));
-        }
-
         // Write all attempt serials
         for (int32_t id : session.allAttemptSerials) {
             out.write(reinterpret_cast<const char*>(&id), sizeof(id));
@@ -364,15 +359,13 @@ bool writeAPXPracticePath(std::ostream& out, const PracticePath& path) {
 
         // Write segments with time data
         for (const auto& seg : session.segments) {
-            APXSegment aseg{};
+            APXSegmentV5_ aseg{};
             aseg.startX = seg.startX;
             aseg.endX = seg.endX;
             aseg.ownerSerial = seg.ownerSerial;
-            aseg.checkpointIdEnd = seg.checkpointIdEnd;
-            aseg.p1Frames = (int32_t)seg.p1Frames;
-            aseg.p2Frames = (int32_t)seg.p2Frames;
+            aseg.p1Frames = static_cast<int32_t>(seg.p1Frames);
+            aseg.p2Frames = static_cast<int32_t>(seg.p2Frames);
             aseg.maxXReached = seg.maxXReached;
-
             aseg.baseTimeOffset = seg.baseTimeOffset;
             aseg.localStartTime = seg.localStartTime;
             aseg.localEndTime   = seg.localEndTime;
@@ -386,77 +379,117 @@ bool writeAPXPracticePath(std::ostream& out, const PracticePath& path) {
     return true;
 }
 
-bool readAPXPracticePath(std::istream& in, uint32_t chunkSize, PracticePath& path) {
+static inline bool canConsumeBytes_(uint64_t consumed, uint32_t chunkSize, uint64_t need) {
+    return consumed <= static_cast<uint64_t>(chunkSize) &&
+           need <= static_cast<uint64_t>(chunkSize) - consumed;
+}
+
+static inline bool addBytesChecked_(uint64_t& consumed, uint32_t chunkSize, uint64_t add) {
+    if (!canConsumeBytes_(consumed, chunkSize, add)) return false;
+    consumed += add;
+    return true;
+}
+
+bool readAPXPracticePath(std::istream& in, uint32_t chunkSize, PracticePath& path, bool* outUsedLegacy) {
     path.clear();
-    
-    std::streampos startPos = in.tellg();
-    
+    if (outUsedLegacy) *outUsedLegacy = false;
+
+    if (chunkSize < sizeof(APXPathHeaderV2)) return false;
+    if (chunkSize > kAPXMaxChunkSize_) return false;
+
+    uint64_t consumed = 0;
+
     // Read header to determine version
     APXPathHeaderV2 hdr{};
     in.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
     if (!in) return false;
-    
+    consumed += sizeof(hdr);
+
+    if (hdr.numSessions > kAPXMaxPracticeSessions_) return false;
+
     path.activeSessionId = hdr.activeSessionId;
     path.selectedSessionId = hdr.selectedSessionId;
     path.frozen = (hdr.frozen != 0);
-    
-    const bool isVersion4 = (hdr.version >= 4);
-    
+
+    const bool isV4 = (hdr.version == kAPXPathVersion_V4);
+    const bool isV5 = (hdr.version == kAPXPathVersion_V5);
+
+    if (!isV4 && !isV5) {
+        log::warn("Unsupported Practice Session Format version {}. Please delete attempts save file", hdr.version);
+        return false;
+    }
+
+    if (isV4 && outUsedLegacy) {
+        *outUsedLegacy = true;
+    }
+
     //log::info("[APX load] PATH version={}, sessions={}", hdr.version, hdr.numSessions);
-    
+
     // Read sessions
     for (uint32_t s = 0; s < hdr.numSessions; ++s) {
         PracticeSession session;
-        
-        if (isVersion4) {
-            APXSessionHeader shdr{};
+
+        if (isV4) {
+            APXSessionHeaderV4_ shdr{};
             in.read(reinterpret_cast<char*>(&shdr), sizeof(shdr));
             if (!in) return false;
-            
+            if (!addBytesChecked_(consumed, chunkSize, sizeof(shdr))) return false;
+
+            // Bunch of safety stuff so we don't blow up
+            if (shdr.numCheckpoints > kAPXMaxPracticeItemsPerSession_) return false;
+            if (shdr.numActiveIDs > kAPXMaxPracticeItemsPerSession_) return false;
+            if (shdr.numAttemptSerials > kAPXMaxPracticeItemsPerSession_) return false;
+            if (shdr.numSegments > kAPXMaxPracticeItemsPerSession_) return false;
+
+            const uint64_t checkpointBytes =
+                static_cast<uint64_t>(shdr.numCheckpoints) * sizeof(APXCheckpointLegacy_);
+            const uint64_t activeBytes =
+                static_cast<uint64_t>(shdr.numActiveIDs) * sizeof(int32_t);
+            const uint64_t serialBytes =
+                static_cast<uint64_t>(shdr.numAttemptSerials) * sizeof(int32_t);
+            const uint64_t segmentBytes =
+                static_cast<uint64_t>(shdr.numSegments) * sizeof(APXSegmentV4_);
+
+            const uint64_t sessionPayloadBytes =
+                checkpointBytes + activeBytes + serialBytes + segmentBytes;
+
+            if (!addBytesChecked_(consumed, chunkSize, sessionPayloadBytes)) return false;
+
             session.sessionId = shdr.sessionId;
             session.startX = shdr.startX;
             session.startY = shdr.startY;
             session.endX = shdr.endX;
             session.completed = (shdr.completed != 0);
             session.frozen = (shdr.frozen != 0);
-            
-            // Read checkpoints
+
+            session.allAttemptSerials.reserve(static_cast<size_t>(shdr.numAttemptSerials));
+            session.segments.reserve(static_cast<size_t>(shdr.numSegments));
+
+            // Read and discard checkpoints (legacy)
             for (uint32_t i = 0; i < shdr.numCheckpoints; ++i) {
-                APXCheckpoint acheckpoint{};
+                APXCheckpointLegacy_ acheckpoint{};
                 in.read(reinterpret_cast<char*>(&acheckpoint), sizeof(acheckpoint));
                 if (!in) return false;
-                
-                Checkpoint checkpoint;
-                checkpoint.id = acheckpoint.id;
-                checkpoint.x = acheckpoint.x;
-                checkpoint.y = acheckpoint.y;
-                checkpoint.rot1 = acheckpoint.rot1;
-                checkpoint.rot2 = acheckpoint.rot2;
-                checkpoint.rot1Valid = (acheckpoint.rot1Valid != 0);
-                checkpoint.rot2Valid = (acheckpoint.rot2Valid != 0);
-                checkpoint.checkpointTime = acheckpoint.checkpointTime;
-                session.checkpoints.push_back(checkpoint);
             }
-            
-            // Read active chain
+
+            // Read and discard active chain (legacy)
             for (uint32_t i = 0; i < shdr.numActiveIDs; ++i) {
-                int32_t id;
+                int32_t id = 0;
                 in.read(reinterpret_cast<char*>(&id), sizeof(id));
                 if (!in) return false;
-                session.activeChain.push_back(id);
             }
 
             // Read all attempt serials
             for (uint32_t i = 0; i < shdr.numAttemptSerials; ++i) {
-                int32_t id;
+                int32_t id = 0;
                 in.read(reinterpret_cast<char*>(&id), sizeof(id));
                 if (!in) return false;
                 session.allAttemptSerials.push_back(id);
             }
-            
+
             // Read segments
             for (uint32_t i = 0; i < shdr.numSegments; ++i) {
-                APXSegment aseg{};
+                APXSegmentV4_ aseg{};
                 in.read(reinterpret_cast<char*>(&aseg), sizeof(aseg));
                 if (!in) return false;
 
@@ -464,38 +497,379 @@ bool readAPXPracticePath(std::istream& in, uint32_t chunkSize, PracticePath& pat
                 seg.startX = aseg.startX;
                 seg.endX = aseg.endX;
                 seg.ownerSerial = aseg.ownerSerial;
-                seg.checkpointIdEnd = aseg.checkpointIdEnd;
-                seg.p1Frames = aseg.p1Frames;
-                seg.p2Frames = aseg.p2Frames;
+                seg.p1Frames = static_cast<size_t>(std::max<int32_t>(0, aseg.p1Frames));
+                seg.p2Frames = static_cast<size_t>(std::max<int32_t>(0, aseg.p2Frames));
                 seg.maxXReached = aseg.maxXReached;
-
                 seg.baseTimeOffset = aseg.baseTimeOffset;
                 seg.localStartTime = aseg.localStartTime;
                 seg.localEndTime   = aseg.localEndTime;
 
                 session.segments.push_back(seg);
             }
-        } else {
-            geode::log::warn("Outdated Practice Session Format. Please delete attempts save file");
+        } else { // V5
+            APXSessionHeaderV5_ shdr{};
+            in.read(reinterpret_cast<char*>(&shdr), sizeof(shdr));
+            if (!in) return false;
+            if (!addBytesChecked_(consumed, chunkSize, sizeof(shdr))) return false;
+
+            // Bunch of safety stuff so we don't blow up
+            if (shdr.numAttemptSerials > kAPXMaxPracticeItemsPerSession_) return false;
+            if (shdr.numSegments > kAPXMaxPracticeItemsPerSession_) return false;
+
+            const uint64_t serialBytes =
+                static_cast<uint64_t>(shdr.numAttemptSerials) * sizeof(int32_t);
+            const uint64_t segmentBytes =
+                static_cast<uint64_t>(shdr.numSegments) * sizeof(APXSegmentV5_);
+
+            const uint64_t sessionPayloadBytes =
+                serialBytes + segmentBytes;
+
+            if (!addBytesChecked_(consumed, chunkSize, sessionPayloadBytes)) return false;
+
+            session.sessionId = shdr.sessionId;
+            session.startX = shdr.startX;
+            session.startY = shdr.startY;
+            session.endX = shdr.endX;
+            session.completed = (shdr.completed != 0);
+            session.frozen = (shdr.frozen != 0);
+
+            session.allAttemptSerials.reserve(static_cast<size_t>(shdr.numAttemptSerials));
+            session.segments.reserve(static_cast<size_t>(shdr.numSegments));
+
+            // Read all attempt serials
+            for (uint32_t i = 0; i < shdr.numAttemptSerials; ++i) {
+                int32_t id = 0;
+                in.read(reinterpret_cast<char*>(&id), sizeof(id));
+                if (!in) return false;
+                session.allAttemptSerials.push_back(id);
+            }
+
+            // Read segments
+            for (uint32_t i = 0; i < shdr.numSegments; ++i) {
+                APXSegmentV5_ aseg{};
+                in.read(reinterpret_cast<char*>(&aseg), sizeof(aseg));
+                if (!in) return false;
+
+                PracticeSegment seg;
+                seg.startX = aseg.startX;
+                seg.endX = aseg.endX;
+                seg.ownerSerial = aseg.ownerSerial;
+                seg.p1Frames = static_cast<size_t>(std::max<int32_t>(0, aseg.p1Frames));
+                seg.p2Frames = static_cast<size_t>(std::max<int32_t>(0, aseg.p2Frames));
+                seg.maxXReached = aseg.maxXReached;
+                seg.baseTimeOffset = aseg.baseTimeOffset;
+                seg.localStartTime = aseg.localStartTime;
+                seg.localEndTime   = aseg.localEndTime;
+
+                session.segments.push_back(seg);
+            }
         }
-        
+
         session.updateSpan();
         path.sessions.push_back(session);
     }
-    
+
     // Skip any remaining bytes in chunk
-    auto endPos = in.tellg();
-    if (endPos == std::streampos(-1)) return false;
-
-    std::streamoff bytesConsumed = endPos - startPos;
-    if (bytesConsumed < 0) return false;
-
-    if ((uint32_t)bytesConsumed < chunkSize) {
-        in.seekg(static_cast<std::streamoff>(chunkSize) - bytesConsumed, std::ios::cur);
+    if (consumed != chunkSize) {
+        if (consumed > chunkSize) return false;
+        in.seekg(static_cast<std::streamoff>(chunkSize - consumed), std::ios::cur);
+        if (!in) return false;
     }
-    
+
     //log::info("[APX load] PATH loaded: {} sessions, version {}", path.sessions.size(), hdr.version);
     return true;
+}
+
+static bool skipChunkPayload_(std::istream& in, uint32_t sz) {
+    if (sz == 0) return true;
+    in.seekg(static_cast<std::streamoff>(sz), std::ios::cur);
+    return static_cast<bool>(in);
+}
+
+static bool writeAPXFileCurrent_(
+    std::filesystem::path const& path,
+    std::vector<Attempt> const& attempts,
+    PracticePath const& practicePath
+) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        log::warn(
+            "[SAVE FILE] failed to open file for write: {}",
+            geode::utils::string::pathToString(path)
+        );
+        return false;
+    }
+
+    APXHeader h{};
+    std::memcpy(h.magic, "APX2", 4);
+    h.version = kAPXVersion;
+
+    out.write(reinterpret_cast<const char*>(&h), sizeof(h));
+    if (!out.good()) return false;
+
+    for (auto const& attempt : attempts) {
+        if (!writeAPXAttemptCompact(out, attempt)) {
+            log::warn("[SAVE FILE] failed writing ATT3 chunk");
+            return false;
+        }
+    }
+
+    if (!writeAPXPracticePath(out, practicePath)) {
+        log::warn("[SAVE FILE] failed writing PATH chunk");
+        return false;
+    }
+
+    out.flush();
+    return out.good();
+}
+
+static bool replaceFileAtomically_(
+    std::filesystem::path const& tmpPath,
+    std::filesystem::path const& finalPath
+) {
+    std::error_code ec;
+
+    ec.clear();
+    std::filesystem::rename(tmpPath, finalPath, ec);
+    if (!ec) return true;
+
+    // remove + rename fallback
+    ec.clear();
+    std::filesystem::remove(finalPath, ec);
+
+    ec.clear();
+    std::filesystem::rename(tmpPath, finalPath, ec);
+    if (!ec) return true;
+
+    log::warn(
+        "[SAVE FILE] atomic replace failed: {} -> {} ({})",
+        geode::utils::string::pathToString(tmpPath),
+        geode::utils::string::pathToString(finalPath),
+        ec.message()
+    );
+    return false;
+}
+
+static bool rewriteAPXFileToCurrent_(
+    std::filesystem::path const& finalPath,
+    std::vector<Attempt> const& attempts,
+    PracticePath const& practicePath
+) {
+    auto tmpPath = finalPath;
+    tmpPath += ".tmp";
+
+    {
+        std::error_code ec;
+        std::filesystem::remove(tmpPath, ec);
+    }
+
+    if (!writeAPXFileCurrent_(tmpPath, attempts, practicePath)) {
+        std::error_code ec;
+        std::filesystem::remove(tmpPath, ec);
+        return false;
+    }
+
+    if (!replaceFileAtomically_(tmpPath, finalPath)) {
+        std::error_code ec;
+        std::filesystem::remove(tmpPath, ec);
+        return false;
+    }
+
+    return true;
+}
+
+bool loadAPXFileWithMigration(
+    std::filesystem::path const& path,
+    std::vector<Attempt>& attemptsOut,
+    PracticePath& practicePathOut
+) {
+    attemptsOut.clear();
+    practicePathOut.clear();
+
+    std::error_code ec;
+    ec.clear();
+    const bool exists = std::filesystem::exists(path, ec);
+    if (ec) {
+        log::warn(
+            "[SAVE FILE] exists failed for {}: {}",
+            geode::utils::string::pathToString(path),
+            ec.message()
+        );
+        return false;
+    }
+
+    if (!exists) {
+        return true; // no file yet (none created)
+    }
+
+    ec.clear();
+    const uintmax_t fsz = std::filesystem::file_size(path, ec);
+    if (ec) {
+        log::warn(
+            "[SAVE FILE] file_size failed for {}: {}",
+            geode::utils::string::pathToString(path),
+            ec.message()
+        );
+        return false;
+    }
+
+    if (fsz < sizeof(APXHeader)) {
+        log::warn(
+            "[SAVE FILE] file too small to contain APX header: {}",
+            geode::utils::string::pathToString(path)
+        );
+        return false;
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        log::warn(
+            "[SAVE FILE] failed to open file for read: {}",
+            geode::utils::string::pathToString(path)
+        );
+        return false;
+    }
+
+    APXHeader hdr{};
+    in.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
+    if (!in) {
+        log::warn("[SAVE FILE] failed reading APX header");
+        return false;
+    }
+
+    if (std::memcmp(hdr.magic, "APX2", 4) != 0) {
+        log::warn(
+            "[SAVE FILE] invalid APX header magic in {}",
+            geode::utils::string::pathToString(path)
+        );
+        return false;
+    }
+
+    bool loadedLegacy = false;
+    if (hdr.version < kAPXVersion) {
+        loadedLegacy = true;
+    } else if (hdr.version > kAPXVersion) {
+        log::warn(
+            "[SAVE FILE] unsupported future APX version {} in {}",
+            hdr.version,
+            geode::utils::string::pathToString(path)
+        );
+        return false;
+    }
+
+    bool sawPathChunk = false;
+
+    while (true) {
+        uint32_t chunkType = 0;
+        uint32_t chunkSize = 0;
+
+        in.read(reinterpret_cast<char*>(&chunkType), sizeof(chunkType));
+        if (!in) {
+            if (in.eof()) break;
+            return false;
+        }
+
+        in.read(reinterpret_cast<char*>(&chunkSize), sizeof(chunkSize));
+        if (!in) return false;
+
+        if (chunkSize > kAPXMaxChunkSize_) {
+            log::warn("[SAVE FILE] chunk size too large: {}", chunkSize);
+            return false;
+        }
+
+        switch (chunkType) {
+            case kChunk_ATT3: {
+                Attempt a;
+                bool usedLegacy = false;
+                if (!readAPXAttemptCompact(in, chunkSize, a, &usedLegacy)) {
+                    log::warn("[SAVE FILE] failed reading ATT3 chunk");
+                    return false;
+                }
+                loadedLegacy = loadedLegacy || usedLegacy;
+                attemptsOut.push_back(std::move(a));
+                break;
+            }
+
+            case kChunk_PATH: {
+                PracticePath tmpPath;
+                bool usedLegacy = false;
+                if (!readAPXPracticePath(in, chunkSize, tmpPath, &usedLegacy)) {
+                    log::warn("[SAVE FILE] failed reading PATH chunk");
+                    return false;
+                }
+                loadedLegacy = loadedLegacy || usedLegacy;
+                practicePathOut = std::move(tmpPath);
+                sawPathChunk = true;
+                break;
+            }
+
+            case kChunk_CheckpointZ2: {
+                // Legacy checkpoint chain chunk
+                loadedLegacy = true;
+                if (!skipChunkPayload_(in, chunkSize)) return false;
+                break;
+            }
+
+            case kChunk_SEGZ: {
+                // Legacy segment chunk
+                loadedLegacy = true;
+                if (!skipChunkPayload_(in, chunkSize)) return false;
+                break;
+            }
+
+            case kChunk_ATTZ: {
+                // Legacy attempt chunk
+                loadedLegacy = true;
+                if (!skipChunkPayload_(in, chunkSize)) return false;
+                break;
+            }
+
+            default: {
+                // Unknown chunk
+                if (!skipChunkPayload_(in, chunkSize)) return false;
+                break;
+            }
+        }
+    }
+
+    if (!sawPathChunk) {
+        practicePathOut.clear();
+    }
+
+    if (loadedLegacy) {
+        if (!rewriteAPXFileToCurrent_(path, attemptsOut, practicePathOut)) {
+            log::warn(
+                "[SAVE FILE] loaded legacy file but failed to rewrite it to current format: {}",
+                geode::utils::string::pathToString(path)
+            );
+        }
+    }
+
+    return true;
+}
+
+bool saveAPXFileCurrent(
+    std::filesystem::path const& path,
+    std::vector<Attempt> const& attempts,
+    PracticePath const& practicePath
+) {
+    std::error_code ec;
+    const auto dir = path.parent_path();
+
+    if (!dir.empty()) {
+        ec.clear();
+        std::filesystem::create_directories(dir, ec);
+        if (ec) {
+            log::warn(
+                "[SAVE FILE] create_directories failed: {} ({})",
+                geode::utils::string::pathToString(dir),
+                ec.message()
+            );
+            return false;
+        }
+    }
+
+    return rewriteAPXFileToCurrent_(path, attempts, practicePath);
 }
 
 bool writeAPXAttemptCompact(std::ostream& out, Attempt const& attempt) {
@@ -504,19 +878,20 @@ bool writeAPXAttemptCompact(std::ostream& out, Attempt const& attempt) {
     const std::vector<uint8_t> p1Bytes = encodeTrackCompact_(attempt.p1);
     const std::vector<uint8_t> p2Bytes = encodeTrackCompact_(attempt.p2);
 
-    APXMetaCompact meta{};
-    meta.serial = static_cast<uint32_t>(attempt.serial);
-    meta.startPercent = attempt.startPercent;
-    meta.endPercent = attempt.endPercent;
-    meta.flags = attemptFlagsFromAttempt_(attempt);
-    meta.streamVersion = kAPXCompactAttemptVersion;
-    meta.p1Count = static_cast<uint32_t>(attempt.p1.size());
-    meta.p2Count = static_cast<uint32_t>(attempt.p2.size());
-    meta.startX = attempt.startX;
-    meta.startY = attempt.startY;
-    meta.startCheckpointId = attempt.startCheckpointId;
-    meta.baseTimeOffset = attempt.baseTimeOffset;
-    meta.seed = static_cast<uint64_t>(attempt.seed);
+    APXMetaCompactPrefix_ prefix{};
+    prefix.serial = static_cast<uint32_t>(attempt.serial);
+    prefix.startPercent = attempt.startPercent;
+    prefix.endPercent = attempt.endPercent;
+    prefix.flags = attemptFlagsFromAttempt_(attempt);
+    prefix.streamVersion = kAPXCompactAttemptVersion_V2;
+    prefix.p1Count = static_cast<uint32_t>(attempt.p1.size());
+    prefix.p2Count = static_cast<uint32_t>(attempt.p2.size());
+    prefix.startX = attempt.startX;
+    prefix.startY = attempt.startY;
+
+    APXMetaCompactV2Tail_ tail{};
+    tail.baseTimeOffset = attempt.baseTimeOffset;
+    tail.seed = static_cast<uint64_t>(attempt.seed);
 
     APXTrackHeaderCompact p1Hdr{};
     p1Hdr.byteSize = static_cast<uint32_t>(p1Bytes.size());
@@ -525,7 +900,8 @@ bool writeAPXAttemptCompact(std::ostream& out, Attempt const& attempt) {
     p2Hdr.byteSize = static_cast<uint32_t>(p2Bytes.size());
 
     const uint32_t payloadSz =
-        static_cast<uint32_t>(sizeof(APXMetaCompact)) +
+        static_cast<uint32_t>(sizeof(prefix)) +
+        static_cast<uint32_t>(sizeof(tail)) +
         static_cast<uint32_t>(sizeof(APXTrackHeaderCompact)) + p1Hdr.byteSize +
         static_cast<uint32_t>(sizeof(APXTrackHeaderCompact)) + p2Hdr.byteSize;
 
@@ -533,7 +909,8 @@ bool writeAPXAttemptCompact(std::ostream& out, Attempt const& attempt) {
 
     out.write(reinterpret_cast<const char*>(&type), sizeof(type));
     out.write(reinterpret_cast<const char*>(&payloadSz), sizeof(payloadSz));
-    out.write(reinterpret_cast<const char*>(&meta), sizeof(meta));
+    out.write(reinterpret_cast<const char*>(&prefix), sizeof(prefix));
+    out.write(reinterpret_cast<const char*>(&tail), sizeof(tail));
     out.write(reinterpret_cast<const char*>(&p1Hdr), sizeof(p1Hdr));
     if (!p1Bytes.empty()) {
         out.write(reinterpret_cast<const char*>(p1Bytes.data()), static_cast<std::streamsize>(p1Bytes.size()));
@@ -546,10 +923,18 @@ bool writeAPXAttemptCompact(std::ostream& out, Attempt const& attempt) {
     return out.good();
 }
 
-bool readAPXAttemptCompact(std::istream& in, uint32_t chunkSize, Attempt& attempt) {
+bool readAPXAttemptCompact(std::istream& in, uint32_t chunkSize, Attempt& attempt, bool* outUsedLegacy) {
     attempt = Attempt{};
+    if (outUsedLegacy) *outUsedLegacy = false;
 
-    std::vector<uint8_t> buf(chunkSize);
+    if (chunkSize < sizeof(APXMetaCompactPrefix_) + sizeof(APXTrackHeaderCompact) + sizeof(APXTrackHeaderCompact)) {
+        return false;
+    }
+    if (chunkSize > kAPXMaxChunkSize_) {
+        return false;
+    }
+
+    std::vector<uint8_t> buf(static_cast<size_t>(chunkSize));
     if (chunkSize != 0) {
         in.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
         if (!in) return false;
@@ -558,31 +943,54 @@ bool readAPXAttemptCompact(std::istream& in, uint32_t chunkSize, Attempt& attemp
     const uint8_t* cur = buf.data();
     const uint8_t* end = buf.data() + buf.size();
 
-    APXMetaCompact meta{};
-    if (!readPod_(cur, end, meta)) return false;
-    if (meta.streamVersion != kAPXCompactAttemptVersion) return false;
+    APXMetaCompactPrefix_ prefix{};
+    if (!readPod_(cur, end, prefix)) return false;
 
-    attempt.serial = static_cast<int>(meta.serial);
-    attempt.startPercent = meta.startPercent;
-    attempt.endPercent = meta.endPercent;
-    attempt.startX = meta.startX;
-    attempt.startY = meta.startY;
-    attempt.startCheckpointId = meta.startCheckpointId;
-    attempt.baseTimeOffset = meta.baseTimeOffset;
-    attempt.seed = static_cast<uintptr_t>(meta.seed);
-    applyAttemptFlags_(meta.flags, attempt);
+    if (prefix.p1Count > kAPXMaxFramesPerTrack_ || prefix.p2Count > kAPXMaxFramesPerTrack_) {
+        return false;
+    }
+
+    attempt.serial = static_cast<int>(prefix.serial);
+    attempt.startPercent = prefix.startPercent;
+    attempt.endPercent = prefix.endPercent;
+    attempt.startX = prefix.startX;
+    attempt.startY = prefix.startY;
+    applyAttemptFlags_(prefix.flags, attempt);
+
+    if (prefix.streamVersion == kAPXCompactAttemptVersion_V1) {
+        APXMetaCompactV1Tail_ tail{};
+        if (!readPod_(cur, end, tail)) return false;
+
+        attempt.baseTimeOffset = tail.baseTimeOffset;
+        attempt.seed = static_cast<uintptr_t>(tail.seed);
+
+        if (outUsedLegacy) *outUsedLegacy = true;
+    } else if (prefix.streamVersion == kAPXCompactAttemptVersion_V2) {
+        APXMetaCompactV2Tail_ tail{};
+        if (!readPod_(cur, end, tail)) return false;
+
+        attempt.baseTimeOffset = tail.baseTimeOffset;
+        attempt.seed = static_cast<uintptr_t>(tail.seed);
+    } else {
+        return false;
+    }
 
     APXTrackHeaderCompact p1Hdr{};
     if (!readPod_(cur, end, p1Hdr)) return false;
-    if ((size_t)(end - cur) < p1Hdr.byteSize) return false;
-    if (!decodeTrackCompact_(cur, p1Hdr.byteSize, meta.p1Count, attempt.p1)) return false;
+    if (p1Hdr.byteSize > static_cast<uint32_t>(end - cur)) return false;
+    if (prefix.p1Count > p1Hdr.byteSize) return false; // at least 1 tag byte per frame
+    if (!decodeTrackCompact_(cur, p1Hdr.byteSize, prefix.p1Count, attempt.p1)) return false;
     cur += p1Hdr.byteSize;
 
     APXTrackHeaderCompact p2Hdr{};
     if (!readPod_(cur, end, p2Hdr)) return false;
-    if ((size_t)(end - cur) < p2Hdr.byteSize) return false;
-    if (!decodeTrackCompact_(cur, p2Hdr.byteSize, meta.p2Count, attempt.p2)) return false;
+    if (p2Hdr.byteSize > static_cast<uint32_t>(end - cur)) return false;
+    if (prefix.p2Count > p2Hdr.byteSize) return false; // at least 1 tag byte per frame
+    if (!decodeTrackCompact_(cur, p2Hdr.byteSize, prefix.p2Count, attempt.p2)) return false;
     cur += p2Hdr.byteSize;
+
+    // catch evil dubious corrupted chunk sizes
+    if (cur != end) return false;
 
     finalizeLoadedAttempt_(attempt);
     return true;

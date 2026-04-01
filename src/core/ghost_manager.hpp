@@ -64,6 +64,10 @@
 // Ability to only replay one practice session or multiple (maybe even name them and save names as a different file). This would be it's own UI. Also have ability to delete certain sessions and maybe even export and import sessions (practice and normal). It would be cool to be able to export your best attempt, and be able to import the best attempt of several people and replay the at the same time, and have the icons maybe exported and imported too? A lot of work but would be cool to have eventually.
 // Platformer mode isn't implimented when there are checkpoints yet (practice mode works but not normal)
 // Ability to load and export attempt files so you can send them to people
+// Add back the limit ghost updates per frame feature for low end devices
+// Once dead, allow new allocation to remove the ghost early
+// Make glow work on ghosts
+// Massively optimize Attempts class to be way smaller (lot of uneeded bools from the early versions of this mod)
 
 using namespace geode::prelude;
 
@@ -389,14 +393,14 @@ public:
             m_serialCacheDirty = true;
             
             m_checkpointMgr = CheckpointManager();
-            m_checkpointMgr.attach(m_pl);
             invalidateAttemptCounts();
             stopPlayback();
             stopReplay();
             
             recording = false;
             toggleRecording();
-            m_pl->resetLevel();
+            
+            restartLevel();
             
             //log::info("[Delete] After clear: attempts.size()={}", attempts.size());
         } else {
@@ -733,7 +737,7 @@ public:
             //log::info("preload idx: {}, already preloaded: {}", idx, a.preloaded);
             preloadAttempt_(a, idx, true);
             //log::info("preloaded: {}, iconsAssigned: {}", a.preloaded, a.iconsAssigned);
-            if (m_replayKind == ReplayKind::PracticeComposite) InitialGamemodeSetProcessAttemptIdx(idx);
+            InitialGamemodeSetProcessAttemptIdx(idx);
             if (a.preloaded) {
                 ++m_preloadLoaded;
                 ++work;
@@ -754,11 +758,11 @@ public:
 
         Attempt& a = attempts[attemptIdx];
 
-        auto h = m_playerObjectPool.acquireForOwner(a.serial);
+        auto h = m_playerObjectPool.acquireForOwner(a.serial, static_cast<uint32_t>(attemptIdx), false);
         if (h) { a.g1Idx = h.index; a.g1 = h.po; }
 
         if (a.hadDual) {
-            auto h2 = m_playerObjectPool.acquireForOwner(a.serial + 0x100000);
+            auto h2 = m_playerObjectPool.acquireForOwner(a.serial + 0x100000, static_cast<uint32_t>(attemptIdx), true);
             if (h2) { a.g2Idx = h2.index; a.g2 = h2.po; }
         }
 
@@ -797,14 +801,14 @@ public:
                 return;
             }
 
-            auto h = m_playerObjectPool.acquireForOwner(a.serial);
+            auto h = m_playerObjectPool.acquireForOwner(a.serial, static_cast<uint32_t>(attemptIdx), false);
             if (h) {
                 a.g1Idx = h.index;
                 a.g1 = h.po;
             }
 
             if (a.hadDual) {
-                auto h2 = m_playerObjectPool.acquireForOwner(a.serial + 0x100000);
+                auto h2 = m_playerObjectPool.acquireForOwner(a.serial + 0x100000, static_cast<uint32_t>(attemptIdx), true);
                 if (h2) {
                     a.g2Idx = h2.index;
                     a.g2 = h2.po;
@@ -825,9 +829,10 @@ public:
         }
     }
 
+    // Please can you be the same as preloading? It's slightly different for some reason
     void InitialGamemodeSet() {
         m_playerObjectPool.clearOwners(true);
-        InitialGamemodeSetProcessBatch(&m_initialAttemptsToSet, m_playerObjectPool.capacity());
+        InitialGamemodeSetProcessBatch(&m_preloadOrder, m_playerObjectPool.capacity());
     }
 
     bool isPreloadingAttempts() const { return m_preloadActive; }
@@ -889,7 +894,6 @@ public:
         m_playerObjectPool.clearOwners(true);
         clearAllAttemptPreloadState_();
 
-        attemptBuffer.clear();
         m_primedIndices.clear();
         m_primedSet.clear();
         m_wantToPrimeIndices.clear();
@@ -959,6 +963,8 @@ public:
         return modEnabled && !isPlatformer; 
     }
 
+    bool isUpdateAttemptCountBlocked() const { return m_blockAttemptCount; }
+
     void updateModEnabled() {
         auto* mod = Mod::get();
         bool temp_modEnabled = getSettingBoolOrDefault_(mod, "mod-enabled", true);
@@ -973,6 +979,99 @@ public:
             //log::info("[Perf] Unlimited mode active: budget=∞, visible=∞, updates=realtime");
             m_maxVisibleGhosts = std::numeric_limits<int>::max() / 4;
         }
+    }
+
+    std::filesystem::path attemptsDir_() const {
+        if (m_attemptsDir.empty()) {
+            auto base = Mod::get()->getSaveDir();
+            m_attemptsDir = base / "attempts";
+
+            std::error_code ec;
+            std::filesystem::create_directories(m_attemptsDir, ec);
+            if (ec) {
+                log::warn(
+                    "[SAVE FILE] create_directories failed: {} ({})",
+                    geode::utils::string::pathToString(m_attemptsDir),
+                    ec.message()
+                );
+            }
+        }
+        return m_attemptsDir;
+    }
+
+    std::filesystem::path fileForLevel_(int levelID) const {
+        auto dir = attemptsDir_();
+
+        if (levelID < 120 && !m_customSaveId.empty()) {
+            return dir / (m_customSaveId + "_attempts.apx");
+        }
+
+        return dir / (std::to_string(levelID) + "_attempts.apx");
+    }
+
+    bool loadLevelFileWithMigration_(int levelID, std::vector<Attempt>& attemptsOut, PracticePath& practicePathOut) {
+        return loadAPXFileWithMigration(fileForLevel_(levelID), attemptsOut, practicePathOut);
+    }
+
+    bool saveLevelFileCurrent_(int levelID, std::vector<Attempt> const& attempts, PracticePath const& practicePath) {
+        const auto path = fileForLevel_(levelID);
+        ensureHeader_(path);
+        return saveAPXFileCurrent(path, attempts, practicePath);
+    }
+
+    void ensureHeader_(std::filesystem::path const& path) {
+        std::error_code ec;
+
+        ec.clear();
+        const bool exists = std::filesystem::exists(path, ec);
+        if (ec) {
+            log::warn(
+                "[SAVE FILE] exists failed for {}: {}",
+                geode::utils::string::pathToString(path),
+                ec.message()
+            );
+            return;
+        }
+
+        uintmax_t fsz = 0;
+        if (exists) {
+            ec.clear();
+            fsz = std::filesystem::file_size(path, ec);
+            if (ec) {
+                log::warn(
+                    "[SAVE FILE] file_size failed for {}: {}",
+                    geode::utils::string::pathToString(path),
+                    ec.message()
+                );
+                return;
+            }
+        }
+
+        if (exists && fsz >= sizeof(APXHeader)) {
+            std::ifstream checkFile(path, std::ios::binary);
+            if (checkFile) {
+                APXHeader existing{};
+                checkFile.read(reinterpret_cast<char*>(&existing), sizeof(existing));
+                if (checkFile && std::string(existing.magic, 4) == "APX2") {
+                    return;
+                }
+            }
+        }
+
+        std::ofstream hout(path, std::ios::binary | std::ios::trunc);
+        if (!hout) {
+            log::warn(
+                "[SAVE FILE] failed to open header file for write: {}",
+                geode::utils::string::pathToString(path)
+            );
+            return;
+        }
+
+        APXHeader h{};
+        std::memcpy(h.magic, "APX2", 4);
+        h.version = kAPXVersion;
+        hout.write(reinterpret_cast<const char*>(&h), sizeof(h));
+        hout.flush();
     }
 
     // 16 char hex hash of current level name
@@ -1083,6 +1182,15 @@ public:
         auto path = fileForLevel_(levelID);
         std::error_code ec;
         std::filesystem::create_directories(path.parent_path(), ec);
+        if (ec) {
+            log::warn(
+                "[APX save] create_directories failed: {} ({})",
+                geode::utils::string::pathToString(path.parent_path()),
+                ec.message()
+            );
+            m_isSaving = false;
+            return 0;
+        }
 
         int written = 0;
 
@@ -1136,7 +1244,6 @@ public:
 
         if (m_loadedLevelID != levelID) {
             m_checkpointMgr = CheckpointManager();
-            if (m_pl) m_checkpointMgr.attach(m_pl);
             m_needsMigrationRewrite = false;
             m_loadedFileWasLegacyAttempts = false;
         }
@@ -1272,7 +1379,6 @@ public:
                 a.hadDual = (m.flags & (1u << 2)) != 0;
                 a.startX = m.startX;
                 a.startY = m.startY;
-                a.startCheckpointId = m.startCheckpointId;
                 a.baseTimeOffset = m.baseTimeOffset;
                 a.seed = static_cast<uintptr_t>(m.seed);
 
@@ -1518,7 +1624,6 @@ public:
         m_replayOwnerIndex = -1;
 
         m_pl = pl;
-        m_checkpointMgr.attach(pl);
 
         m_ghostRoot = cocos2d::CCNode::create();
         m_ghostRoot->ignoreAnchorPointForPosition(true);
@@ -1576,11 +1681,8 @@ public:
         m_lastEmitIdx1 = m_lastEmitIdx2 = 0;
         m_lastGhostTickFrame = m_frameCounter;
 
-        attemptBuffer.clear();
         practiceAttemptReplayIndex.clear();
-        currentAttemptImmune = false;
 
-        m_checkpointNodes.clear();
         m_checkpointTopId = -1;
         m_nextCheckpointId = 1;
         m_checkpointUndoStack.clear();
@@ -1750,6 +1852,7 @@ public:
         botPrevHoldR1 = botPrevHoldR2 = false;
 
         const Attempt* owner = nullptr;
+        double startTime = getLastCheckpointTime();
         
         if (m_replayKind == ReplayKind::BestSingle) {
             if (m_compOwnerIdx < attempts.size()) {
@@ -1758,7 +1861,6 @@ public:
                 m_replayOwnerSerial = owner->serial;
             }
         } else {
-            double startTime = m_checkpointBaseTime;
             int serial = m_checkpointMgr.findOwnerSerialForTime(startTime);
             if (serial > 0) {
                 owner = findAttemptBySerial_(serial);
@@ -1791,7 +1893,6 @@ public:
         m_didInitialWarp = true;
 
         // Set starting time
-        double startTime = m_checkpointBaseTime;
         m_currentSessionTime = startTime;
         m_lastAttemptTime = startTime;
         m_prevSessionTime = startTime;
@@ -1826,8 +1927,7 @@ public:
                     startX,
                     endX,
                     m_current.p1.size(),
-                    m_current.p2.size(),
-                    m_current.beganAtStartOfLevel
+                    m_current.p2.size()
                 );
             }
 
@@ -1852,8 +1952,6 @@ public:
         forceSetPosP2.y = 105.f;
 
         // log::info("onReset");
-
-        m_freezeRemoveCheckpointDuringCompletionCleanup = false;
 
         //log::info("player x: {}, y: {}", m_pl->m_player1->m_positionX, m_pl->m_player1->m_positionY);
         //log::info("playerV2 x: {}", playerX_());
@@ -1888,8 +1986,7 @@ public:
                     startX,
                     endX,
                     m_current.p1.size(),
-                    m_current.p2.size(),
-                    m_current.beganAtStartOfLevel
+                    m_current.p2.size()
                 );
 
                 if (recordInPractice) {
@@ -1929,22 +2026,6 @@ public:
 
         forcePlayersVisible_();
 
-        if (m_pl && m_pl->m_isPracticeMode) {
-            const Checkpoint* topCheckpoint = m_checkpointMgr.topCheckpoint();
-            if (topCheckpoint) {
-                m_checkpointBaseTime = topCheckpoint->checkpointTime;
-            } else {
-                m_checkpointBaseTime = 0.0;
-            }
-        } else {
-            m_checkpointBaseTime = 0.0;
-        }
-        
-        // Only set current session time when bot is not active
-        //if (!botActive) {
-        //    m_currentSessionTime = m_checkpointBaseTime;
-        //}
-
         if (isPureRecordingMode_()) {
             return;
         }
@@ -1956,7 +2037,7 @@ public:
 
         if (m_useCheckpointsRoute && m_replayKind == ReplayKind::PracticeComposite && routeIsComposite_()) {
             if (botActive || showWhilePlaying) {
-                buildCompositePracticePath();
+                //buildCompositePracticePath();
                 rebuildRouteOwnerCache_();
             }
             if (botActive) tagCompositeOwnersHidden_(true);
@@ -1978,32 +2059,43 @@ public:
         }
 
         if (botActive || showWhilePlaying) {
-            for (size_t idx : m_primedIndices) {
-                if (idx < attempts.size()) {
-                    Attempt& a = attempts[idx];
-                    a.resetPlayback();
-                    if (a.g1) {
-                        a.setP1Visible(false, true);
-                        //a.g1->m_waveTrail->setVisible(false);
-                        //a.g1->m_waveTrail->setOpacity(0);
-                        //a.g1->m_waveTrail->reset();
-                    }
-                    if (a.g2) {
-                        a.setP2Visible(false, true);
-                        //a.g2->m_waveTrail->setVisible(false);
-                        //a.g2->m_waveTrail->setOpacity(0);
-                        //a.g2->m_waveTrail->reset();
-                    }
-                }
-            }
-            m_primedIndices.clear();
-            m_primedSet.clear();
-            m_wantToPrimeIndices.clear();
-            m_wantToPrimeSet.clear();
-            //m_playerObjectPool.clearOwners(true);
-            // Reset practice mode player objects
+            invalidatePrimedPlayerObjectRefs();
             InitialGamemodeSet();
         }
+    }
+
+    void invalidatePrimedPlayerObjectRefs() {
+        for (const auto& use : m_playerObjectPool.getActiveAttempts()) {
+            if (use.attemptIdx >= attempts.size()) continue;
+
+            Attempt& a = attempts[use.attemptIdx];
+
+            if (use.hasP1) {
+                if (a.g1) a.setP1Visible(false, true);
+                a.g1 = nullptr;
+                a.g1Idx = -1;
+                a.primedP1 = false;
+            }
+
+            if (use.hasP2) {
+                if (a.g2) a.setP2Visible(false, true);
+                a.g2 = nullptr;
+                a.g2Idx = -1;
+                a.primedP2 = false;
+            }
+        }
+
+        if (m_current.g1) m_current.setP1Visible(false, true);
+        if (m_current.g2) m_current.setP2Visible(false, true);
+        m_current.g1 = nullptr;
+        m_current.g2 = nullptr;
+        m_current.g1Idx = -1;
+        m_current.g2Idx = -1;
+
+        m_primedIndices.clear();
+        m_primedSet.clear();
+        m_wantToPrimeIndices.clear();
+        m_wantToPrimeSet.clear();
     }
 
     void setActiveGhostsInvisible() {
@@ -2091,14 +2183,11 @@ public:
         m_currentReplayStartPos.x = 0.f;
         m_currentReplayStartPos.y = 0.f;
 
-        attemptBuffer.clear();
         practiceAttemptReplayIndex.clear();
-        currentAttemptImmune = false;
 
         m_prevPractice = false;
         m_pendingRearm = false;
 
-        m_checkpointNodes.clear();
         m_checkpointTopId = -1;
         m_nextCheckpointId = 1;
         m_checkpointUndoStack.clear();
@@ -2125,11 +2214,11 @@ public:
 
         m_playerObjectPool.clearAfterGhostPoolCleared();
         setdisablePlayerMove(false);
+        m_blockAttemptCount = false;
     }
 
     void onComplete() {
         m_justDied = true;
-        m_freezeRemoveCheckpointDuringCompletionCleanup = true;
 
         if (!m_current.p1.empty()) {
             const int serial = m_current.serial;
@@ -2152,8 +2241,7 @@ public:
                     startX,
                     endX,
                     p1Count,
-                    p2Count,
-                    m_current.beganAtStartOfLevel
+                    p2Count
                 );
             }
 
@@ -2164,8 +2252,6 @@ public:
             m_current.endPercent = 100.f;
             pushAttempt(std::move(m_current));
         }
-
-        resolvePendingCheckpointOwners_();
     }
 
     void saveCurrentAttemptNow() {
@@ -2180,7 +2266,6 @@ public:
         if (m_current.p1.size() > 2) {
             //geode::log::warn("PUSH saveCurrentAttemptNow");
             pushAttempt(std::move(m_current));
-            resolvePendingCheckpointOwners_();
             startNewAttempt();
         }
     }
@@ -2257,7 +2342,6 @@ public:
         m_wantToPrimeSet.clear();
         onlyBestGhost = false;
         updateGhostVisibility();
-        attemptBuffer.clear();
         practiceAttemptReplayIndex.clear();
     }
     void showBestGhostOnly() {
@@ -2365,71 +2449,6 @@ public:
         return best;
     }
 
-    void buildCompositePracticePath(std::optional<bool> wantPractice = std::optional<bool>(true)) {
-        m_activeRoute = ActiveRoute::CompositeCheckpoint;
-        m_compOwnerIdx = SIZE_MAX;
-        m_replayAttempt = nullptr;
-        m_replayOwnerSerial = -1;
-        
-        m_nullOwnerSpanSkips = 0;
-        m_spans.clear();
-
-        std::vector<PracticeSegment> replaySegs = m_checkpointMgr.getReplaySequence();
-        
-        if (replaySegs.empty()) {
-            log::warn("[Practice Composite] No segments in selected session");
-            return;
-        }
-        
-        std::string dbg = "[Practice Composite] Building spans from segments:";
-        
-        // Build spans for visibility culling and owner tracking
-        for (size_t i = 0; i < replaySegs.size(); ++i) {
-            const auto& seg = replaySegs[i];
-            
-            if (seg.ownerSerial <= 0) {
-                dbg += fmt::format("\n  [{:.1f}, {:.1f}) -> NO OWNER (skipped)", seg.startX, seg.endX);
-                ++m_nullOwnerSpanSkips;
-                continue;
-            }
-            
-            // Verify owner exists
-            const Attempt* owner = findAttemptBySerial_(seg.ownerSerial);
-            if (!owner || owner->p1.empty()) {
-                owner = findBestAttemptForRange_(seg.startX,
-                    seg.checkpointIdEnd == -1 ? seg.maxXReached : seg.endX,
-                    wantPractice);
-            }
-            
-            if (!owner || owner->p1.empty()) {
-                dbg += fmt::format("\n  [{:.1f}, {:.1f}) -> NO VALID OWNER (skipped)", seg.startX, seg.endX);
-                ++m_nullOwnerSpanSkips;
-                continue;
-            }
-            
-            float effectiveEnd = (seg.checkpointIdEnd == -1) ? seg.maxXReached : seg.endX;
-            
-            m_spans.push_back(Span{
-                double(seg.startX), 
-                double(effectiveEnd),
-                owner->serial,
-                seg.p1Frames,
-                seg.p2Frames
-            });
-            
-            dbg += fmt::format("\n  [{:.1f}, {:.1f}) -> serial={}", 
-                seg.startX, effectiveEnd, owner->serial);
-        }
-        
-        if (m_nullOwnerSpanSkips > 0) {
-            dbg += fmt::format("\n  WARNING: {} span(s) had no owner", m_nullOwnerSpanSkips);
-        }
-
-        // log::info("[Practice Composite] {}", dbg);
-        
-        if (botActive) tagCompositeOwnersHidden_(true);
-    }
-
     void syncInputsToCurrentIndexP1_() {
         if (!m_pl) return;
         if (!m_currentOwner) return;
@@ -2518,7 +2537,6 @@ public:
     void startReplayPractice() {
         m_freezePlayerXAtEnd = false;
         m_chainAuthoritative = true;
-        resolvePendingCheckpointOwners_();
         invalidateAttemptCounts();
 
         m_filterByStartPosition = true;
@@ -2546,7 +2564,7 @@ public:
 
         m_replayKind = ReplayKind::PracticeComposite;
 
-        buildCompositePracticePath(std::optional<bool>(true));
+        //buildCompositePracticePath(std::optional<bool>(true));
 
         rebuildRouteOwnerCache_();
         
@@ -2556,9 +2574,6 @@ public:
             m_filterByStartPosition = false;
             return;
         }
-
-        const double sessionT0 = replaySegs.front().absStart();
-        m_checkpointBaseTime = sessionT0;
         
         //if (!firstOwner || firstOwner->p1.empty()) {
         //    log::warn("[Bot] startReplayPractice: no valid owner found");
@@ -2600,16 +2615,16 @@ public:
             m_activeOwnerSerial = m_replayOwnerSerial;
         }
 
-        double endTime = m_checkpointMgr.replayEndTime();
+        m_replayEndTime = m_checkpointMgr.replayEndTime();
         
-        if (endTime > 0.1) {
-            int tailSerial = m_checkpointMgr.findOwnerSerialForTime(endTime);
+        if (m_replayEndTime > 0.1) {
+            int tailSerial = m_checkpointMgr.findOwnerSerialForTime(m_replayEndTime);
             
             if (tailSerial > 0) {
                 const Attempt* tailOwner = findAttemptBySerial_(tailSerial);
                 if (tailOwner && !tailOwner->p1.empty()) {
                     // Find the frame closest to endTime
-                    size_t endIdx = idxForTime(tailOwner->acc1Time, tailOwner->p1, endTime);
+                    size_t endIdx = idxForTime(tailOwner->acc1Time, tailOwner->p1, m_replayEndTime);
                     if (endIdx < tailOwner->p1.size()) {
                         m_freezePlayerX = tailOwner->p1[endIdx].x;
                         m_freezePlayerY = tailOwner->p1[endIdx].y;
@@ -2619,7 +2634,7 @@ public:
                     }
                     
                     if (!tailOwner->p2.empty()) {
-                        size_t endIdx2 = idxForTime(tailOwner->acc2Time, tailOwner->p2, endTime);
+                        size_t endIdx2 = idxForTime(tailOwner->acc2Time, tailOwner->p2, m_replayEndTime);
                         if (endIdx2 < tailOwner->p2.size()) {
                             m_freezePlayerXP2 = tailOwner->p2[endIdx2].x;
                             m_freezePlayerYP2 = tailOwner->p2[endIdx2].y;
@@ -2637,7 +2652,7 @@ public:
                 }
             }
         } else {
-            log::warn("[Bot] No valid end time data (endTime={:.3f}), freeze disabled", endTime);
+            log::warn("[Bot] No valid end time data (endTime={:.3f}), freeze disabled", m_replayEndTime);
             m_freezePlayerX = 0.f;
             m_freezePlayerY = 0.f;
             m_freezePlayerXP2 = 0.f;
@@ -2651,8 +2666,6 @@ public:
         m_freezePlayerXAtEnd = false;
         m_freezePlayerX = 0.f;
         m_freezePlayerY = 0.f;
-
-        resolvePendingCheckpointOwners_();
 
         if (!m_pl || !m_pl->m_player1 || attempts.empty()) {
             log::warn("[Bot] startReplayBest aborted: pl={}, p1={}, attempts={}",
@@ -2767,7 +2780,13 @@ public:
         m_freezePlayerY = 0.f;
     }
 
-    void restartLevel() { if (m_pl) m_pl->resetLevel(); }
+    void restartLevel() { 
+        if (m_pl) {
+            m_blockAttemptCount = true;
+            m_pl->resetLevel(); 
+            m_blockAttemptCount = false;
+        }
+    }
 
     bool isBotActive() const { return botActive; }
     bool isReplaying() const { return playback; }
@@ -2776,80 +2795,11 @@ public:
     bool isdisablePlayerMove() const { return disablePlayerMove; }
     void setdisablePlayerMove(bool on) { disablePlayerMove = on; }
 
-    size_t m_dbgCheckpointCall = 0;
-    double s_lastAbsTime = -1.0;
-    int    s_lastSerial  = -1;
-    float  s_lastX       = NAN;
-    size_t s_lastFrame = 0;
-
-    void onPracticeCheckpoint() {
-        if (!m_pl || !m_pl->m_player1) return;
-        
-        const float px = playerX_();
-        const float py = m_pl->m_player1->getPositionY();
-        float rot1 = 0.f, rot2 = 0.f;
-        
-        if (m_pl->m_player1) rot1 = m_pl->m_player1->getRotation();
-        if (m_pl->m_player2) rot2 = m_pl->m_player2->getRotation();
-        
-        size_t p1Count = m_current.p1.size();
-        size_t p2Count = m_current.p2.size();
-        int attemptSerial = m_current.serial;
-        
-        double absTime = m_current.baseTimeOffset + m_pl->m_attemptTime;
-
-        ++m_dbgCheckpointCall;
-        /*
-        geode::log::info(
-            "[Bot] onPracticeCheckpoint call={} serial={} frame={} attemptTime={:.6f} baseOff={:.6f} absTime={:.6f} lastFrameT={:.6f} x={:.3f}",
-            (long long)m_dbgCheckpointCall, attemptSerial, (long long)m_frameCounter,
-            (double)m_pl->m_attemptTime, (double)m_current.baseTimeOffset, (double)absTime,
-            (double)(m_current.p1.empty() ? -1.0 : m_current.p1.back().t),
-            px
-        );*/
-
-        if (attemptSerial == s_lastSerial &&
-            std::fabs(absTime - s_lastAbsTime) < 1e-4 &&
-            std::fabs(px - s_lastX) < 0.5f &&
-            m_frameCounter == s_lastFrame) {
-            // geode::log::warn("[Bot] Duplicate practice checkpoint suppressed");
-            return;
+    double getLastCheckpointTime() {
+        if (m_pl && m_pl->getLastCheckpoint()) {
+            return m_pl->getLastCheckpoint()->m_gameState.m_levelTime;
         }
-
-        s_lastSerial = attemptSerial;
-        s_lastAbsTime = absTime;
-        s_lastX = px;
-        s_lastFrame = m_frameCounter;
-
-        m_checkpointMgr.onCheckpointPlaced(px, py, attemptSerial, rot1, rot2, 
-                                        p1Count, p2Count, absTime, m_current.baseTimeOffset, m_current.startCheckpointId);
-        
-        m_current.immuneToIgnorePractice = true;
-        m_current.ignoreInPractice = false;
-        
-        currentAttemptImmune = true;
-        attemptBuffer.clear();
-        
-        if (botActive && m_useCheckpointsRoute) {
-            buildCompositePracticePath();
-            rebuildRouteOwnerCache_();
-        }
-        if (botActive) tagCompositeOwnersHidden_(true);
-    }
-
-    void onPracticeUndoCheckpoint() {
-        if (!m_freezeRemoveCheckpointDuringCompletionCleanup) {
-            m_checkpointMgr.onCheckpointRemoved();
-            
-            if (botActive && m_useCheckpointsRoute) {
-                buildCompositePracticePath();
-                rebuildRouteOwnerCache_();
-                m_replayIdx1 = m_replayIdx2 = 0;
-                m_didInitialWarp = false;
-                m_lastEmitIdx1 = m_lastEmitIdx2 = 0;
-                m_replayOwnerSerial = -1;  // Force re-lookup
-            }
-        }
+        return 0.f;
     }
 
     void togglePracticeMode(bool enabled) {
@@ -2865,8 +2815,6 @@ public:
     void onPracticeToggle(bool enabled) {
         //log::info("[onPracticeToggle] enabled={}", enabled);
 
-        m_freezeRemoveCheckpointDuringCompletionCleanup = true;
-
         if (recording && !recordingBlocked && recordInPractice) {
             m_checkpointMgr.onExitEarly();
         }
@@ -2875,7 +2823,6 @@ public:
         if (!isRecording()) toggleRecording();
 
         practiceAttemptReplayIndex.clear();
-        attemptBuffer.clear();
 
         forcePlayersVisible_();
         clearHeldInputs_();
@@ -2975,7 +2922,6 @@ public:
 
         m_px = m_pl->m_player1 ? m_pl->m_player1->getPositionX() : 0.f;
         
-        //if (m_pl) m_currentSessionTime = m_pl->m_attemptTime + m_checkpointBaseTime;
         if (m_pl) m_lastAttemptTime = m_pl->m_attemptTime;
 
         // log::info("Player z order: {}", m_pl->m_player1->getZOrder()); 59
@@ -3047,7 +2993,7 @@ public:
         float lastYP2 = 0.f;
         
         if (m_replayKind == ReplayKind::PracticeComposite) {
-            lastTime = m_checkpointMgr.replayEndTime();
+            lastTime = m_replayEndTime;
             lastX = m_freezePlayerX;
             lastY = m_freezePlayerY;
             lastXP2 = m_freezePlayerXP2;
@@ -3263,10 +3209,6 @@ public:
             f.holdR = p2RHold;
             m_current.p2.push_back(f);
         }
-        
-        if (m_current.practiceAttempt && m_current.startCheckpointId == -1) {
-            m_current.startCheckpointId = m_checkpointTopId;
-        }
     }
     
     bool isOwnerGhost_(size_t ai, Attempt const& a) const {
@@ -3450,9 +3392,8 @@ public:
                     Attempt& a = attempts[ai];
 
                     // false when the ghost would start already dead
-                    if (primeGhostToPX_(a, px, px2)) {
-                        m_primedIndices.push_back(ai);
-                        m_primedSet.insert(ai);
+                    if (primeGhostToPX_(a, ai, px, px2)) {
+                        if (m_primedSet.insert(ai).second) m_primedIndices.push_back(ai);
 
                         if (!a.colorsAssigned) {
                             refreshAttemptColors_(a);
@@ -3531,9 +3472,8 @@ public:
                         if ((m_playerObjectPool.inUseCount() < m_playerObjectPool.capacity() - 1)
                     || a.g1 || a.g2) {
                             // false when the ghost would start already dead
-                            if (primeGhostToPX_(a, px, px2)) {
-                                m_primedIndices.push_back(ai);
-                                m_primedSet.insert(ai);
+                            if (primeGhostToPX_(a, ai, px, px2)) {
+                                if (m_primedSet.insert(ai).second) m_primedIndices.push_back(ai);
                             }
                         }
                         else {
@@ -3606,6 +3546,7 @@ public:
 private:
     bool modEnabled = true;
     bool m_is_quitting = false;
+    bool m_blockAttemptCount = false;
     bool death_sound_preloaded = false;
     bool m_p2JustSpawned = false;
     bool m_prevHadP2 = false;
@@ -3620,7 +3561,6 @@ private:
     double m_currentSessionTime = 0.0;
     double m_lastAttemptTime = 0.0;
     double m_prevSessionTime = 0.0;
-    double m_checkpointBaseTime = 0.0;
     double m_offsetUnitsPerSecond = 311.f;
 
     bool overrideWaveSize = true;
@@ -3689,14 +3629,11 @@ private:
     size_t m_currentAttemptStart = 0;
     size_t m_playbackStartTick = 0;
 
-    std::vector<size_t> attemptBuffer;
     std::vector<size_t> practiceAttemptReplayIndex;
-    bool currentAttemptImmune = false;
 
     bool m_prevPractice = false;
     bool m_pendingRearm = false;
 
-    std::vector<CheckpointNode> m_checkpointNodes;
     int m_checkpointTopId = -1;
     int m_nextCheckpointId = 1;
     int m_nextAttemptSerial = 1;
@@ -3783,6 +3720,7 @@ private:
     float m_freezePlayerY = 0.f;
     float m_freezePlayerXP2 = 0.f;
     float m_freezePlayerYP2 = 0.f;
+    double m_replayEndTime = 0.f;
 
     int m_practiceCompositeOwnerSerial = -1;
     std::string m_customSaveId;
@@ -3801,7 +3739,6 @@ private:
     std::unordered_set<int> m_currentlyHiddenSerials;
     std::vector<uint8_t> m_routeOwnerMask;
     bool m_hideAllOwnersDuringPracticeReplay = true;
-    bool m_freezeRemoveCheckpointDuringCompletionCleanup = false;
 
     CheckpointManager m_checkpointMgr;
 
@@ -4276,22 +4213,6 @@ private:
         return maxX - minX;
     }
 
-    inline CheckpointNode* findCheckpointNodeById_(int id) {
-        if (id < 0) return nullptr;
-        for (auto& n : m_checkpointNodes) {
-            if (n.id == id) return &n;
-        }
-        return nullptr;
-    }
-
-    inline CheckpointNode const* findCheckpointNodeById_(int id) const {
-        if (id < 0) return nullptr;
-        for (auto const& n : m_checkpointNodes) {
-            if (n.id == id) return &n;
-        }
-        return nullptr;
-    }
-
     static uint32_t mix32_(uint32_t x) {
         x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16; return x;
     }
@@ -4355,166 +4276,6 @@ private:
             applyRandomOffsetSingle(a);
         }
     }
-
-    std::filesystem::path attemptsDir_() const {
-        if (m_attemptsDir.empty()) {
-            auto base = Mod::get()->getSaveDir();
-            m_attemptsDir = base / "attempts";
-
-            std::error_code ec;
-            std::filesystem::create_directories(m_attemptsDir, ec);
-            if (ec) {
-                log::warn(
-                    "[SAVE FILE] create_directories failed: {} ({})",
-                    geode::utils::string::pathToString(m_attemptsDir),
-                    ec.message()
-                );
-            }
-        }
-        return m_attemptsDir;
-    }
-
-    std::filesystem::path fileForLevel_(int levelID) const {
-        auto dir = attemptsDir_();
-
-        if (levelID < 120 && !m_customSaveId.empty()) {
-            return dir / (m_customSaveId + "_attempts.apx");
-        }
-
-        return dir / (std::to_string(levelID) + "_attempts.apx");
-    }
-
-    void ensureHeader_(std::filesystem::path const& path) {
-        std::error_code ec;
-
-        ec.clear();
-        const bool exists = std::filesystem::exists(path, ec);
-        if (ec) {
-            log::warn(
-                "[SAVE FILE] exists failed for {}: {}",
-                geode::utils::string::pathToString(path),
-                ec.message()
-            );
-            return;
-        }
-
-        uintmax_t fsz = 0;
-        if (exists) {
-            ec.clear();
-            fsz = std::filesystem::file_size(path, ec);
-            if (ec) {
-                log::warn(
-                    "[SAVE FILE] file_size failed for {}: {}",
-                    geode::utils::string::pathToString(path),
-                    ec.message()
-                );
-                return;
-            }
-        }
-
-        if (exists && fsz >= sizeof(APXHeader)) {
-            std::ifstream checkFile(path, std::ios::binary);
-            if (checkFile) {
-                APXHeader existing{};
-                checkFile.read(reinterpret_cast<char*>(&existing), sizeof(existing));
-                if (checkFile && std::string(existing.magic, 4) == "APX2") {
-                    return;
-                }
-            }
-        }
-
-        std::ofstream hout(path, std::ios::binary | std::ios::trunc);
-        if (!hout) {
-            log::warn(
-                "[SAVE FILE] failed to open header file for write: {}",
-                geode::utils::string::pathToString(path)
-            );
-            return;
-        }
-
-        APXHeader h{};
-        std::memcpy(h.magic, "APX2", 4);
-        h.version = 6;
-        hout.write(reinterpret_cast<const char*>(&h), sizeof(h));
-        hout.flush();
-    }
-
-    void appendCheckpointChainChunk_(std::ofstream& out) {
-        APXCheckpointMeta meta{};
-        meta.nodeCount = (uint32_t)m_checkpointNodes.size();
-        meta.topId = m_checkpointTopId;
-        meta.frozenTopId = m_frozenCheckpointTopId;
-
-        const uint32_t payloadSz =
-            (uint32_t)sizeof(APXCheckpointMeta) +
-            (uint32_t)m_checkpointNodes.size() * (uint32_t)sizeof(APXCheckpointNodePacked);
-
-        const uint32_t type = kChunk_CheckpointZ2;
-
-        out.write(reinterpret_cast<const char*>(&type), sizeof(type));
-        out.write(reinterpret_cast<const char*>(&payloadSz), sizeof(payloadSz));
-        out.write(reinterpret_cast<const char*>(&meta), sizeof(meta));
-
-        for (auto const& n : m_checkpointNodes) {
-            APXCheckpointNodePacked p{};
-            p.id            = n.id;
-            p.x             = n.x;
-            p.prevId        = n.prevId;
-            p.active        = (uint8_t)(n.active ? 1 : 0);
-            p.ownerSerial   = n.ownerSerial;
-            p.ownerFrameIdx = (uint32_t)n.ownerFrameIdx;
-            p.rot1          = n.rot1; p.rot2 = n.rot2;
-            p.rot1Valid     = (uint8_t)(n.rot1Valid ? 1 : 0);
-            p.rot2Valid     = (uint8_t)(n.rot2Valid ? 1 : 0);
-            out.write(reinterpret_cast<const char*>(&p), sizeof(p));
-        }
-    }
-
-    void loadCheckpointChainChunk_(std::ifstream& in, uint32_t sz) {
-        std::streampos chunkStart = in.tellg();
-
-        APXCheckpointMeta meta{};
-        in.read(reinterpret_cast<char*>(&meta), sizeof(meta));
-        if (!in) return;
-
-        m_checkpointNodes.clear();
-        m_checkpointNodes.reserve(meta.nodeCount);
-        for (uint32_t i = 0; i < meta.nodeCount; ++i) {
-            APXCheckpointNodePacked p{};
-            in.read(reinterpret_cast<char*>(&p), sizeof(p));
-            if (!in) break;
-
-            CheckpointNode n{};
-            n.id              = p.id;
-            n.x               = p.x;
-            n.prevId          = p.prevId;
-            n.active          = (p.active != 0);
-            n.ownerSerial     = p.ownerSerial;
-            n.ownerAttemptIdx = SIZE_MAX;
-            n.ownerFrameIdx   = p.ownerFrameIdx;
-            n.rot1            = p.rot1; n.rot2 = p.rot2;
-            n.rot1Valid       = (p.rot1Valid != 0);
-            n.rot2Valid       = (p.rot2Valid != 0);
-            m_checkpointNodes.push_back(n);
-        }
-        m_checkpointTopId = meta.topId;
-        m_frozenCheckpointTopId = meta.frozenTopId;
-        m_chainAuthoritative = true;
-
-        // skip any padding if present
-        auto now = in.tellg();
-        auto readSoFar = (std::streamoff)(now - chunkStart);
-        auto remain = (std::streamoff)sz - readSoFar;
-        if (remain > 0) in.seekg(remain, std::ios::cur);
-    }
-
-
-    void applyRotationFromTopCheckpoint_() {
-        if (!m_pl || !m_pl->m_isPracticeMode || m_checkpointTopId == -1) return;
-        const CheckpointNode& checkpoint = nodeById_(m_checkpointTopId);
-        if (m_pl->m_player1 && checkpoint.rot1Valid) m_pl->m_player1->setRotation(checkpoint.rot1);
-        if (m_pl->m_player2 && checkpoint.rot2Valid) m_pl->m_player2->setRotation(checkpoint.rot2);
-    }
     
     void refreshAttemptColors_(Attempt& a) {
         if (!a.colorsAssigned) {
@@ -4562,42 +4323,9 @@ private:
     void preloadAttempt_(Attempt& a, size_t attemptIdx = SIZE_MAX, bool force=false) {
         if (!force && a.preloaded) return;
         if (!m_pl || !m_pl->m_player1) return;
-        
-        //double tStart = getTimeMs();
 
         a.m_isPlatformer = m_pl->m_isPlatformer;
-        
-        // Acquire ghost objects
-        //double t0 = getTimeMs();
-        //if (!a.g1 && !a.p1.empty()) {
-        //    a.g1 = m_ghostPool.acquire(a.serial);
-        //}
-        //if (a.hadDual && !a.g2 && !a.p2.empty()) {
-        //    a.g2 = m_ghostPool.acquire(a.serial + 0x100000);
-        //}
 
-        
-
-        if (m_replayKind == ReplayKind::BestSingle) {
-            if (m_playerObjectPool.inUseCount() < m_playerObjectPool.capacity() - 1) {
-                auto h = m_playerObjectPool.acquireForOwner(a.serial);
-                if (h) {
-                    a.g1Idx = h.index;
-                    a.g1 = h.po;
-                }
-                if (a.hadDual) {
-                    auto h2 = m_playerObjectPool.acquireForOwner(a.serial + 0x100000);
-                    if (h2) {
-                        a.g2Idx = h2.index;
-                        a.g2 = h2.po;
-                    }
-                }
-            }
-        }
-
-        
-            
-        // Build time-based acceleration if needed
         if (!a.acc1Time.valid() && !a.p1.empty()) {
             buildAccelTime(a.p1, a.acc1Time);
         }
@@ -4605,48 +4333,13 @@ private:
             buildAccelTime(a.p2, a.acc2Time);
         }
         
-        // Build X-based acceleration for spatial queries
-        //if (!a.acc1.valid() && !a.p1.empty()) {
-        //    buildAccel(a.p1, a.acc1, 64.f);
-        //}
-        //if (a.hadDual && !a.acc2.valid() && !a.p2.empty()) {
-        //    buildAccel(a.p2, a.acc2, 64.f);
-        //}
-        
-        // Assign icons
-        //if (!a.iconsAssigned) {
-            uint32_t base = static_cast<uint32_t>(a.serial) ^ 0xDEADBEEF;
-            for (int i = 0; i < 9; ++i) {
-                a.randomFrame[i] = randomIconFrame(static_cast<IconType>(i), base + i * 97);
-            }
-            a.iconsAssigned = true;
-        //}
 
-        
-        
-        // Set initial mode
-        if (a.g1 && !a.p1.empty()) {
-            a.g1CurMode = a.p1.front().mode;
-            setPOFrameForIcon(a.g1, a.g1CurMode, a, m_randomIcons);
+        uint32_t base = static_cast<uint32_t>(a.serial) ^ 0xDEADBEEF;
+        for (int i = 0; i < 9; ++i) {
+            a.randomFrame[i] = randomIconFrame(static_cast<IconType>(i), base + i * 97);
         }
-        if (a.g2 && !a.p2.empty()) {
-            a.g2CurMode = a.p2.front().mode;
-            setPOFrameForIcon(a.g2, a.g2CurMode, a, m_randomIcons);
-        }
-        
-        // Hide initially
-        if (a.g1) a.setP1Visible(false, true);
-        if (a.g2) a.setP2Visible(false, true);
-        //if (a.g1) {
-        //    a.g1->togglePlatformerMode(isPlatformer);
-        //    a.g1->m_isPlatformer = isPlatformer;
-        //}
-        //if (a.g2) {
-        //    a.g2->togglePlatformerMode(isPlatformer);
-        //    a.g2->m_isPlatformer = isPlatformer;
-        //}
-        
-        
+        a.iconsAssigned = true;
+
         a.preloaded = true;
         ++m_attemptsPreloadedTotal;
         
@@ -4717,7 +4410,7 @@ private:
         p->setOpacity(opacity);
     }
 
-    bool primeGhostToPX_(Attempt& a, float pxw, float px2w) {
+    bool primeGhostToPX_(Attempt& a, size_t attemptIdx, float pxw, float px2w) {
         //log::info("Priming");
         double ghostTime = m_lastAttemptTime + a.ghostOffsetTime;
         if (ghostTime < 0.0) ghostTime = 0.0;
@@ -4727,7 +4420,7 @@ private:
             //log::info("p1 not created");
             if (!a.g1 && a.g1Idx < 0) {
                 //log::info("allocating p1");
-                auto h = m_playerObjectPool.acquireForOwner(a.serial);
+                auto h = m_playerObjectPool.acquireForOwner(a.serial, static_cast<uint32_t>(attemptIdx), false);
                 if (h) {
                     //log::info("allocated correctly");
                     a.g1Idx = h.index;
@@ -4787,10 +4480,10 @@ private:
 
         if (a.hadDual && !a.p2.empty() && !a.primedP2) {
             if (!a.g2 && a.g2Idx < 0) {
-                auto h = m_playerObjectPool.acquireForOwner(a.serial + 0x100000);
-                if (h) {
-                    a.g2Idx = h.index;
-                    a.g2 = h.po;
+                auto h2 = m_playerObjectPool.acquireForOwner(a.serial + 0x100000, static_cast<uint32_t>(attemptIdx), true);
+                if (h2) {
+                    a.g2Idx = h2.index;
+                    a.g2 = h2.po;
                 }
                 if (a.g2 && !a.p2.empty()) {
                     a.g2CurMode = a.p2.front().mode;
@@ -4848,7 +4541,6 @@ private:
 
         if (wantPractice.value()) {
             if (!a.practiceAttempt) return false;
-            if (a.ignoreInPractice) return false;
             return true;
         }
         return !a.practiceAttempt;
@@ -5522,26 +5214,6 @@ private:
         }
     }
 
-    CheckpointNode& nodeById_(int id) {
-        for (auto& n : m_checkpointNodes) {
-            if (n.id == id) return n; 
-        }
-        static CheckpointNode dummy;
-        dummy.id = -1;
-        dummy.active = false;
-        dummy.prevId = -1;
-        dummy.x = 0.f;
-        return dummy;
-    }
-
-    const CheckpointNode& nodeById_(int id) const {
-        for (auto const& n : m_checkpointNodes) {
-            if (n.id == id) return n;
-        }
-        static CheckpointNode dummy;
-        return dummy;
-    }
-
     size_t ptrToIndex_(const Attempt* p) const {
         if (!p) return SIZE_MAX;
         if (p == &m_current) return SIZE_MAX;
@@ -5567,19 +5239,9 @@ private:
         
         m_current.startX = startX;
         m_current.startY = startY;
-        
-        // Set base time offset from checkpoint if in practice
-        if (m_pl && m_pl->m_isPracticeMode) {
-            double time = m_checkpointMgr.getCurrentCheckpointBaseTimeActive();
-            m_current.baseTimeOffset = time;
-            m_checkpointBaseTime = time;
-            m_current.startCheckpointId = m_checkpointMgr.getCurrentCheckpointId(false);
-            m_current.beganAtStartOfLevel = m_checkpointMgr.isAtLevelStartNoCheckpoints();
-        } else {
-            m_current.baseTimeOffset = 0.0;
-            m_checkpointBaseTime = 0.0;
-            m_current.startCheckpointId = -1;
-        }
+
+        double baseTime = getLastCheckpointTime();
+        m_current.baseTimeOffset = baseTime;
 
         //log::info("[startNewAttempt] m_current.baseTimeOffset: {}, m_pl->m_attemptTime: {}", m_currentSessionTime, m_pl->m_attemptTime);
 
@@ -5595,8 +5257,6 @@ private:
         //log::info("[startNewAttempt] Attempt created with time offset {}", m_current.baseTimeOffset);
         
         m_current.practiceAttempt = (m_pl && m_pl->m_isPracticeMode);
-        m_current.immuneToIgnorePractice = false;
-        m_current.ignoreInPractice = false;
         m_current.ignorePlayback = false;
         m_lastRecordedX = 0.f;
         
@@ -5620,7 +5280,6 @@ private:
         }
         if (bestIdx!=0) {
             std::swap(attempts[0], attempts[bestIdx]);
-            resolvePendingCheckpointOwners_();
         }
     }
 
@@ -5967,15 +5626,6 @@ private:
         m_attemptsPreloadedTotal = 0;
 
         m_ghostPool.resetStats();
-    }
-
-    void resolvePendingCheckpointOwners_() {
-        for (size_t i = 0; i < attempts.size(); ++i) {
-            const int serial = attempts[i].serial;
-            for (auto& n : m_checkpointNodes) {
-                if (n.ownerSerial == serial) n.ownerAttemptIdx = i;
-            }
-        }
     }
 
     void forcePlayersVisible_() {

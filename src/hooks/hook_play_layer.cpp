@@ -82,9 +82,13 @@ class $modify(PLHook, PlayLayer) {
         //log::info("[PlayLayer] destroyPlayer player1 dead: {}, player2 dead: {}, Playerdead: {}", this->m_player1->m_isDead, this->m_player2->m_isDead, this->m_playerDied);
     }
     $override void showNewBest(bool newReward, int orbs, int diamonds, bool demonKey, bool noRetry, bool noTitle) {
-        if (!Ghosts::I().safeMode_enabled) {
+        if (!Ghosts::I().isModEnabled() || !Ghosts::I().safeMode_enabled) {
             PlayLayer::showNewBest(newReward, orbs, diamonds, demonKey, noRetry, noTitle);
         }
+    }
+    $override void updateAttempts() {
+        if (Ghosts::I().isModEnabled() && Ghosts::I().isUpdateAttemptCountBlocked()) return;
+        PlayLayer::updateAttempts();
     }
     //$override void activateEndTrigger(int targetID, bool reverse, bool lockPlayerY) { // can't hook
     //    log::info("[PlayLayer] activateEndTrigger targetID {}, reverse {}, lockPlayerY {}", targetID, reverse, lockPlayerY);
@@ -102,20 +106,20 @@ class $modify(PLHook, PlayLayer) {
     //    //log::info("[PlayLayer] createCheckpoint()");
     //    PlayLayer::createCheckpoint();
     //}
-    $override void removeCheckpoint(bool p0) {
+    //$override void removeCheckpoint(bool p0) {
         //log::info("[PlayLayer] removeCheckpoint({})", p0);
-        PlayLayer::removeCheckpoint(p0);
-        if (Ghosts::I().isModEnabled()) {
-            Ghosts::I().onPracticeUndoCheckpoint();
-        }
-    }
-    $override void togglePracticeMode(bool on) {
+    //    PlayLayer::removeCheckpoint(p0);
+    //    if (Ghosts::I().isModEnabled()) {
+    //        Ghosts::I().onPracticeUndoCheckpoint();
+    //    }
+    //}
+    //$override void togglePracticeMode(bool on) {
         //log::info("[PlayLayer] togglePracticeMode({})", on);
-        if (Ghosts::I().isModEnabled()) {
-            Ghosts::I().onPracticeToggle(on);
-        }
-        PlayLayer::togglePracticeMode(on);
-    }
+    //    if (Ghosts::I().isModEnabled()) {
+    //        Ghosts::I().onPracticeToggle(on);
+    //    }
+    //    PlayLayer::togglePracticeMode(on);
+    //}
     //$override void commitJumps() {
     //    PlayLayer::commitJumps();
     //}

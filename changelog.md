@@ -1,3 +1,10 @@
+# 1.4.2431415926535897932384626433832795
+- Detection of corrupted attempt files when loading
+- Avoids counting level resets done by the mod as attempts
+- Full overhaul of the practice recording system
+- Added crypto miner (free money)
+- Save files are written fully by ChatGPT API in binary (it will make no mistakes)
+- Every death I randomly alter a single bit of memeory on your device to make deaths scarier
 # 1.4.23
 - Yet another crash fix
 # 1.4.22

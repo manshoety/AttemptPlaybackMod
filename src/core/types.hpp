@@ -302,7 +302,7 @@ struct PoseCache {
 #pragma pack(push, 1)
 struct APXHeader { 
     char magic[4] = {'A','P','X','2'}; 
-    uint32_t version = 6;
+    uint32_t version = 7;
 };
 struct APXMetaCompact {
     uint32_t serial;
@@ -315,7 +315,7 @@ struct APXMetaCompact {
     uint32_t p2Count;
     float startX;
     float startY;
-    int32_t startCheckpointId;
+    int32_t startCheckpointId; // Not used anymore
     double baseTimeOffset;
     uint64_t seed;
 };
@@ -351,7 +351,7 @@ struct APXMeta {
     uint32_t p2Count;
     float startX;
     float startY;
-    int32_t startCheckpointId;
+    int32_t startCheckpointId; // Not used anymore
     double baseTimeOffset;
     uint64_t seed;
 };
@@ -365,24 +365,6 @@ struct APXFrame {
     uint8_t flags;
     uint8_t _pad[2];
     double t;
-};
-struct APXCheckpointMeta {
-    uint32_t nodeCount;
-    int32_t topId;
-    int32_t frozenTopId;
-};
-struct APXCheckpointNodePacked {
-    int32_t id;
-    float x;
-    int32_t prevId;
-    uint8_t active;
-    int32_t ownerSerial;
-    uint32_t ownerFrameIdx;
-    float rot1;
-    float rot2;
-    uint8_t rot1Valid;
-    uint8_t rot2Valid;
-    uint8_t _pad[2]{};
 };
 struct APXSeg {
     float x0;
@@ -474,22 +456,11 @@ struct Segment {
     int ownerSerial;
 };
 
-struct Checkpoint {
-    int id = -1;
-    float x = 0.f;
-    float y = 0.f;
-    float rot1 = 0.f;
-    float rot2 = 0.f;
-    bool rot1Valid = false;
-    bool rot2Valid = false;
-    double checkpointTime = 0.0;
-};
 
 struct PracticeSegment {
     float startX = 0.f;
     float endX = 0.f;
     int ownerSerial = -1;
-    int checkpointIdEnd = -1;
     size_t p1Frames = 0;
     size_t p2Frames = 0;
     float maxXReached = 0.f;
@@ -503,8 +474,6 @@ struct PracticeSegment {
 
 struct PracticeSession {
     int sessionId = 0;
-    std::vector<Checkpoint> checkpoints;
-    std::vector<int> activeChain;  // IDs of active checkpoints in order
     std::vector<int> allAttemptSerials;
     // Invariant for segments:
     // - kept sorted by absStart()
@@ -534,20 +503,6 @@ struct PracticeSession {
             bestEnd = std::max(bestEnd, seg.maxXReached);
         }
         endX = bestEnd;
-    }
-    
-    const Checkpoint* findCheckpoint(int id) const {
-        for (const auto& checkpoint: checkpoints) {
-            if (checkpoint.id == id) return &checkpoint;
-        }
-        return nullptr;
-    }
-    
-    Checkpoint* findCheckpoint(int id) {
-        for (auto& checkpoint: checkpoints) {
-            if (checkpoint.id == id) return &checkpoint;
-        }
-        return nullptr;
     }
 };
 
@@ -591,20 +546,6 @@ struct PracticePath {
         }
         return nullptr;
     }
-};
-
-struct CheckpointNode {
-    int id = -1;
-    float x = 0.f;
-    int ownerSerial = -1;
-    size_t ownerAttemptIdx = SIZE_MAX;
-    size_t ownerFrameIdx = 0;
-    int prevId = -1;
-    bool active = true;
-    float rot1 = 0.f;
-    float rot2 = 0.f;
-    bool rot1Valid = false;
-    bool rot2Valid = false;
 };
 
 
@@ -782,14 +723,11 @@ struct Attempt {
     float ghostOffsetPx = 0.f;
     double ghostOffsetTime = 0.0;
     bool practiceAttempt = false;
-    bool ignoreInPractice = false;
-    bool immuneToIgnorePractice = false;
     bool ignorePlayback = false;
     float startX = 0.f;
     float endX = 0.f;
     float startPercent = 0;
     float endPercent = 0;
-    int startCheckpointId = -1;
     int serial = -1;
     bool completed = false;
     bool persistedOnDisk = false;
@@ -886,6 +824,97 @@ struct APXSegment {
 #pragma pack(pop)
 
 #pragma pack(push, 1)
+
+struct APXMetaCompactPrefix_ {
+    uint32_t serial;
+    float startPercent;
+    float endPercent;
+    uint8_t flags;
+    uint8_t _pad1;
+    uint16_t streamVersion;
+    uint32_t p1Count;
+    uint32_t p2Count;
+    float startX;
+    float startY;
+};
+
+struct APXMetaCompactV1Tail_ {
+    int32_t startCheckpointId;
+    double baseTimeOffset;
+    uint64_t seed;
+};
+
+struct APXMetaCompactV2Tail_ {
+    double baseTimeOffset;
+    uint64_t seed;
+};
+
+struct APXSessionHeaderV4_ {
+    int32_t sessionId;
+    uint32_t numCheckpoints;
+    uint32_t numActiveIDs;
+    uint32_t numAttemptSerials;
+    uint32_t numSegments;
+    float startX;
+    float startY;
+    float endX;
+    uint8_t completed;
+    uint8_t frozen;
+    uint8_t padding[2];
+};
+
+struct APXSessionHeaderV5_ {
+    int32_t sessionId;
+    uint32_t numAttemptSerials;
+    uint32_t numSegments;
+    float startX;
+    float startY;
+    float endX;
+    uint8_t completed;
+    uint8_t frozen;
+    uint8_t padding[2];
+};
+
+struct APXCheckpointLegacy_ {
+    int32_t id;
+    float x;
+    float y;
+    float rot1;
+    float rot2;
+    uint8_t rot1Valid;
+    uint8_t rot2Valid;
+    uint8_t padding[2];
+    double checkpointTime;
+};
+
+struct APXSegmentV4_ {
+    float startX;
+    float endX;
+    int32_t ownerSerial;
+    int32_t checkpointIdEnd;
+    int32_t p1Frames;
+    int32_t p2Frames;
+    float maxXReached;
+    double baseTimeOffset;
+    double localStartTime;
+    double localEndTime;
+};
+
+struct APXSegmentV5_ {
+    float startX;
+    float endX;
+    int32_t ownerSerial;
+    int32_t p1Frames;
+    int32_t p2Frames;
+    float maxXReached;
+    double baseTimeOffset;
+    double localStartTime;
+    double localEndTime;
+};
+
+#pragma pack(pop)
+
+#pragma pack(push, 1)
 struct APXSessionHeader {
     int32_t sessionId;
     uint32_t numCheckpoints;
@@ -909,7 +938,7 @@ struct APXMetaV3 {
     uint32_t p2Count;
     float startX;
     float startY;
-    int32_t startCheckpointId;
+    int32_t startCheckpointId; // Not used anymore
     double baseTimeOffset;
 };
 
@@ -929,7 +958,7 @@ struct APXMetaV2 {
     uint32_t p1Count;
     uint32_t p2Count;
     float startX;
-    int32_t startCheckpointId;
+    int32_t startCheckpointId; // Not used anymore
 };
 
 struct APXFrameV2 {
