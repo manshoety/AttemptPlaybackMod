@@ -2085,6 +2085,12 @@ public:
             }
         }
 
+        for (size_t idx : m_preloadedIndices) {
+            if (idx < attempts.size()) {
+                attempts[idx].resetPlayback();
+            }
+        }
+
         if (m_current.g1) m_current.setP1Visible(false, true);
         if (m_current.g2) m_current.setP2Visible(false, true);
         m_current.g1 = nullptr;
@@ -4414,6 +4420,7 @@ private:
         //log::info("Priming");
         double ghostTime = m_lastAttemptTime + a.ghostOffsetTime;
         if (ghostTime < 0.0) ghostTime = 0.0;
+
         if (!a.p1.empty() && ghostTime > a.p1.back().t) return false;
         
         if (!a.p1.empty() && !a.primedP1) {
