@@ -3450,24 +3450,46 @@ public:
                         continue;
                     }
 
-                    if (a.eolFrozenP1 && a.d1 < a.p1.size()) {
-                        const float sx = a.p1[a.d1].x;
-                        const float sy = a.p1[a.d1].y;
-                        if (sx < tl.x || sx > br.x || sy < br.y || sy > tl.y) {
+
+                    if (a.eolFrozenP1) {
+                        // remove on death (if ghosts explode, meaning they disapear so I can remove them early)
+                        if (m_ghostsExplode) {
                             a.setP1Visible(false);
-                            a.setP2Visible(false);
-                            // pool release player objects
-                            if (a.g1Idx >= 0) {
-                                m_playerObjectPool.releaseIndex(a.g1Idx);
-                                a.g1Idx = -1;
-                                a.g1 = nullptr;
+                                a.setP2Visible(false);
+                                // pool release player objects
+                                if (a.g1Idx >= 0) {
+                                    m_playerObjectPool.releaseIndex(a.g1Idx);
+                                    a.g1Idx = -1;
+                                    a.g1 = nullptr;
+                                }
+                                if (a.g2Idx >= 0) {
+                                    m_playerObjectPool.releaseIndex(a.g2Idx);
+                                    a.g2Idx = -1;
+                                    a.g2 = nullptr;
+                                }
+                                continue;
+                        }
+
+                        // Screen culling (dead and offscreen)
+                        if (a.d1 < a.p1.size()) {
+                            const float sx = a.p1[a.d1].x;
+                            const float sy = a.p1[a.d1].y;
+                            if (sx < tl.x || sx > br.x || sy < br.y || sy > tl.y) {
+                                a.setP1Visible(false);
+                                a.setP2Visible(false);
+                                // pool release player objects
+                                if (a.g1Idx >= 0) {
+                                    m_playerObjectPool.releaseIndex(a.g1Idx);
+                                    a.g1Idx = -1;
+                                    a.g1 = nullptr;
+                                }
+                                if (a.g2Idx >= 0) {
+                                    m_playerObjectPool.releaseIndex(a.g2Idx);
+                                    a.g2Idx = -1;
+                                    a.g2 = nullptr;
+                                }
+                                continue;
                             }
-                            if (a.g2Idx >= 0) {
-                                m_playerObjectPool.releaseIndex(a.g2Idx);
-                                a.g2Idx = -1;
-                                a.g2 = nullptr;
-                            }
-                            continue;
                         }
                     }
 
