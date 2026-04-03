@@ -87,11 +87,13 @@ public:
 
             m_noValidSessionForStartX = true;
             m_path.selectedSessionId = 0;
+            m_path.activeSessionId = 0;
             return -1;
         }
 
         m_noValidSessionForStartX = true;
         m_path.selectedSessionId = 0;
+        m_path.activeSessionId = 0;
         return -1;
     }
         
@@ -113,7 +115,6 @@ public:
 
     void gatherSessionOwnerSerials(std::unordered_set<int>& out) const {
         const PracticeSession* session = m_path.selectedSession();
-        if (!session) session = m_path.activeSession();
         if (!session) return;
         
         for (const auto& seg : session->segments) {
@@ -158,6 +159,16 @@ public:
 
         if (m_path.frozen || session->frozen) return;
 
+        //log::info(
+        //    "[SESSION WRITE] activeSessionId={} sessionPtr={} serial={} base={} start={} end={}",
+        //    m_path.activeSessionId,
+        //    static_cast<void*>(session),
+        //    serial,
+        //    baseTimeOffset,
+        //    localStartTime,
+        //    localEndTime
+        //);
+
         addAttemptSerialIfMissing_(*session, serial);
 
         PracticeSegment newSeg = makeSegment_(
@@ -183,7 +194,6 @@ public:
     
     int findOwnerSerialForTime(double t) const {
         const PracticeSession* session = m_path.selectedSession();
-        if (!session) session = m_path.activeSession();
         if (!session || session->segments.empty()) return -1;
 
         const auto& segs = session->segments;
@@ -210,7 +220,6 @@ public:
     
     double replayEndTime() const {
         const PracticeSession* session = m_path.selectedSession();
-        if (!session) session = m_path.activeSession();
         if (!session || session->segments.empty()) return 0.0;
         
         double maxEnd = 0.0;
@@ -222,7 +231,6 @@ public:
     
     std::vector<PracticeSegment> getReplaySequence() const {
         const PracticeSession* session = m_path.selectedSession();
-        if (!session) session = m_path.activeSession();
         if (!session) return {};
 
         return session->segments;
@@ -230,7 +238,6 @@ public:
 
     std::vector<int> getPracticeSerialsInCurrentSession() const {
         const PracticeSession* session = m_path.selectedSession();
-        if (!session) session = m_path.activeSession();
         if (!session) return {};
 
         return session->allAttemptSerials;
@@ -311,6 +318,7 @@ public:
         m_dirty = true;
         m_noValidSessionForStartX = false;
         currentFurthestSegment = PracticeSegment{};
+        //log::info("[SESSION] createNewSession id={} total={}", session.sessionId, m_path.sessions.size() + 1);
     }
     
 private:

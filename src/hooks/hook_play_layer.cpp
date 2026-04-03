@@ -113,13 +113,11 @@ class $modify(PLHook, PlayLayer) {
     //        Ghosts::I().onPracticeUndoCheckpoint();
     //    }
     //}
-    //$override void togglePracticeMode(bool on) {
-        //log::info("[PlayLayer] togglePracticeMode({})", on);
-    //    if (Ghosts::I().isModEnabled()) {
-    //        Ghosts::I().onPracticeToggle(on);
-    //    }
-    //    PlayLayer::togglePracticeMode(on);
-    //}
+    $override void togglePracticeMode(bool on) {
+        // log::info("[PlayLayer] togglePracticeMode({})", on);
+        if (Ghosts::I().isModEnabled()) Ghosts::I().onPracticeToggle(on);
+        PlayLayer::togglePracticeMode(on);
+    }
     //$override void commitJumps() {
     //    PlayLayer::commitJumps();
     //}

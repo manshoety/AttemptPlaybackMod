@@ -1,3 +1,5 @@
+# 1.4.28
+- Fixed practice session overwriting bug
 # 1.4.27
 - Can now specify to load the best, most recent, or randomly from attempts
 # 1.4.24
