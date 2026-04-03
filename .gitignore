@@ -41,6 +41,7 @@
 
 # Ignore build folders
 **/build
+**/build2
 # Ignore platform specific build folders
 build-*/
 

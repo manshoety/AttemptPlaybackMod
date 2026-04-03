@@ -13,6 +13,7 @@
 #include <Geode/binding/PlayerObject.hpp>
 #include <Geode/loader/Log.hpp>
 #include <Geode/Geode.hpp>
+#include <Geode/loader/Mod.hpp>
 
 using namespace geode::prelude;
 
@@ -284,6 +285,55 @@ enum class IconAnimationState {
     Jump = 2,
     Fall = 3,
 };
+
+enum class PreloadSortMode : uint8_t {
+    Best = 0,
+    Recent = 1,
+    Random = 2,
+};
+
+constexpr char const* kPreloadSortModeKey = "preload-sort-mode";
+
+static PreloadSortMode preloadSortModeFromSaved() {
+    auto const s = Mod::get()->getSavedValue<std::string>(kPreloadSortModeKey);
+    if (s == "recent") return PreloadSortMode::Recent;
+    if (s == "random") return PreloadSortMode::Random;
+    return PreloadSortMode::Best;
+}
+
+static char const* preloadSortModeToSavedString(PreloadSortMode mode) {
+    switch (mode) {
+        case PreloadSortMode::Best: return "best";
+        case PreloadSortMode::Recent: return "recent";
+        case PreloadSortMode::Random: return "random";
+    }
+    return "best";
+}
+
+static void savePreloadSortMode(PreloadSortMode mode) {
+    Mod::get()->setSavedValue<std::string>(
+        kPreloadSortModeKey,
+        preloadSortModeToSavedString(mode)
+    );
+}
+
+static size_t preloadSortModeToIndex(PreloadSortMode mode) {
+    switch (mode) {
+        case PreloadSortMode::Best:   return 0;
+        case PreloadSortMode::Recent: return 1;
+        case PreloadSortMode::Random: return 2;
+    }
+    return 0;
+}
+
+static PreloadSortMode preloadSortModeFromIndex(size_t index) {
+    switch (index) {
+        case 1: return PreloadSortMode::Recent;
+        case 2: return PreloadSortMode::Random;
+        case 0:
+        default: return PreloadSortMode::Best;
+    }
+}
 
 struct PoseCache {
     float x = NAN;

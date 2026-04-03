@@ -27,6 +27,8 @@ add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
 
 CPMAddPackage("gh:camila314/UIBuilder#2ab80ad")
 target_link_libraries(${PROJECT_NAME} UIBuilder)
+CPMAddPackage("gh:dankmeme01/cue#main")
+target_link_libraries(${PROJECT_NAME} cue)
 
 # Set up dependencies, resources, and link Geode.
 setup_geode_mod(${PROJECT_NAME})

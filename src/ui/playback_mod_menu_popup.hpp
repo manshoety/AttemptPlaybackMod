@@ -9,6 +9,8 @@
 #include <Geode/cocos/label_nodes/CCLabelBMFont.h>
 #include <Geode/binding/CCMenuItemSpriteExtra.hpp>
 
+#include <cue/RadioLogic.hpp>
+
 #include "../core/ghost_manager.hpp"
 
 #include <vector>
@@ -26,10 +28,13 @@ protected:
 private:
     ReplayKind m_kind;
 
+    cocos2d::CCLabelBMFont* m_percentageLimitEnabledLabel = nullptr;
+    cocos2d::CCLabelBMFont* m_sortByLabel = nullptr;
     cocos2d::CCLabelBMFont* m_numAttemptsLoadingLabel = nullptr;
     cocos2d::CCLabelBMFont* m_estimatedRamLabel = nullptr;
     geode::TextInput* m_numAttemptsToLoad = nullptr;
     cocos2d::CCLabelBMFont* m_alreadyPreloadedLabel = nullptr;
+    cocos2d::CCMenu* m_sortMenu = nullptr;
 
     CCMenuItemSpriteExtra* m_loadBtn = nullptr;
     CCMenuItemSpriteExtra* m_maxBtn = nullptr;
@@ -38,6 +43,10 @@ private:
     int  m_lastClampedValue = -1;
     bool m_startedLoading = false;
     bool m_replayOn = false;
+    bool m_isReplayBest = true;
+
+    cue::RadioLogic<size_t> m_sortRadio;
+    PreloadSortMode m_sortMode = PreloadSortMode::Best;
 
 private:
     void onPressLoad(cocos2d::CCObject*);

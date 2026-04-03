@@ -1,3 +1,5 @@
+# 1.4.27
+- Can now specify to load the best, most recent, or randomly from attempts
 # 1.4.24
 - Detection of corrupted attempt files when loading
 - Avoids counting level resets done by the mod as attempts

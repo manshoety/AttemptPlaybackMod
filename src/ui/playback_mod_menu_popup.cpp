@@ -315,7 +315,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.26", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.27", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
@@ -863,7 +863,9 @@ bool PreloadAttemptsPopup::init(float width, float height) {
 
     auto& G = Ghosts::I();
 
-    if (m_kind == ReplayKind::BestSingle) {
+    m_isReplayBest = (m_kind == ReplayKind::BestSingle);
+
+    if (m_isReplayBest ) {
         G.setUseCheckpointsRoute(false);
         G.startReplayBest();
     }
@@ -885,16 +887,17 @@ bool PreloadAttemptsPopup::init(float width, float height) {
 
         replay_ui_detail::setFallbackFlag(false);
 
-        if (m_kind == ReplayKind::PracticeComposite) {
-            FLAlertLayer::create(
-                "No Attempts",
-                gd::string("There are no recorded practice attempts for this level or for this start position"),
-                "OK"
-            )->show();
-        } else {
+        if (m_isReplayBest ) {
             FLAlertLayer::create(
                 "No Attempts",
                 gd::string("There are no recorded normal mode attempts either for this level or for this start position"),
+                "OK"
+            )->show();
+            
+        } else {
+            FLAlertLayer::create(
+                "No Attempts",
+                gd::string("There are no recorded practice attempts for this level or for this start position"),
                 "OK"
             )->show();
         }
@@ -906,6 +909,22 @@ bool PreloadAttemptsPopup::init(float width, float height) {
     int startVal = (saved > 0) ? (int)saved : 500;
     if (m_totalAttempts > 0) startVal = std::clamp(startVal, 0, m_totalAttempts);
     else startVal = std::max(startVal, 0);
+
+    auto* bestToggler = m_sortRadio.createToggler(0, 0.8f);
+    auto* recentToggler = m_sortRadio.createToggler(1, 0.8f);
+    auto* randomToggler = m_sortRadio.createToggler(2, 0.8f);
+
+    auto addSortLabel = [](CCMenuItemToggler* toggler, char const* text) {
+        auto* label = CCLabelBMFont::create(text, "bigFont.fnt");
+        label->setAnchorPoint({ 0.f, 0.5f });
+        label->setPosition({ 30.f, 14.f });
+        label->setScale(0.45f);
+        toggler->addChild(label);
+    };
+
+    addSortLabel(bestToggler, "Best");
+    addSortLabel(recentToggler, "Recent");
+    addSortLabel(randomToggler, "Random");
 
     Build<CCNode>::create()
         .contentSize(0.f, 0.f)
@@ -924,6 +943,22 @@ bool PreloadAttemptsPopup::init(float width, float height) {
                 .pos(0.f, 83.f)
                 .anchorPoint(0.5f, 0.5f)
                 .scale(0.825f),
+
+            /*
+            Build<CCLabelBMFont>::create("Percentage enabled stuff", "bigFont.fnt")
+                .id("percentageLimitEnabledLabel"_spr)
+                .pos(0.f, 26.f)
+                .anchorPoint(0.5f, 0.5f)
+                .scale(0.275f)
+                .store(m_percentageLimitEnabledLabel),
+            */
+
+            Build<CCLabelBMFont>::create("Sort attempts by", "bigFont.fnt")
+                .id("preload-sort-title"_spr)
+                .pos(0.f, 55.f)
+                .anchorPoint(0.5f, 0.5f)
+                .scale(0.40f)
+                .store(m_sortByLabel),
 
             Build<CCLabelBMFont>::create("Load 0 of 0", "bigFont.fnt")
                 .id("NumAttemptsLoadingLabel"_spr)
@@ -957,6 +992,20 @@ bool PreloadAttemptsPopup::init(float width, float height) {
         .layoutOpts(Build<AnchorLayoutOptions>::create()
             .anchor(Anchor::Center))
         .children(
+            Build<CCMenu>::create()
+                .store(m_sortMenu)
+                .pos(0.f, 32.f)
+                .scale(0.775f)
+                .contentSize(220.f, 24.f)
+                .anchorPoint(0.5f, 0.5f)
+                .ignoreAnchorPointForPos(false)
+                
+                .children(
+                    Build<CCMenuItemToggler>(bestToggler).pos(-18.f, 0.f).ignoreAnchorPointForPos(true),
+                    Build<CCMenuItemToggler>(recentToggler).pos(59.f, 0.f).ignoreAnchorPointForPos(true),
+                    Build<CCMenuItemToggler>(randomToggler).pos(151.f, 0.f).ignoreAnchorPointForPos(true)
+                ),
+
             createTextButton_(
                     this,
                     /*spriteFrame*/"GJ_button_01.png",
@@ -987,6 +1036,15 @@ bool PreloadAttemptsPopup::init(float width, float height) {
         )
         .parentAtPos(m_mainLayer, Anchor::Center)
         .collect();
+
+    m_sortRadio.setCallback([this](size_t index) {
+        m_sortMode = preloadSortModeFromIndex(index);
+        Ghosts::I().setPreloadSortMode(m_sortMode);
+    });
+
+    m_sortMode = Ghosts::I().getPreloadSortMode();
+    m_sortRadio.select(preloadSortModeToIndex(m_sortMode));
+    Ghosts::I().setPreloadSortMode(m_sortMode);
 
     setInputValue_(startVal);
     refreshInfoLabels_(startVal);
@@ -1085,8 +1143,31 @@ static int getSettingIntOrDefault_(geode::Mod* mod, const char* key, int def) {
         return static_cast<int>(mod->getSettingValue<int64_t>(key));
     }
 
-
 void PreloadAttemptsPopup::refreshInfoLabels_(int clampedN) {
+    if (m_isReplayBest) {
+        if (m_percentageLimitEnabledLabel) { // Not using for now since I auto disable this setting on level load so people don't forget
+            std::ostringstream ss;
+            if (Ghosts::I().getPlaybackOnlyPastPercentEnabled()) {
+                float percentageLimit = Ghosts::I().getPlaybackOnlyPastPercentThreshold();
+                ss << "Attention: Only loading attempts past " << percentageLimit
+                   << "%\nDisable this in Playback Settings";
+                m_percentageLimitEnabledLabel->setString(ss.str().c_str());
+                m_percentageLimitEnabledLabel->setVisible(true);
+            }
+            else {
+                m_percentageLimitEnabledLabel->setVisible(false);
+            }
+        }
+
+        if (m_sortByLabel) m_sortByLabel->setVisible(true);
+        if (m_sortMenu) m_sortMenu->setVisible(true);
+    }
+    else {
+        if (m_percentageLimitEnabledLabel) m_percentageLimitEnabledLabel->setVisible(false);
+        if (m_sortByLabel) m_sortByLabel->setVisible(false);
+        if (m_sortMenu) m_sortMenu->setVisible(false);
+    }
+
     if (m_numAttemptsLoadingLabel) {
         std::ostringstream ss;
         ss << "Load " << clampedN << " of " << m_totalAttempts;

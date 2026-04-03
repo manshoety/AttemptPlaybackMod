@@ -261,6 +261,17 @@ public:
     std::array<uint8_t, kRandomColorCount> m_randomColorAllowed{};
     std::vector<int> m_randomColorAllowedList;
 
+    PreloadSortMode m_preloadSortMode = PreloadSortMode::Best;
+
+    void setPreloadSortMode(PreloadSortMode sortMode) { 
+        m_preloadSortMode = sortMode;
+        savePreloadSortMode(m_preloadSortMode);
+    }
+    PreloadSortMode getPreloadSortMode() {
+        m_preloadSortMode = preloadSortModeFromSaved();
+        return m_preloadSortMode;
+    }
+
     bool getPlaybackLimitVisibleGhostsEnabled() {
         auto* mod = Mod::get();
         if (!mod->hasSavedValue("limit-visible-ghosts")) setPlaybackLimitVisibleGhostsEnabled(false);
@@ -282,7 +293,7 @@ public:
         return m_maxVisibleGhosts;
     }
 
-    int getPlaybackOnlyPastPercentThreshold() {
+    float getPlaybackOnlyPastPercentThreshold() {
         auto* mod = Mod::get();
         if (!mod->hasSavedValue("ghosts-passed-percent-threshold")) setPlaybackOnlyPastPercentThreshold(20);
         else {
@@ -520,20 +531,23 @@ public:
         const std::vector<uint32_t>& preloadOrder,
         std::vector<uint32_t>& outInitial
     ) {
-        auto getEndT = [&](int attemptIndex) -> double {
-            const Attempt& a = attempts[attemptIndex];
-            return (!a.p1.empty()) ? static_cast<double>(a.p1.back().t) : 0.0;
-        };
-
         std::vector<uint32_t> sorted = preloadOrder;
 
-        std::sort(sorted.begin(), sorted.end(),
-            [&](int lhs, int rhs) {
-                const double tL = getEndT(lhs);
-                const double tR = getEndT(rhs);
-                if (tL != tR) return tL < tR;
-                return lhs < rhs;
-            });
+        // Practice mode needs to preload from the start
+        if (m_replayKind == ReplayKind::PracticeComposite) {
+            auto getEndT = [&](int attemptIndex) -> double {
+                const Attempt& a = attempts[attemptIndex];
+                return (!a.p1.empty()) ? static_cast<double>(a.p1.back().t) : 0.0;
+            };
+
+            std::sort(sorted.begin(), sorted.end(),
+                [&](int lhs, int rhs) {
+                    const double tL = getEndT(lhs);
+                    const double tR = getEndT(rhs);
+                    if (tL != tR) return tL < tR;
+                    return lhs < rhs;
+                });
+        }
 
         const size_t initialCount = std::min(
             static_cast<size_t>(m_playerObjectPool.capacity()),
@@ -573,19 +587,12 @@ public:
             return (!a.p1.empty()) ? static_cast<double>(a.p1.back().t) : 0.0;
         };
 
+        auto getEndX = [&](int attemptIndex) -> float {
+            const Attempt& a = attempts[attemptIndex];
+            return (!a.p1.empty()) ? static_cast<float>(a.p1.back().x) : 0.0f;
+        };
+
         candidateIds = m_preloadableIndexesInAttemptsList;
-        /*
-
-        for (int attemptIndex : m_preloadableIndexesInAttemptsList) {
-            Attempt& a = attempts[attemptIndex];
-
-            //if (isAttemptPreloaded_(a)) {
-            //    ++readyNow;
-            //} else {
-            candidateIds.push_back(attemptIndex);
-            if (a.p1.empty()) ++emptySkipped;
-            //}
-        }*/
 
         m_preloadTarget = std::min(targetCount, totalMatching);
         m_preloadLoaded = std::min(readyNow, m_preloadTarget);
@@ -597,79 +604,131 @@ public:
             return;
         }
 
-        // Sort candidates by endT first
-        std::sort(candidateIds.begin(), candidateIds.end(),
-            [&](int lhs, int rhs) {
-                const double tL = getEndT(lhs);
-                const double tR = getEndT(rhs);
-                if (tL != tR) return tL < tR;
-                return lhs < rhs;
-            });
-
-        // Use quantile buckets by sorted rank, not value-width buckets
-        // That keeps bucket sizes balanced even if endT is heavily skewed
-        const int desiredBuckets = std::max(
-            4,
-            std::min(
-                64,
-                std::max(
-                    targetCount / 2,
-                    static_cast<int>(std::sqrt(static_cast<float>(candidateIds.size())))
-                )
-            )
-        );
-
-        const int numBuckets = std::max(
-            1,
-            std::min(desiredBuckets, static_cast<int>(candidateIds.size()))
-        );
-
-        std::vector<std::vector<int>> buckets(numBuckets);
-
-        for (size_t i = 0; i < candidateIds.size(); ++i) {
-            const int bucket = std::min(
-                numBuckets - 1,
-                static_cast<int>((i * static_cast<size_t>(numBuckets)) / candidateIds.size())
-            );
-            buckets[bucket].push_back(candidateIds[i]);
-        }
-
-        std::mt19937 rng(static_cast<uint32_t>(m_levelIDOnAttach) ^ 0x9E3779B9u);
-
-        // Shuffle within each endT bucket so preload isn't too predictable
-        for (auto& bucket : buckets) {
-            std::shuffle(bucket.begin(), bucket.end(), rng);
-        }
-
-        // Build a randomized round-robin bucket visitation order
-        std::vector<int> bucketVisitOrder(numBuckets);
-        std::iota(bucketVisitOrder.begin(), bucketVisitOrder.end(), 0);
-        std::shuffle(bucketVisitOrder.begin(), bucketVisitOrder.end(), rng);
-
         m_preloadOrder.reserve(std::min<int>(remainingNeeded, static_cast<int>(candidateIds.size())));
-        std::vector<size_t> bucketCursors(numBuckets, 0);
 
-        while (static_cast<int>(m_preloadOrder.size()) < remainingNeeded) {
-            bool anyRemaining = false;
+        PreloadSortMode sortMode = m_preloadSortMode;
+        if (m_replayKind == ReplayKind::PracticeComposite) sortMode = PreloadSortMode::Random;
 
-            for (int b : bucketVisitOrder) {
-                if (bucketCursors[b] < buckets[b].size()) {
-                    m_preloadOrder.push_back(buckets[b][bucketCursors[b]++]);
-                    anyRemaining = true;
+        switch (sortMode) {
+            case PreloadSortMode::Best: {
+                std::sort(candidateIds.begin(), candidateIds.end(),
+                    [&](int lhs, int rhs) {
+                        const float xL = getEndX(lhs);
+                        const float xR = getEndX(rhs);
+                        if (xL != xR) return xL > xR;
 
-                    if (static_cast<int>(m_preloadOrder.size()) >= remainingNeeded) {
-                        break;
-                    }
-                }
+                        const double tL = getEndT(lhs);
+                        const double tR = getEndT(rhs);
+                        if (tL != tR) return tL > tR;
+
+                        return lhs > rhs;
+                    });
+
+                const int takeCount = std::min(remainingNeeded, static_cast<int>(candidateIds.size()));
+                m_preloadOrder.insert(
+                    m_preloadOrder.end(),
+                    candidateIds.begin(),
+                    candidateIds.begin() + takeCount
+                );
+                break;
             }
 
-            if (!anyRemaining) break;
+            case PreloadSortMode::Recent: {
+                std::sort(candidateIds.begin(), candidateIds.end(),
+                    [&](int lhs, int rhs) {
+                        return lhs > rhs;
+                    });
 
-            // Rotate the visit order each round so the same bucket doesn't keep getting "first pick" on every pass
-            if (bucketVisitOrder.size() > 1) {
-                std::rotate(bucketVisitOrder.begin(),
+                const int takeCount = std::min(remainingNeeded, static_cast<int>(candidateIds.size()));
+                m_preloadOrder.insert(
+                    m_preloadOrder.end(),
+                    candidateIds.begin(),
+                    candidateIds.begin() + takeCount
+                );
+                break;
+            }
+
+            case PreloadSortMode::Random:
+            default: {
+                // Sort candidates by endT first
+                std::sort(candidateIds.begin(), candidateIds.end(),
+                    [&](int lhs, int rhs) {
+                        const double tL = getEndT(lhs);
+                        const double tR = getEndT(rhs);
+                        if (tL != tR) return tL < tR;
+                        return lhs < rhs;
+                    });
+
+                // Use quantile buckets by sorted rank, not value-width buckets
+                // That keeps bucket sizes balanced even if endT is heavily skewed
+                const int desiredBuckets = std::max(
+                    4,
+                    std::min(
+                        64,
+                        std::max(
+                            targetCount / 2,
+                            static_cast<int>(std::sqrt(static_cast<float>(candidateIds.size())))
+                        )
+                    )
+                );
+
+                const int numBuckets = std::max(
+                    1,
+                    std::min(desiredBuckets, static_cast<int>(candidateIds.size()))
+                );
+
+                std::vector<std::vector<int>> buckets(numBuckets);
+
+                for (size_t i = 0; i < candidateIds.size(); ++i) {
+                    const int bucket = std::min(
+                        numBuckets - 1,
+                        static_cast<int>((i * static_cast<size_t>(numBuckets)) / candidateIds.size())
+                    );
+                    buckets[bucket].push_back(candidateIds[i]);
+                }
+
+                std::mt19937 rng(static_cast<uint32_t>(m_levelIDOnAttach) ^ 0x9E3779B9u);
+
+                // Shuffle within each endT bucket so preload isn't too predictable
+                for (auto& bucket : buckets) {
+                    std::shuffle(bucket.begin(), bucket.end(), rng);
+                }
+
+                // Build a randomized round-robin bucket visitation order
+                std::vector<int> bucketVisitOrder(numBuckets);
+                std::iota(bucketVisitOrder.begin(), bucketVisitOrder.end(), 0);
+                std::shuffle(bucketVisitOrder.begin(), bucketVisitOrder.end(), rng);
+
+                std::vector<size_t> bucketCursors(numBuckets, 0);
+
+                while (static_cast<int>(m_preloadOrder.size()) < remainingNeeded) {
+                    bool anyRemaining = false;
+
+                    for (int b : bucketVisitOrder) {
+                        if (bucketCursors[b] < buckets[b].size()) {
+                            m_preloadOrder.push_back(buckets[b][bucketCursors[b]++]);
+                            anyRemaining = true;
+
+                            if (static_cast<int>(m_preloadOrder.size()) >= remainingNeeded) {
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!anyRemaining) break;
+
+                    // Rotate the visit order each round so the same bucket doesn't keep
+                    // getting first pick on every pass
+                    if (bucketVisitOrder.size() > 1) {
+                        std::rotate(
+                            bucketVisitOrder.begin(),
                             bucketVisitOrder.begin() + 1,
-                            bucketVisitOrder.end());
+                            bucketVisitOrder.end()
+                        );
+                    }
+                }
+
+                break;
             }
         }
 
@@ -1834,11 +1893,17 @@ public:
         forcePlayersVisible_();
         invalidateAttemptCounts();
 
-        getPlaybackLimitVisibleGhostsEnabled();
-        getPlaybackMaxVisibleGhosts();
+        // getPlaybackLimitVisibleGhostsEnabled();
+        m_limitVisibleGhosts = false;
+        // getPlaybackMaxVisibleGhosts();
+        m_maxVisibleGhosts = INT_MAX;
+        // Making this default off when opening a level since people will absolutely forget its on and complain that the mod isn't working corrrectly
+        setPlaybackOnlyPastPercentEnabled(false);
         getPlaybackOnlyPastPercentEnabled();
         getPlaybackOnlyPastPercentThreshold();
         buildGhostThatPassedPercentSerialList();
+        getPreloadSortMode();
+        setPreloadSortMode(m_preloadSortMode);
     }
 
     void initBotAfterReset_() {
@@ -4193,18 +4258,37 @@ private:
         }
         else {
 
-            for (size_t i = 0; i < attempts.size(); ++i) {
-                Attempt& a = attempts[i];
+            if (m_onlyShowGhostsThatPassedPercent) {
+                for (size_t i = 0; i < m_ghostsThatPassThePercentThreshold.size(); ++i) {
+                    Attempt& a = attempts[m_ghostsThatPassThePercentThreshold[i]];
 
-                if (a.practiceAttempt) continue;
-                if (!matchesStartPositionFilter_(a)) continue;
+                    if (a.practiceAttempt) continue;
+                    if (!matchesStartPositionFilter_(a)) continue;
 
-                const bool hasSpawnableData = !a.p1.empty() || (a.hadDual && !a.p2.empty());
-                if (!hasSpawnableData) continue;
+                    const bool hasSpawnableData = !a.p1.empty() || (a.hadDual && !a.p2.empty());
+                    if (!hasSpawnableData) continue;
 
-                m_preloadableIndexesInAttemptsList.push_back(i);
-                normal++;
+                    m_preloadableIndexesInAttemptsList.push_back(i);
+                    normal++;
+                }
+
             }
+            else {
+                for (size_t i = 0; i < attempts.size(); ++i) {
+                    Attempt& a = attempts[i];
+
+                    if (a.practiceAttempt) continue;
+                    if (!matchesStartPositionFilter_(a)) continue;
+
+                    const bool hasSpawnableData = !a.p1.empty() || (a.hadDual && !a.p2.empty());
+                    if (!hasSpawnableData) continue;
+
+                    m_preloadableIndexesInAttemptsList.push_back(i);
+                    normal++;
+                }
+            }
+
+            
             m_cachedNormalAttempts = normal;
         }
         m_attemptCountsDirty = false;
