@@ -1,3 +1,6 @@
+# 1.4.29
+- Only load Attempts into memory when needed
+- Way more accurate RAM estimate (includes attempt data + player object size)
 # 1.4.28
 - Fixed practice session overwriting bug
 # 1.4.27

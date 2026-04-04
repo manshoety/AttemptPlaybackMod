@@ -76,7 +76,7 @@ namespace {
     constexpr float kPlaybackSettingsW = 300.f;
     constexpr float kPlaybackSettingsH = 200.f;
 
-    constexpr float kAttemptMbCost = 0.45f;
+    static constexpr size_t kPlayerObjectBytes = 0.45 * 1024 * 1024; // I think it's around this amount but who knows
 }
 
 template <class T>static void showPopupNoElasticity_(T* popup) {
@@ -255,6 +255,7 @@ void PlaybackModMenu::buildTemplateUI_() {
             Build<CCMenu>::create()
                 .id("togglesColumn"_spr)
                 .pos(-240.f, 63.f)
+                .scale(0.75f)
                 .contentSize(35.f, 74.f)
                 .layout(Build<AxisLayout>::create()
                     .axis(Axis::Column)
@@ -315,7 +316,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.28", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.29", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
@@ -1175,9 +1176,14 @@ void PreloadAttemptsPopup::refreshInfoLabels_(int clampedN) {
     }
 
     if (m_estimatedRamLabel) { // Robert Tobert player objects are not RAM efficient
-        //float mb = clampedN * kAttemptMbCost;
-        float mb = std::min(getSettingIntOrDefault_(Mod::get(), "real-player-objects", 1000), clampedN) * kAttemptMbCost;
-        std::ostringstream ss;
+        const int numRealPO = std::min(getSettingIntOrDefault_(Mod::get(), "real-player-objects", 1000), clampedN);
+
+        auto estimate = Ghosts::I().estimatePreloadMemoryUsage(clampedN, numRealPO, kPlayerObjectBytes);
+
+        double mb = estimate.totalMiB();
+        mb *= 1.10; // Better estimate larger than too low
+
+        std::ostringstream ss; // I know MB and MiB are different but RAAAAAAAAAAAA
         ss << "(Estimated RAM: " << std::fixed << std::setprecision(1) << mb << "MB)";
         m_estimatedRamLabel->setString(ss.str().c_str());
     }

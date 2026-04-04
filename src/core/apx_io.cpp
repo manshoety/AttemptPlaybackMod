@@ -143,6 +143,201 @@ static inline Frame makeFrame_(APXQuantState_ const& s) {
     return f;
 }
 
+// Stuff for only loading light thingies for each attempt and loading the full attempt on preload
+struct APXTrackSummary_ {
+    bool hasFrames = false;
+    int32_t firstXQ = 0;
+    int32_t lastXQ = 0;
+    uint32_t lastTQ = 0;
+};
+
+struct APXAttemptCompactMeta_ {
+    APXMetaCompactPrefix_ prefix{};
+    APXMetaCompactV2Tail_ tail{};
+    APXTrackHeaderCompact p1Hdr{};
+    APXTrackHeaderCompact p2Hdr{};
+    const uint8_t* p1Data = nullptr;
+    const uint8_t* p2Data = nullptr;
+};
+
+static bool readAPXAttemptCompactMetaOnly_(
+    const uint8_t* data,
+    size_t byteSize,
+    APXAttemptCompactMeta_& out,
+    bool* outUsedLegacy
+) {
+    if (outUsedLegacy) *outUsedLegacy = false;
+
+    if (byteSize < sizeof(APXMetaCompactPrefix_) + sizeof(APXTrackHeaderCompact) + sizeof(APXTrackHeaderCompact)) {
+        return false;
+    }
+
+    const uint8_t* cur = data;
+    const uint8_t* end = data + byteSize;
+
+    if (!readPod_(cur, end, out.prefix)) return false;
+
+    if (out.prefix.p1Count > kAPXMaxFramesPerTrack_ || out.prefix.p2Count > kAPXMaxFramesPerTrack_) {
+        return false;
+    }
+
+    if (out.prefix.streamVersion == kAPXCompactAttemptVersion_V1) {
+        APXMetaCompactV1Tail_ tailV1{};
+        if (!readPod_(cur, end, tailV1)) return false;
+        out.tail.baseTimeOffset = tailV1.baseTimeOffset;
+        out.tail.seed = tailV1.seed;
+        if (outUsedLegacy) *outUsedLegacy = true;
+    } else if (out.prefix.streamVersion == kAPXCompactAttemptVersion_V2) {
+        if (!readPod_(cur, end, out.tail)) return false;
+    } else {
+        return false;
+    }
+
+    if (!readPod_(cur, end, out.p1Hdr)) return false;
+    if (out.p1Hdr.byteSize > static_cast<uint32_t>(end - cur)) return false;
+    if (out.prefix.p1Count > out.p1Hdr.byteSize) return false;
+    out.p1Data = cur;
+    cur += out.p1Hdr.byteSize;
+
+    if (!readPod_(cur, end, out.p2Hdr)) return false;
+    if (out.p2Hdr.byteSize > static_cast<uint32_t>(end - cur)) return false;
+    if (out.prefix.p2Count > out.p2Hdr.byteSize) return false;
+    out.p2Data = cur;
+    cur += out.p2Hdr.byteSize;
+
+    return cur == end;
+}
+
+static bool scanTrackCompactSummary_(
+    const uint8_t* data,
+    size_t byteSize,
+    uint32_t frameCount,
+    APXTrackSummary_& out
+) {
+    out = APXTrackSummary_{};
+
+    if (frameCount == 0) return true;
+    if (frameCount > kAPXMaxFramesPerTrack_) return false;
+    if (frameCount > byteSize) return false;
+
+    const uint8_t* cur = data;
+    const uint8_t* end = data + byteSize;
+
+    APXQuantState_ prev{};
+    bool havePrev = false;
+
+    for (uint32_t i = 0; i < frameCount; ++i) {
+        uint8_t tag = 0;
+        if (!readPod_(cur, end, tag)) return false;
+
+        APXQuantState_ s{};
+
+        if (tag & kAPXRec_Key_) {
+            APXFrameKeyCompact rec{};
+            if (!readPod_(cur, end, rec)) return false;
+
+            s.xQ = rec.xQ;
+            s.yQ = rec.yQ;
+            s.rotQ = rec.rotQ;
+            s.vehicleQ = rec.vehicleQ;
+            s.waveQ = rec.waveQ;
+            s.tQ = rec.tQ;
+            s.mode = rec.mode;
+            s.flags = rec.flags;
+        } else {
+            if (!havePrev) return false;
+
+            APXFrameDeltaCompact rec{};
+            if (!readPod_(cur, end, rec)) return false;
+
+            s = prev;
+            s.xQ += rec.dxQ;
+            s.yQ += rec.dyQ;
+            s.rotQ += rec.drotQ;
+            s.tQ += rec.dtQ;
+
+            if (tag & kAPXRec_Mode_) {
+                if (!readPod_(cur, end, s.mode)) return false;
+            }
+            if (tag & kAPXRec_Flags_) {
+                if (!readPod_(cur, end, s.flags)) return false;
+            }
+            if (tag & kAPXRec_Vehicle_) {
+                if (!readPod_(cur, end, s.vehicleQ)) return false;
+            }
+            if (tag & kAPXRec_Wave_) {
+                if (!readPod_(cur, end, s.waveQ)) return false;
+            }
+        }
+
+        if (!out.hasFrames) {
+            out.hasFrames = true;
+            out.firstXQ = s.xQ;
+        }
+
+        out.lastXQ = s.xQ;
+        out.lastTQ = s.tQ;
+
+        prev = s;
+        havePrev = true;
+    }
+
+    return true;
+}
+
+static bool buildCatalogEntryFromATT3_(
+    const uint8_t* data,
+    size_t byteSize,
+    uint64_t chunkFileOffset,
+    uint32_t chunkSize,
+    APXAttemptDiskInfo& out,
+    bool* outUsedLegacy
+) {
+    APXAttemptCompactMeta_ meta{};
+    if (!readAPXAttemptCompactMetaOnly_(data, byteSize, meta, outUsedLegacy)) {
+        return false;
+    }
+
+    APXTrackSummary_ p1Summary{};
+    APXTrackSummary_ p2Summary{};
+
+    if (!scanTrackCompactSummary_(meta.p1Data, meta.p1Hdr.byteSize, meta.prefix.p1Count, p1Summary)) {
+        return false;
+    }
+    if (!scanTrackCompactSummary_(meta.p2Data, meta.p2Hdr.byteSize, meta.prefix.p2Count, p2Summary)) {
+        return false;
+    }
+
+    out = APXAttemptDiskInfo{};
+    out.serial = static_cast<int>(meta.prefix.serial);
+    out.startPercent = meta.prefix.startPercent;
+    out.endPercent = meta.prefix.endPercent;
+    out.practiceAttempt = (meta.prefix.flags & 1u) != 0;
+    out.completed = (meta.prefix.flags & (1u << 1)) != 0;
+    out.hadDual = (meta.prefix.flags & (1u << 2)) != 0;
+    out.startX = meta.prefix.startX;
+    out.startY = meta.prefix.startY;
+    out.baseTimeOffset = meta.tail.baseTimeOffset;
+    out.seed = static_cast<uintptr_t>(meta.tail.seed);
+    out.p1Count = meta.prefix.p1Count;
+    out.p2Count = meta.prefix.p2Count;
+    out.chunkFileOffset = chunkFileOffset;
+    out.chunkSize = chunkSize;
+
+    if (p1Summary.hasFrames) {
+        out.endX = dequantPos_(p1Summary.lastXQ);
+        out.endTime = dequantTime_(p1Summary.lastTQ);
+    } else if (p2Summary.hasFrames) {
+        out.endX = dequantPos_(p2Summary.lastXQ);
+        out.endTime = dequantTime_(p2Summary.lastTQ);
+    } else {
+        out.endX = out.startX;
+        out.endTime = 0.0;
+    }
+
+    return true;
+}
+
 static std::vector<uint8_t> encodeTrackCompact_(std::vector<Frame> const& frames) {
     std::vector<uint8_t> out;
     if (frames.empty()) return out;
@@ -846,6 +1041,196 @@ bool loadAPXFileWithMigration(
     }
 
     return true;
+}
+
+bool scanAPXFileCatalog(
+    std::filesystem::path const& path,
+    APXCatalogScanResult& out
+) {
+    out = APXCatalogScanResult{};
+
+    std::error_code ec;
+    ec.clear();
+    const bool exists = std::filesystem::exists(path, ec);
+    if (ec) {
+        log::warn(
+            "[SAVE FILE] exists failed for {}: {}",
+            geode::utils::string::pathToString(path),
+            ec.message()
+        );
+        return false;
+    }
+
+    if (!exists) {
+        return true;
+    }
+
+    ec.clear();
+    const uintmax_t fsz = std::filesystem::file_size(path, ec);
+    if (ec) {
+        log::warn(
+            "[SAVE FILE] file_size failed for {}: {}",
+            geode::utils::string::pathToString(path),
+            ec.message()
+        );
+        return false;
+    }
+
+    if (fsz < sizeof(APXHeader)) {
+        log::warn(
+            "[SAVE FILE] file too small to contain APX header: {}",
+            geode::utils::string::pathToString(path)
+        );
+        return false;
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        log::warn(
+            "[SAVE FILE] failed to open file for read: {}",
+            geode::utils::string::pathToString(path)
+        );
+        return false;
+    }
+
+    APXHeader hdr{};
+    in.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
+    if (!in) {
+        log::warn("[SAVE FILE] failed reading APX header");
+        return false;
+    }
+
+    if (std::memcmp(hdr.magic, "APX2", 4) != 0) {
+        log::warn(
+            "[SAVE FILE] invalid APX header magic in {}",
+            geode::utils::string::pathToString(path)
+        );
+        return false;
+    }
+
+    if (hdr.version < kAPXVersion) {
+        out.loadedLegacy = true;
+    } else if (hdr.version > kAPXVersion) {
+        log::warn(
+            "[SAVE FILE] unsupported future APX version {} in {}",
+            hdr.version,
+            geode::utils::string::pathToString(path)
+        );
+        return false;
+    }
+
+    while (true) {
+        uint32_t chunkType = 0;
+        uint32_t chunkSize = 0;
+
+        const std::streampos chunkOffset = in.tellg();
+
+        in.read(reinterpret_cast<char*>(&chunkType), sizeof(chunkType));
+        if (!in) {
+            if (in.eof()) break;
+            return false;
+        }
+
+        in.read(reinterpret_cast<char*>(&chunkSize), sizeof(chunkSize));
+        if (!in) return false;
+
+        if (chunkSize > kAPXMaxChunkSize_) {
+            log::warn("[SAVE FILE] chunk size too large: {}", chunkSize);
+            return false;
+        }
+
+        switch (chunkType) {
+            case kChunk_ATT3: {
+                std::vector<uint8_t> buf(static_cast<size_t>(chunkSize));
+                if (chunkSize != 0) {
+                    in.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
+                    if (!in) return false;
+                }
+
+                APXAttemptDiskInfo entry{};
+                bool usedLegacy = false;
+                if (!buildCatalogEntryFromATT3_(
+                        buf.data(),
+                        buf.size(),
+                        static_cast<uint64_t>(chunkOffset),
+                        chunkSize,
+                        entry,
+                        &usedLegacy
+                    )) {
+                    log::warn("[SAVE FILE] failed scanning ATT3 chunk");
+                    return false;
+                }
+
+                out.loadedLegacy = out.loadedLegacy || usedLegacy;
+                out.maxSerialSeen = std::max(out.maxSerialSeen, static_cast<uint32_t>(entry.serial));
+                out.attempts.push_back(std::move(entry));
+                break;
+            }
+
+            case kChunk_PATH: {
+                PracticePath tmpPath;
+                bool usedLegacy = false;
+                if (!readAPXPracticePath(in, chunkSize, tmpPath, &usedLegacy)) {
+                    log::warn("[SAVE FILE] failed reading PATH chunk during catalog scan");
+                    return false;
+                }
+                out.loadedLegacy = out.loadedLegacy || usedLegacy;
+                out.practicePath = std::move(tmpPath);
+                break;
+            }
+
+            case kChunk_ATTZ:
+            case kChunk_CheckpointZ2:
+            case kChunk_SEGZ: {
+                out.loadedLegacy = true;
+                if (chunkType == kChunk_ATTZ) {
+                    out.sawLegacyAttemptChunks = true;
+                }
+                if (!skipChunkPayload_(in, chunkSize)) return false;
+                break;
+            }
+
+            default: {
+                if (!skipChunkPayload_(in, chunkSize)) return false;
+                break;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool loadAPXAttemptByCatalogEntry(
+    std::filesystem::path const& path,
+    APXAttemptDiskInfo const& entry,
+    Attempt& attemptOut,
+    bool* outUsedLegacy
+) {
+    attemptOut = Attempt{};
+    if (outUsedLegacy) *outUsedLegacy = false;
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        log::warn(
+            "[SAVE FILE] failed to open file for ATT3 lazy load: {}",
+            geode::utils::string::pathToString(path)
+        );
+        return false;
+    }
+
+    in.seekg(static_cast<std::streamoff>(entry.chunkFileOffset), std::ios::beg);
+    if (!in) return false;
+
+    uint32_t chunkType = 0;
+    uint32_t chunkSize = 0;
+    in.read(reinterpret_cast<char*>(&chunkType), sizeof(chunkType));
+    in.read(reinterpret_cast<char*>(&chunkSize), sizeof(chunkSize));
+    if (!in) return false;
+
+    if (chunkType != kChunk_ATT3) return false;
+    if (chunkSize != entry.chunkSize) return false;
+
+    return readAPXAttemptCompact(in, chunkSize, attemptOut, outUsedLegacy);
 }
 
 bool saveAPXFileCurrent(

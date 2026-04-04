@@ -598,6 +598,39 @@ struct PracticePath {
     }
 };
 
+// Stuff to avoid loading all attempts into memory, and instead have small thingy preloading can search through and select from yippie RAM saved
+struct APXAttemptDiskInfo {
+    int serial = -1;
+
+    float startPercent = 0.f;
+    float endPercent = 0.f;
+
+    bool practiceAttempt = false;
+    bool completed = false;
+    bool hadDual = false;
+
+    float startX = 0.f;
+    float startY = 0.f;
+    float endX = 0.f;
+    double endTime = 0.0;
+
+    double baseTimeOffset = 0.0;
+    uintptr_t seed = 0;
+
+    uint32_t p1Count = 0;
+    uint32_t p2Count = 0;
+
+    uint64_t chunkFileOffset = 0;
+    uint32_t chunkSize = 0;
+};
+
+struct APXCatalogScanResult {
+    std::vector<APXAttemptDiskInfo> attempts;
+    PracticePath practicePath;
+    uint32_t maxSerialSeen = 0;
+    bool loadedLegacy = false;
+    bool sawLegacyAttemptChunks = false;
+};
 
 struct XBatchGrid {
     float binW = 1024.f;
@@ -738,9 +771,7 @@ struct Attempt {
     bool p1Visible = false;
     bool p2Visible = false;
     bool preloaded = false;
-    bool needsVisualSetup = false;
     bool m_isPlatformer = false;
-    bool beganAtStartOfLevel = true;
     uintptr_t seed = 0;
 
     PoseCache last1{};

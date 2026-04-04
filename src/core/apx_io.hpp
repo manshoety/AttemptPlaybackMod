@@ -2,6 +2,7 @@
 #pragma once
 #include <vector>
 #include <iosfwd>
+#include <filesystem>
 #include "types.hpp"
 #include "apx_format.hpp"
 #include <Geode/binding/PlayerObject.hpp>
@@ -13,6 +14,14 @@ bool readAPXAttemptCompact(std::istream& in, uint32_t chunkSize, Attempt& attemp
 
 bool loadAPXFileWithMigration(std::filesystem::path const& path, std::vector<Attempt>& attemptsOut, PracticePath& practicePathOut);
 bool saveAPXFileCurrent(std::filesystem::path const& path, std::vector<Attempt> const& attempts, PracticePath const& practicePath);
+
+bool scanAPXFileCatalog(std::filesystem::path const& path, APXCatalogScanResult& out);
+bool loadAPXAttemptByCatalogEntry(
+    std::filesystem::path const& path,
+    APXAttemptDiskInfo const& entry,
+    Attempt& attemptOut,
+    bool* outUsedLegacy = nullptr
+);
 
 // Core flag encoding - works with any uint8_t flags field
 static inline uint8_t flagsFromFrame_(Frame const& f) {

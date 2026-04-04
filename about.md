@@ -22,4 +22,4 @@ Frame Stepper currently breaks recordings
 
 This mod is still early in developement so expect some bugs. Please report any bugs on [discord](https://discord.gg/9MmXKBwvnA) in the bug reports channel
 
-I have not tested platformer mode much so expect plenty of bugs. This mod is currently intended for calssic levels
+I have not tested platformer mode much so expect plenty of bugs. This mod is currently intended for classic levels

@@ -50,6 +50,10 @@ class $modify(MyPlayerObject, PlayerObject) {
         }
         return PlayerObject::releaseButton(btn);
     } 
+    //void playerDestroyed(bool noEffects) {
+    //    log::info("playerDestroyed");
+    //    PlayerObject::playerDestroyed(noEffects);
+    //}
     // Update order
     // SET previous position
     // Player object update
@@ -159,23 +163,23 @@ class $modify(MyPlayerObject, PlayerObject) {
         PlayerObject::releaseAllButtons();
     }
 
-    void flipGravity(bool p0, bool p1) {
+    //void flipGravity(bool p0, bool p1) {
         // log::info("[PlayerObject] flipGravity({}, {})", p0, p1);
-        PlayerObject::flipGravity(p0, p1);
-    }
+    //    PlayerObject::flipGravity(p0, p1);
+    //}
 
-    void toggleFlyMode(bool p0, bool p1) {
+    //void toggleFlyMode(bool p0, bool p1) {
         //log::info("[PlayerObject] toggleFlyMode({}, {})", p0, p1);
-        PlayerObject::toggleFlyMode(p0, p1);
-    }
+    //    PlayerObject::toggleFlyMode(p0, p1);
+    //}
 
-    void toggleDartMode(bool p0, bool p1) {
+    //void toggleDartMode(bool p0, bool p1) {
         //log::info("[PlayerObject] toggleDartMode({}, {})", p0, p1);
-        PlayerObject::toggleDartMode(p0, p1);
-    }
+    //    PlayerObject::toggleDartMode(p0, p1);
+    //}
 
-    void setColor(ccColor3B const& color) {
+    //void setColor(ccColor3B const& color) {
         //log::info("[PlayerObject] color set, was me: {}", Ghosts::I().testerBool);
-        PlayerObject::setColor(color);
-    }
+    //    PlayerObject::setColor(color);
+    //}
 };

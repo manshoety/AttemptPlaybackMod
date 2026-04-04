@@ -69,17 +69,24 @@ class $modify(PLHook, PlayLayer) {
         }
         PlayLayer::levelComplete();
     } 
+    // Idk how to check consistantly if a mod is using noclip
+    // I want to add a toggle for "don't record noclip runs"
     $override void destroyPlayer(PlayerObject* p0, GameObject* p1) {
-        //log::info("[PlayLayer] destroyPlayer m_isStartPos: {}, m_uniqueID: {}", p1->m_isStartPos, p1->m_uniqueID);
-        
         auto& G = Ghosts::I();
-        if (!G.noclip_enabled) {
+        if (!G.isModEnabled()) {
             PlayLayer::destroyPlayer(p0, p1);
+            return;
         }
-        if (G.isModEnabled() && this->m_playerDied) { // && p0 == this->m_player1 || p0 == this->m_player2
-            G.onDeath();
+
+        if (p0 == this->m_player1 || p0 == this->m_player2) {
+            if (G.noclip_enabled) return;
+            PlayLayer::destroyPlayer(p0, p1);
+            if (this->m_playerDied) {
+                //log::info("[PlayLayer] destroyPlayer");
+                G.onDeath();
+            }
         }
-        //log::info("[PlayLayer] destroyPlayer player1 dead: {}, player2 dead: {}, Playerdead: {}", this->m_player1->m_isDead, this->m_player2->m_isDead, this->m_playerDied);
+        else PlayLayer::destroyPlayer(p0, p1);
     }
     $override void showNewBest(bool newReward, int orbs, int diamonds, bool demonKey, bool noRetry, bool noTitle) {
         if (!Ghosts::I().isModEnabled() || !Ghosts::I().safeMode_enabled) {

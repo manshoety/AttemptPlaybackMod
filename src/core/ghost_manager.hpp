@@ -55,6 +55,7 @@
 #include "../core/sfx_handling.hpp"
 #include "../core/checkpoint_manager.hpp"
 #include "../core/player_object_pool.hpp"
+#include "../core/preload_memory_estimator.hpp"
 // #include "../core/seed_utils.hpp"
 
 // Current visual bugs:
@@ -389,6 +390,7 @@ public:
             
             m_current = Attempt{};
             m_loadedSerials.clear();
+            clearAttemptCatalog_();
             m_loadedLevelID = 0;
             m_nextAttemptSerial = 1;
             m_spans.clear();
@@ -557,30 +559,19 @@ public:
         outInitial.assign(sorted.begin(), sorted.begin() + initialCount);
     }
 
-    void beginPreloadAttempts(int targetCount) {
-        if (isPureRecordingMode_()) {
-            m_preloadActive = false;
-            m_initialAttemptsToSet.clear();
-            return;
-        }
-
-        cancelPreloadAttempts(true);
-        clearAttemptPreloadStateForCurrentSelection_();
-        m_preloadCursor = 0;
-        m_preloadLoaded = 0;
-        m_preloadTarget = 0;
-        m_preloadActive = false;
+    void buildPreloadOrderForCount_(int targetCount, std::vector<uint32_t>& outOrder) const {
+        outOrder.clear();
 
         if (targetCount <= 0) return;
 
         const auto wantPractice = practiceFilterEvenWhenBotNotOn();
+        const int totalMatching = wantPractice ? m_cachedPracticeAttempts : m_cachedNormalAttempts;
+        const int takeCount = std::min(targetCount, totalMatching);
 
-        int readyNow = 0;
-        int emptySkipped = 0;
-        int totalMatching = wantPractice ? m_cachedPracticeAttempts : m_cachedNormalAttempts;
+        if (takeCount <= 0) return;
 
-        std::vector<int> candidateIds;
-        candidateIds.reserve(totalMatching);
+        std::vector<int> candidateIds = m_preloadableIndexesInAttemptsList;
+        if (candidateIds.empty()) return;
 
         auto getEndT = [&](int attemptIndex) -> double {
             const Attempt& a = attempts[attemptIndex];
@@ -592,22 +583,12 @@ public:
             return (!a.p1.empty()) ? static_cast<float>(a.p1.back().x) : 0.0f;
         };
 
-        candidateIds = m_preloadableIndexesInAttemptsList;
-
-        m_preloadTarget = std::min(targetCount, totalMatching);
-        m_preloadLoaded = std::min(readyNow, m_preloadTarget);
-
-        const int remainingNeeded = std::max(0, m_preloadTarget - m_preloadLoaded);
-
-        if (candidateIds.empty() || remainingNeeded <= 0) {
-            m_preloadActive = false;
-            return;
-        }
-
-        m_preloadOrder.reserve(std::min<int>(remainingNeeded, static_cast<int>(candidateIds.size())));
+        outOrder.reserve(std::min(takeCount, static_cast<int>(candidateIds.size())));
 
         PreloadSortMode sortMode = m_preloadSortMode;
-        if (m_replayKind == ReplayKind::PracticeComposite) sortMode = PreloadSortMode::Random;
+        if (m_replayKind == ReplayKind::PracticeComposite) {
+            sortMode = PreloadSortMode::Random;
+        }
 
         switch (sortMode) {
             case PreloadSortMode::Best: {
@@ -624,11 +605,10 @@ public:
                         return lhs > rhs;
                     });
 
-                const int takeCount = std::min(remainingNeeded, static_cast<int>(candidateIds.size()));
-                m_preloadOrder.insert(
-                    m_preloadOrder.end(),
+                outOrder.insert(
+                    outOrder.end(),
                     candidateIds.begin(),
-                    candidateIds.begin() + takeCount
+                    candidateIds.begin() + std::min(takeCount, static_cast<int>(candidateIds.size()))
                 );
                 break;
             }
@@ -639,11 +619,10 @@ public:
                         return lhs > rhs;
                     });
 
-                const int takeCount = std::min(remainingNeeded, static_cast<int>(candidateIds.size()));
-                m_preloadOrder.insert(
-                    m_preloadOrder.end(),
+                outOrder.insert(
+                    outOrder.end(),
                     candidateIds.begin(),
-                    candidateIds.begin() + takeCount
+                    candidateIds.begin() + std::min(takeCount, static_cast<int>(candidateIds.size()))
                 );
                 break;
             }
@@ -658,7 +637,7 @@ public:
                         if (tL != tR) return tL < tR;
                         return lhs < rhs;
                     });
-
+                
                 // Use quantile buckets by sorted rank, not value-width buckets
                 // That keeps bucket sizes balanced even if endT is heavily skewed
                 const int desiredBuckets = std::max(
@@ -666,7 +645,7 @@ public:
                     std::min(
                         64,
                         std::max(
-                            targetCount / 2,
+                            takeCount / 2,
                             static_cast<int>(std::sqrt(static_cast<float>(candidateIds.size())))
                         )
                     )
@@ -688,8 +667,8 @@ public:
                 }
 
                 std::mt19937 rng(static_cast<uint32_t>(m_levelIDOnAttach) ^ 0x9E3779B9u);
-
                 // Shuffle within each endT bucket so preload isn't too predictable
+
                 for (auto& bucket : buckets) {
                     std::shuffle(bucket.begin(), bucket.end(), rng);
                 }
@@ -701,15 +680,15 @@ public:
 
                 std::vector<size_t> bucketCursors(numBuckets, 0);
 
-                while (static_cast<int>(m_preloadOrder.size()) < remainingNeeded) {
+                while (static_cast<int>(outOrder.size()) < takeCount) {
                     bool anyRemaining = false;
 
                     for (int b : bucketVisitOrder) {
                         if (bucketCursors[b] < buckets[b].size()) {
-                            m_preloadOrder.push_back(buckets[b][bucketCursors[b]++]);
+                            outOrder.push_back(static_cast<uint32_t>(buckets[b][bucketCursors[b]++]));
                             anyRemaining = true;
 
-                            if (static_cast<int>(m_preloadOrder.size()) >= remainingNeeded) {
+                            if (static_cast<int>(outOrder.size()) >= takeCount) {
                                 break;
                             }
                         }
@@ -730,6 +709,45 @@ public:
 
                 break;
             }
+        }
+    }
+
+    void beginPreloadAttempts(int targetCount) {
+        if (isPureRecordingMode_()) {
+            m_preloadActive = false;
+            m_initialAttemptsToSet.clear();
+            return;
+        }
+
+        cancelPreloadAttempts(true);
+        clearAttemptPreloadStateForCurrentSelection_();
+        m_preloadCursor = 0;
+        m_preloadLoaded = 0;
+        m_preloadTarget = 0;
+        m_preloadActive = false;
+
+        if (targetCount <= 0) return;
+
+        const auto wantPractice = practiceFilterEvenWhenBotNotOn();
+
+        int readyNow = 0;
+        int totalMatching = wantPractice ? m_cachedPracticeAttempts : m_cachedNormalAttempts;
+
+        m_preloadTarget = std::min(targetCount, totalMatching);
+        m_preloadLoaded = std::min(readyNow, m_preloadTarget);
+
+        const int remainingNeeded = std::max(0, m_preloadTarget - m_preloadLoaded);
+
+        if (remainingNeeded <= 0) {
+            m_preloadActive = false;
+            return;
+        }
+
+        buildPreloadOrderForCount_(remainingNeeded, m_preloadOrder);
+
+        if (m_preloadOrder.empty()) {
+            m_preloadActive = false;
+            return;
         }
 
         // Build the smaller real player object initial set list from the first N
@@ -906,7 +924,6 @@ public:
         if (a.g2) a.setP2Visible(false, true);
 
         a.preloaded = false;
-        a.needsVisualSetup = false;
 
         a.resetPlayback();
 
@@ -979,6 +996,38 @@ public:
         else return m_cachedNormalAttempts;
     }
 
+    preload_memory::PreloadMemoryEstimate estimatePreloadMemoryUsage(
+        int targetCount,
+        int realPlayerObjectAttempts,
+        size_t bytesPerPlayerObject
+    ) {
+        if (targetCount <= 0) {
+            return {};
+        }
+
+        m_attemptCountsDirty = true;
+        rebuildAttemptCountsIfNeeded();
+        rebuildSerialCache_();
+
+        if (m_levelIDOnAttach != 0) {
+            scanAttemptCatalogForLevel_(m_levelIDOnAttach);
+        }
+
+        std::vector<uint32_t> order;
+        buildPreloadOrderForCount_(targetCount, order);
+
+        return preload_memory::estimateForSerialOrder(
+            order,
+            targetCount,
+            std::max(0, realPlayerObjectAttempts),
+            bytesPerPlayerObject,
+            attempts,
+            m_serialToIdx,
+            m_attemptCatalog,
+            m_attemptCatalogBySerial
+        );
+    }
+
     bool hasModAttachedToLevel() { return m_pl != nullptr; }
 
     void flushPendingSaves_() {
@@ -1002,6 +1051,14 @@ public:
             stopReplay();
             clearAllGhostNodes();
             attempts.clear();
+            m_loadedSerials.clear();
+            m_loadedLevelID = 0;
+            m_serialCacheDirty = true;
+            m_spans.clear();
+            m_grid.clear();
+            m_gridThreshold.clear();
+            m_cachedCandidates.clear();
+            clearAttemptCatalog_();
             invalidateAttemptPointerCaches_();
             m_preloadedIndices.clear();
             m_primedIndices.clear();
@@ -1298,6 +1355,7 @@ public:
 
     int loadFromDisk_(int levelID, LoadFilter const& flt) {
         if (m_loadedLevelID == levelID && !attempts.empty()) {
+            scanAttemptCatalogForLevel_(levelID);
             return 0;
         }
 
@@ -1305,7 +1363,10 @@ public:
             m_checkpointMgr = CheckpointManager();
             m_needsMigrationRewrite = false;
             m_loadedFileWasLegacyAttempts = false;
+            clearAttemptCatalog_();
         }
+
+        scanAttemptCatalogForLevel_(levelID);
 
         auto path = fileForLevel_(levelID);
         std::ifstream in(path, std::ios::binary);
@@ -1920,15 +1981,20 @@ public:
         double startTime = getLastCheckpointTime();
         
         if (m_replayKind == ReplayKind::BestSingle) {
-            if (m_compOwnerIdx < attempts.size()) {
+            if (m_replayOwnerSerial > 0) {
+                owner = ensureAttemptLoadedBySerial_(m_replayOwnerSerial, false);
+            }
+
+            if (!owner && m_compOwnerIdx < attempts.size()) {
                 owner = &attempts[m_compOwnerIdx];
-                m_replayAttempt = owner;
                 m_replayOwnerSerial = owner->serial;
             }
+
+            m_replayAttempt = nullptr;
         } else {
             int serial = m_checkpointMgr.findOwnerSerialForTime(startTime);
             if (serial > 0) {
-                owner = findAttemptBySerial_(serial);
+                owner = ensureAttemptLoadedBySerial_(serial, false);
                 m_replayOwnerSerial = serial;
             }
             m_replayAttempt = nullptr;
@@ -2276,6 +2342,7 @@ public:
         m_ghostUpdateAccum = 0.f;
         m_loadedSerials.clear();
         m_loadedLevelID = 0;
+        clearAttemptCatalog_();
         m_practiceCompositeOwnerSerial = -1;
         m_activeOwnerSerial = -1;
         m_activeRoute = ActiveRoute::CompositeCheckpoint;
@@ -2404,6 +2471,12 @@ public:
     void clearGhosts() {
         clearAllGhostNodes();
         attempts.clear();
+        m_loadedSerials.clear();
+        m_serialCacheDirty = true;
+        m_spans.clear();
+        m_grid.clear();
+        m_gridThreshold.clear();
+        m_cachedCandidates.clear();
         invalidateAttemptPointerCaches_();
         m_preloadedIndices.clear();
         m_preloadedSet.clear();
@@ -2446,29 +2519,15 @@ public:
     void buildCompositeFromAttempt(size_t idx) {
         m_activeRoute = ActiveRoute::SingleAttempt;
         m_replayAttempt = nullptr;
-        
+
         if (idx >= attempts.size()) {
             m_compOwnerIdx = SIZE_MAX;
             return;
         }
-        
+
         auto& a = attempts[idx];
-        
-        //if (!a.acc1.valid() && !a.p1.empty()) {
-        //    buildAccel(a.p1, a.acc1, 64.f);
-        //}
-        //if (!a.acc1Time.valid() && !a.p1.empty()) {
-        //    buildAccelTime(a.p1, a.acc1Time);
-        //}
-        //if (a.hadDual && !a.acc2.valid() && !a.p2.empty()) {
-        //    buildAccel(a.p2, a.acc2, 64.f);
-        //}
-        //if (a.hadDual && !a.acc2Time.valid() && !a.p2.empty()) {
-        //    buildAccelTime(a.p2, a.acc2Time);
-        //}
-        
+
         m_compOwnerIdx = idx;
-        m_replayAttempt = &a;
         m_replayOwnerSerial = a.serial;
         m_lastEmitIdx1 = m_lastEmitIdx2 = 0;
         m_replayIdx1 = m_replayIdx2 = 0;
@@ -2738,9 +2797,9 @@ public:
         m_freezePlayerX = 0.f;
         m_freezePlayerY = 0.f;
 
-        if (!m_pl || !m_pl->m_player1 || attempts.empty()) {
-            log::warn("[Bot] startReplayBest aborted: pl={}, p1={}, attempts={}",
-                    (bool)m_pl, m_pl && m_pl->m_player1, attempts.size());
+        if (!m_pl || !m_pl->m_player1) {
+            log::warn("[Bot] startReplayBest aborted: pl={}, p1={}",
+                    (bool)m_pl, m_pl && m_pl->m_player1);
             return;
         }
 
@@ -2763,27 +2822,41 @@ public:
         
         block_attempt_push_on_recording_start = false;
         
-        size_t idx = pickWinningOrBestIndexFromPosition_(std::optional<bool>(false), m_currentReplayStartPos.x, kReplayStartTolerance);
+        if (!scanAttemptCatalogForLevel_(m_levelIDOnAttach)) {
+            log::warn("[Bot] startReplayBest: failed to scan attempt catalog");
+            m_filterByStartPosition = false;
+            return;
+        }
 
-        m_replayOwnerIndex = idx;
+        const int serial = pickWinningOrBestSerialFromPosition_(
+            std::optional<bool>(false),
+            m_currentReplayStartPos.x,
+            m_currentReplayStartPos.y,
+            kReplayStartTolerance
+        );
 
-        //log::info("[Bot] startReplayBest: pickWinningOrBestIndexFromPosition returned idx={}", 
-        //    idx == SIZE_MAX ? "SIZE_MAX" : std::to_string(idx));
-
-        if (idx == SIZE_MAX) {
+        if (serial <= 0) {
             log::warn("[Bot] startReplayBest: no non-practice attempts to replay");
             m_filterByStartPosition = false;
             return;
         }
 
-        //if (idx < attempts.size()) {
-        //    const Attempt& dbgAttempt = attempts[idx];
-            //log::info("[Bot] startReplayBest: selected attempt serial={}, p1.size={}, startX={:.2f}, endX={:.2f}, completed={}",
-            //    dbgAttempt.serial, dbgAttempt.p1.size(), 
-            //    dbgAttempt.p1.empty() ? -1.f : dbgAttempt.p1.front().x,
-            //    dbgAttempt.p1.empty() ? -1.f : dbgAttempt.p1.back().x,
-            //    dbgAttempt.completed);
-        //}
+        Attempt* chosen = ensureAttemptLoadedBySerial_(serial, false);
+        if (!chosen || chosen->p1.empty()) {
+            log::warn("[Bot] startReplayBest: failed to load chosen attempt serial={}", serial);
+            m_filterByStartPosition = false;
+            return;
+        }
+
+        const size_t idx = findLoadedAttemptIndexBySerial_(serial);
+        if (idx == SIZE_MAX) {
+            log::warn("[Bot] startReplayBest: loaded serial {} but index lookup failed", serial);
+            m_filterByStartPosition = false;
+            return;
+        }
+
+        m_replayOwnerSerial = serial;
+        m_replayOwnerIndex = idx;
 
         buildCompositeFromAttempt(idx);
 
@@ -2792,19 +2865,6 @@ public:
             m_filterByStartPosition = false;
             return;
         }
-        
-        const Attempt& selectedAttempt = attempts[m_compOwnerIdx];
-
-        //if (selectedAttempt.seed != 0) {
-        //    seedutils::applyAttemptSeed(selectedAttempt.seed, m_pl);
-            //log::info("[Seed] Applied seed {} from best attempt {} at replay start", selectedAttempt.seed, selectedAttempt.serial);
-        //}
-        
-        //log::info("[Bot] startReplayBest: FINAL selection - serial={}, frames={}, startX={:.2f}, endX={:.2f}",
-        //    selectedAttempt.serial,
-        //    selectedAttempt.p1.size(),
-        //    selectedAttempt.p1.front().x,
-        //    selectedAttempt.p1.back().x);
 
         tagCompositeOwnersHidden_(true);
 
@@ -3783,6 +3843,10 @@ private:
     int m_loadedLevelID = 0;
     bool m_needsMigrationRewrite = false;
     bool m_loadedFileWasLegacyAttempts = false;
+    std::vector<APXAttemptDiskInfo> m_attemptCatalog;
+    std::unordered_map<int, size_t> m_attemptCatalogBySerial;
+    int m_attemptCatalogLevelID = 0;
+    bool m_attemptCatalogScanned = false;
 
     bool m_allow_platformer = false;
 
@@ -3875,6 +3939,7 @@ private:
         m_replayAttempt = nullptr;
         m_replayOwnerIndex = SIZE_MAX;
         m_compOwnerIdx = SIZE_MAX;
+        m_serialCacheDirty = true;
     }
 
     static inline float lerp_(float a, float b, float t) {
@@ -3909,6 +3974,104 @@ private:
         return ((dx * dx + dy * dy) < kTolSq);
     }
 
+    void clearAttemptCatalog_() {
+        m_attemptCatalog.clear();
+        m_attemptCatalogBySerial.clear();
+        m_attemptCatalogLevelID = 0;
+        m_attemptCatalogScanned = false;
+    }
+
+    bool scanAttemptCatalogForLevel_(int levelID) {
+        if (m_attemptCatalogScanned && m_attemptCatalogLevelID == levelID) {
+            return true;
+        }
+
+        clearAttemptCatalog_();
+
+        APXCatalogScanResult scan{};
+        if (!scanAPXFileCatalog(fileForLevel_(levelID), scan)) {
+            return false;
+        }
+
+        m_attemptCatalog = std::move(scan.attempts);
+        m_attemptCatalogBySerial.reserve(m_attemptCatalog.size());
+
+        for (size_t i = 0; i < m_attemptCatalog.size(); ++i) {
+            m_attemptCatalogBySerial[m_attemptCatalog[i].serial] = i;
+        }
+
+        if (m_nextAttemptSerial <= static_cast<int>(scan.maxSerialSeen)) {
+            m_nextAttemptSerial = static_cast<int>(scan.maxSerialSeen) + 1;
+        }
+
+        m_attemptCatalogLevelID = levelID;
+        m_attemptCatalogScanned = true;
+        return true;
+    }
+
+    const APXAttemptDiskInfo* findCatalogEntryBySerial_(int serial) const {
+        auto it = m_attemptCatalogBySerial.find(serial);
+        if (it == m_attemptCatalogBySerial.end()) return nullptr;
+        if (it->second >= m_attemptCatalog.size()) return nullptr;
+        return &m_attemptCatalog[it->second];
+    }
+
+    size_t findLoadedAttemptIndexBySerial_(int serial) const {
+        rebuildSerialCache_();
+        auto it = m_serialToIdx.find(serial);
+        if (it == m_serialToIdx.end()) return SIZE_MAX;
+        if (it->second >= attempts.size()) return SIZE_MAX;
+        if (attempts[it->second].serial != serial) return SIZE_MAX;
+        return it->second;
+    }
+
+    Attempt* findLoadedAttemptBySerialOnly_(int serial) {
+        const size_t idx = findLoadedAttemptIndexBySerial_(serial);
+        if (idx == SIZE_MAX) return nullptr;
+        return &attempts[idx];
+    }
+
+    const Attempt* findLoadedAttemptBySerialOnly_(int serial) const {
+        const size_t idx = findLoadedAttemptIndexBySerial_(serial);
+        if (idx == SIZE_MAX) return nullptr;
+        return &attempts[idx];
+    }
+
+    Attempt* ensureAttemptLoadedBySerial_(int serial, bool spawnNow = false) {
+        if (serial <= 0) return nullptr;
+
+        if (Attempt* already = findLoadedAttemptBySerialOnly_(serial)) {
+            return already;
+        }
+
+        if (!m_pl || m_levelIDOnAttach == 0) {
+            return nullptr;
+        }
+
+        if (!scanAttemptCatalogForLevel_(m_levelIDOnAttach)) {
+            return nullptr;
+        }
+
+        const APXAttemptDiskInfo* entry = findCatalogEntryBySerial_(serial);
+        if (!entry) {
+            return nullptr;
+        }
+
+        Attempt loaded{};
+        bool usedLegacy = false;
+        if (!loadAPXAttemptByCatalogEntry(fileForLevel_(m_levelIDOnAttach), *entry, loaded, &usedLegacy)) {
+            return nullptr;
+        }
+
+        if (m_loadedSerials.count(loaded.serial) != 0) {
+            return findLoadedAttemptBySerialOnly_(loaded.serial);
+        }
+
+        m_loadedSerials.insert(loaded.serial);
+        pushAttempt(std::move(loaded), spawnNow);
+        return findLoadedAttemptBySerialOnly_(serial);
+    }
+
     void rebuildSerialCache_() const {
         if (!m_serialCacheDirty) return;
         m_serialToIdx.clear();
@@ -3920,15 +4083,11 @@ private:
     }
 
     inline Attempt* findAttemptBySerial_(int serial) {
-        // log::info("[findAttemptBySerial_] serial: {}", serial);
-        rebuildSerialCache_();
-        auto it = m_serialToIdx.find(serial);
-        
-        if (it != m_serialToIdx.end() && it->second < attempts.size()) {
-            m_replayOwnerIndex = it->second;
-            return &attempts[it->second];
-        }
-        return nullptr;
+        const size_t idx = findLoadedAttemptIndexBySerial_(serial);
+        if (idx == SIZE_MAX) return nullptr;
+
+        m_replayOwnerIndex = idx;
+        return &attempts[idx];
     }
 
     static GLubyte clampU8_(int64_t v) {
@@ -4659,81 +4818,88 @@ private:
         return !a.practiceAttempt;
     }
 
-    size_t pickWinningOrBestIndexFromPosition_(std::optional<bool> wantPractice, float startPosX, float tolerance) const {
-        //log::info("[Bot] pickWinningOrBestIndexFromPosition_: startPosX={:.2f}, tolerance={:.2f}, wantPractice={}", 
-        //    startPosX, tolerance, wantPractice.has_value() ? (wantPractice.value() ? "true" : "false") : "nullopt");
-        
-        size_t bestWin = SIZE_MAX;
-        float bestWinX = -1.f;
+    static FORCE_INLINE bool matchesPracticeValue_(bool practiceAttempt, std::optional<bool> wantPractice) {
+        if (!wantPractice.has_value()) return true;
+        return practiceAttempt == wantPractice.value();
+    }
+
+    int pickWinningOrBestSerialFromPosition_(
+        std::optional<bool> wantPractice,
+        float startPosX,
+        float startPosY,
+        float tolerance
+    ) const {
         int bestWinSerial = -1;
-        
-        int checkedCount = 0;
-        int matchedFilter = 0;
-        int matchedPosition = 0;
-        
-        for (size_t i = 0; i < attempts.size(); ++i) {
-            const auto& a = attempts[i];
-            ++checkedCount;
-            
-            if (!a.completed || a.p1.empty()) continue;
-            if (!matchesPracticeFilter_(a, wantPractice)) continue;
-            ++matchedFilter;
-            
-            float attemptStartX = a.p1.front().x;
-            if (std::fabs(attemptStartX - startPosX) > tolerance) continue;
-            ++matchedPosition;
-            
-            float x = lastXOf_(a.p1);
-            if (x > bestWinX || (x == bestWinX && a.serial > bestWinSerial)) {
-                bestWinX = x;
-                bestWinSerial = a.serial;
-                bestWin = i;
+        float bestWinX = -1.f;
+
+        int bestAnySerial = -1;
+        float bestAnyX = -1.f;
+
+        const float tolSq = tolerance * tolerance;
+        std::unordered_set<int> seenLoaded;
+        seenLoaded.reserve(attempts.size());
+
+        auto matchesStart = [&](float attemptStartX, float attemptStartY) -> bool {
+            const float dx = attemptStartX - startPosX;
+            const float dy = attemptStartY - startPosY;
+            return (dx * dx + dy * dy) <= tolSq;
+        };
+
+        auto consider = [&](int serial,
+                            bool completed,
+                            bool practiceAttempt,
+                            float attemptStartX,
+                            float attemptStartY,
+                            float endX,
+                            bool hasP1Data) {
+            if (!hasP1Data) return;
+            if (!matchesPracticeValue_(practiceAttempt, wantPractice)) return;
+            if (!matchesStart(attemptStartX, attemptStartY)) return;
+
+            if (completed) {
+                if (endX > bestWinX || (endX == bestWinX && serial > bestWinSerial)) {
+                    bestWinX = endX;
+                    bestWinSerial = serial;
+                }
             }
-        }
-        
-        //log::info("[Bot] pickWinning completed pass: checked={}, matchedFilter={}, matchedPosition={}, bestWin={}", 
-        //    checkedCount, matchedFilter, matchedPosition, bestWin == SIZE_MAX ? "none" : std::to_string(bestWin));
-        
-        if (bestWin != SIZE_MAX) {
-        //    log::info("[Bot] pickWinning: found completed attempt idx={}, serial={}, endX={:.2f}", 
-        //        bestWin, bestWinSerial, bestWinX);
-            return bestWin;
+
+            if (endX > bestAnyX || (endX == bestAnyX && serial > bestAnySerial)) {
+                bestAnyX = endX;
+                bestAnySerial = serial;
+            }
+        };
+
+        for (const auto& a : attempts) {
+            seenLoaded.insert(a.serial);
+
+            if (a.p1.empty()) continue;
+            consider(
+                a.serial,
+                a.completed,
+                a.practiceAttempt,
+                static_cast<float>(a.p1.front().x),
+                a.startY,
+                static_cast<float>(a.p1.back().x),
+                true
+            );
         }
 
-        size_t bestAny = SIZE_MAX;
-        float bestAnyX = -1.f;
-        int bestAnySerial = -1;
-        
-        int fallbackMatchedFilter = 0;
-        int fallbackMatchedPosition = 0;
-        
-        for (size_t i = 0; i < attempts.size(); ++i) {
-            const auto& a = attempts[i];
-            if (a.p1.empty()) continue;
-            if (!matchesPracticeFilter_(a, wantPractice)) continue;
-            ++fallbackMatchedFilter;
-            
-            float attemptStartX = a.p1.front().x;
-            if (std::fabs(attemptStartX - startPosX) > tolerance) continue;
-            ++fallbackMatchedPosition;
-            
-            float x = lastXOf_(a.p1);
-            if (x > bestAnyX || (x == bestAnyX && a.serial > bestAnySerial)) {
-                bestAnyX = x;
-                bestAnySerial = a.serial;
-                bestAny = i;
-            }
+        for (const auto& entry : m_attemptCatalog) {
+            if (seenLoaded.count(entry.serial) != 0) continue;
+
+            consider(
+                entry.serial,
+                entry.completed,
+                entry.practiceAttempt,
+                entry.startX,
+                entry.startY,
+                entry.endX,
+                entry.p1Count > 0
+            );
         }
-        
-        //log::info("[Bot] pickWinning fallback pass: matchedFilter={}, matchedPosition={}, bestAny={}", 
-        //    fallbackMatchedFilter, fallbackMatchedPosition, bestAny == SIZE_MAX ? "none" : std::to_string(bestAny));
-        
-        //if (bestAny != SIZE_MAX) {
-        //    log::info("[Bot] pickWinning: found ANY attempt idx={}, serial={}, endX={:.2f}", 
-        //        bestAny, bestAnySerial, bestAnyX);
-        //}
-        
-        return bestAny;
+
+        if (bestWinSerial > 0) return bestWinSerial;
+        return bestAnySerial;
     }
 
     size_t pickWinningOrBestIndex_(std::optional<bool> wantPractice) const {
@@ -4857,21 +5023,20 @@ private:
 
     const Attempt* getReplayOwner_(double sessionTime) {
         if (m_replayKind == ReplayKind::BestSingle) {
-            if (m_replayAttempt) return m_replayAttempt;
-            if (m_compOwnerIdx < attempts.size()) {
-                m_replayAttempt = &attempts[m_compOwnerIdx];
-                return m_replayAttempt;
+            if (m_replayOwnerSerial > 0) {
+                return ensureAttemptLoadedBySerial_(m_replayOwnerSerial, false);
             }
+
+            if (m_compOwnerIdx < attempts.size()) {
+                m_replayOwnerSerial = attempts[m_compOwnerIdx].serial;
+                return &attempts[m_compOwnerIdx];
+            }
+
             return nullptr;
         }
 
-        //log::info("[getReplayOwner_] findOwnerSerialForTime");
-        
-        // Use time-based lookup for practice composite
         int serial = m_checkpointMgr.findOwnerSerialForTime(sessionTime);
 
-        //log::info("[getReplayOwner_] serial: {}", serial);
-        
         if (serial != m_replayOwnerSerial && serial > 0) {
             m_replayOwnerSerial = serial;
             m_replayIdx1 = 0;
@@ -4879,10 +5044,9 @@ private:
             m_lastEmitIdx1 = 0;
             m_lastEmitIdx2 = 0;
         }
-        
-        
+
         if (serial <= 0) return nullptr;
-        return findAttemptBySerial_(serial);
+        return ensureAttemptLoadedBySerial_(serial, false);
     }
 
     void updateGhostForAttempt_(Attempt& a, float px, float px2, size_t ai,
@@ -5645,7 +5809,9 @@ private:
             
             while ((int64_t)attempts.size() > maxGhosts) {
                 invalidateAttemptPointerCaches_();
+                m_loadedSerials.erase(attempts.front().serial);
                 attempts.erase(attempts.begin());
+                m_serialCacheDirty = true;
             }
             
             invalidateAttemptCounts();
@@ -5710,11 +5876,17 @@ private:
         if (sp.lastX > sp.firstX) m_grid.insert(idx, (float)sp.firstX, (float)sp.lastX);
 
         while ((int64_t)attempts.size() > maxGhosts) {
+            invalidateAttemptPointerCaches_();
+
             auto& oldest = attempts.front();
             if (oldest.g1) oldest.g1->removeFromParentAndCleanup(true);
             if (oldest.g2) oldest.g2->removeFromParentAndCleanup(true);
+
+            m_loadedSerials.erase(oldest.serial);
+
             attempts.erase(attempts.begin());
             m_spans.erase(m_spans.begin());
+            m_serialCacheDirty = true;
             rebuildGrid_();
         }
         
