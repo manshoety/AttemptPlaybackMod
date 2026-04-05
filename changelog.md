@@ -1,3 +1,5 @@
+# 1.4.31
+- Less recording delay for players who want minimal input delay
 # 1.4.30
 - Fixed visual bugs for wave trails for ghosts and the player
 # 1.4.29

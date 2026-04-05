@@ -69,8 +69,7 @@
 // Once dead, allow new allocation to remove the ghost early
 // Make glow work on ghosts
 // Massively optimize Attempts class to be way smaller (lot of uneeded bools from the early versions of this mod)
-// Check for big y position change for the wave trail so know when we teleport to cut the trail off and start again
-// Dual real player 2nd player wave trail weirdness (maybe reset the 2nd player wave trail when starting dual)
+// Camera pans when teleporting large y
 
 using namespace geode::prelude;
 
@@ -3023,9 +3022,9 @@ public:
     }
 
     void updateClickState(bool isPlayer1) {
-        //log::info("[PLAYER updateClickState] holding: {}", p1Hold);
+        if (!botActive) return;
         if (!m_allowSetPlayerClickState) return;
-        if (!m_pl || !botActive || m_is_quitting) return;
+        if (!m_pl || m_is_quitting) return;
         if (!m_currentOwner || m_currentOwner->p1.empty()) return;
 
         if (m_justStartedBot) {
@@ -3040,34 +3039,24 @@ public:
     }
 
     void preUpdateP2() {
-        if (!m_allowWorkThisTick || m_is_quitting || !m_pl) return;
+        // if (!m_allowWorkThisTick || m_is_quitting || !m_pl) return;
+        if (m_is_quitting || !m_pl || !m_pl->m_player2) return;
         m_prevpx2 = m_px2;
-        bool hasP2Now = (m_pl->m_player2 && m_pl->m_player2->getPositionX() != 0.f);
-        m_px2 = hasP2Now ? m_pl->m_player2->getPositionX() : m_px;
+        const float p2pos = m_pl->m_player2->getPositionX();
+        const bool hasP2Now = (p2pos != 0.f);
+        m_px2 = hasP2Now ? p2pos : m_px;
         m_p2JustSpawned = (hasP2Now && !m_prevHadP2);
         m_prevHadP2 = hasP2Now;
     }
 
     void preUpdate() {
-        if (!m_allowWorkThisTick || m_is_quitting || !m_pl) return;
-        //double tStart = getTimeMs();
+        // if (!m_allowWorkThisTick || m_is_quitting || !m_pl) return;
+        if (m_is_quitting || !m_pl || !m_pl->m_player1) return;
 
-        //log::info("[preUpdate] playerx: {}", m_pl->m_player1->m_positionX);
+        m_px = m_pl->m_player1->getPositionX();
+        m_lastAttemptTime = m_pl->m_attemptTime;
 
-        //log::info("playertime: {}", m_pl->m_attemptTime);
-
-        // log::info("player z: {}, trail z: {}", m_pl->m_player2->getZOrder(), m_pl->m_player2->m_waveTrail->getZOrder());
-
-        m_px = m_pl->m_player1 ? m_pl->m_player1->getPositionX() : 0.f;
-        
-        if (m_pl) m_lastAttemptTime = m_pl->m_attemptTime;
-
-        // log::info("Player z order: {}", m_pl->m_player1->getZOrder()); 59
-
-        if (!modEnabled || !botActive || !m_pl || !m_pl->m_player1) return;
-
-        //const float px = playerX_();
-        //const float px2 = playerX2_();
+        if (!botActive) return;
         
         bool timeWentBack = (m_lastAttemptTime < m_prevSessionTime - 0.05);
         m_IHateMirrorPortalsSoRewind = timeWentBack;
@@ -3177,9 +3166,9 @@ public:
     }
 
     void applySegmentBasedReplay_(bool isPlayer1) {
-        // geode::log::warn("[applySegmentBasedReplay_] m_allowSetPlayerPos: {}", m_allowSetPlayerPos);
+        if (!botActive) return;
         if (!m_allowSetPlayerPos) return;
-        if (!m_pl || !botActive || m_is_quitting) return;
+        if (!m_pl || m_is_quitting) return;
 
         const float px = playerX_();
         const float px2 = playerX2_();
@@ -3245,27 +3234,15 @@ public:
     }
 
     void recordUpdate(bool isPlayer1) {
-        if (!shouldRunWorkThisTick_()) return;
-        if (!modEnabled || !m_pl || m_is_quitting) return;
-
-        if (isPureRecordingMode_()) {
-            //log::info("[PLAYER] holding {}", p1Hold);
-            const bool isPractice = m_pl->m_isPracticeMode;
-            if (!isPractice || recordInPractice) {
-                recordCurrentFrame_(isPlayer1);
-            }
-            return;
-        }
-
+        // if (!shouldRunWorkThisTick_()) return;
+        if (!m_pl || m_is_quitting) return;
         const bool isPractice = m_pl->m_isPracticeMode;
-        const bool shouldRecord = recording && !recordingBlocked && (!isPractice || recordInPractice);
+        if (isPractice && !recordInPractice) return;
+        if (!recording || recordingBlocked) return;
 
-        if (shouldRecord) {
-            recordCurrentFrame_(isPlayer1);
-        }
+        recordCurrentFrame_(isPlayer1);
     }
 
-    // How did I forget the silly &
     bool removeReverseOrDuplicateFrames(std::vector<Frame>& frames, double t) {
         // Reverse frames
         while (!frames.empty() && t < frames.back().t) {
@@ -3279,12 +3256,9 @@ public:
     }
 
     void recordCurrentFrame_(bool isPlayer1) {
-        if (!m_pl) return;
         if (m_justDied) return;
         
-        constexpr float kYEqualEps = 0.1f;
-        
-        double absoluteTime = m_pl->m_attemptTime + m_current.baseTimeOffset;
+        const double absoluteTime = m_pl->m_attemptTime + m_current.baseTimeOffset;
         
         if (m_pl->m_player1 && isPlayer1) {
             if (!removeReverseOrDuplicateFrames(m_current.p1, absoluteTime)) return;
@@ -3292,8 +3266,9 @@ public:
             auto* p1 = m_pl->m_player1;
             Frame f;
             f.t = absoluteTime;
-            f.x = p1->getPositionX();
-            f.y = p1->getPositionY();
+            cocos2d::CCPoint pos = p1->getPosition();
+            f.x = pos.x;
+            f.y = pos.y;
             f.rot = p1->getRotation();
             f.vehicleSize = p1->m_vehicleSize;
             f.waveSize = p1->m_waveTrail ? p1->m_waveTrail->m_waveSize : 1.0f;
@@ -3301,12 +3276,13 @@ public:
             f.isDashing = p1->m_isDashing;
             f.isVisible = p1->isVisible();
 
-            if (!m_current.p1.empty()) {
-                const float prevY = static_cast<float>(m_current.p1.back().y);
-                f.stateDartSlide = std::fabs(static_cast<float>(f.y) - prevY) <= kYEqualEps;
-            } else {
-                f.stateDartSlide = false;
-            }
+            // Moved to runtime to reduce recording delay
+            //if (!m_current.p1.empty()) {
+            //    const float prevY = static_cast<float>(m_current.p1.back().y);
+            //    f.stateDartSlide = std::fabs(static_cast<float>(f.y) - prevY) <= kYEqualEps;
+            //} else {
+            //    f.stateDartSlide = false;
+            //}
 
             f.mode = currentMode(p1, m_pl->m_isPlatformer);
             f.hold = p1Hold;
@@ -3315,18 +3291,19 @@ public:
 
             m_current.p1.push_back(f);
             m_lastRecordedX = static_cast<float>(f.x);
-            float currentPercent = m_pl->getCurrentPercent();
+            const float currentPercent = m_pl->getCurrentPercent();
             if (currentPercent > m_current.endPercent) m_current.endPercent = currentPercent;
         }
         
-        if (m_pl->m_player2 && m_pl->m_player2->getPositionX() != 0.f && !isPlayer1) {
+        if (m_pl->m_player2 && m_prevHadP2 && !isPlayer1) {
             if (!removeReverseOrDuplicateFrames(m_current.p2, absoluteTime)) return;
             m_current.hadDual = true;
             auto* p2 = m_pl->m_player2;
             Frame f;
             f.t = absoluteTime;
-            f.x = p2->getPositionX();
-            f.y = p2->getPositionY();
+            cocos2d::CCPoint pos = p2->getPosition();
+            f.x = pos.x;
+            f.y = pos.y;
             f.rot = p2->getRotation();
             f.vehicleSize = p2->m_vehicleSize;
             f.waveSize = p2->m_waveTrail ? p2->m_waveTrail->m_waveSize : 1.0f;
@@ -3334,12 +3311,13 @@ public:
             f.isDashing = p2->m_isDashing;
             f.isVisible = p2->isVisible();
 
-            if (!m_current.p2.empty()) {
-                const float prevY = static_cast<float>(m_current.p2.back().y);
-                f.stateDartSlide = std::fabs(static_cast<float>(f.y) - prevY) <= kYEqualEps;
-            } else {
-                f.stateDartSlide = false;
-            }
+            // Moved to runtime to reduce recording delay
+            //if (!m_current.p2.empty()) {
+            //    const float prevY = static_cast<float>(m_current.p2.back().y);
+            //    f.stateDartSlide = std::fabs(static_cast<float>(f.y) - prevY) <= kYEqualEps;
+            //} else {
+            //    f.stateDartSlide = false;
+            //}
 
             f.mode = currentMode(p2, m_pl->m_isPlatformer);
             f.hold = p2Hold;
@@ -3912,6 +3890,7 @@ private:
     static constexpr float kReplayStartTolerance = 30.0f;
     static constexpr float kTolSq = kReplayStartTolerance * kReplayStartTolerance;
     static constexpr float kWaveTeleportedTolerance = 30.0f;
+    static constexpr float kYEqualEps = 0.1f;
     bool m_playerPrevTeleported = false;
     bool m_filterByStartPosition = false;
 
@@ -5412,21 +5391,24 @@ private:
                             prevHolding = fNext.hold;
                             trail->addPoint({ix, iy});
                         }
-                        else if (fNext.stateDartSlide != prevDartSlide) {
-                            prevDartSlide = fNext.stateDartSlide;
-                            trail->addPoint({ix, iy});
-                        }
                         else if (fNext.vehicleSize != f.vehicleSize) {
                             trail->addPoint({ix, iy});
                         }
-
+                        else {
+                            const bool stateDartSlide = (std::fabs(fNext.y - f.y) <= kYEqualEps);
+                            if (stateDartSlide != prevDartSlide) {
+                                prevDartSlide = stateDartSlide;
+                                trail->addPoint({ix, iy});
+                            }
+                        }
+                        
                         // Teleport visual wacky stuff
                         if (prevTeleported) {
                             trail->resumeStroke();
                             trail->addPoint({ix, iy});
                             prevTeleported = false;
                         }
-                        if (std::abs(fNext.y - f.y) > kWaveTeleportedTolerance) {
+                        if (std::fabs(fNext.y - f.y) > kWaveTeleportedTolerance) {
                             trail->stopStroke();
                             prevTeleported = true;
                         }
@@ -6049,7 +6031,7 @@ private:
             }
             m_playerPrevTeleported = false;
         }
-        if (b && std::abs(static_cast<float>(b->y) - iy) > kWaveTeleportedTolerance) {
+        if (b && std::fabs(static_cast<float>(b->y) - iy) > kWaveTeleportedTolerance) {
             if (isWave && p->m_waveTrail) p->m_waveTrail->stopStroke();
             p->playerTeleported();
             m_playerPrevTeleported = true;
