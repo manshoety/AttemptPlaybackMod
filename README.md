@@ -14,11 +14,9 @@ Warning: Expect the gaeme to lag when you have a ton of ghosts on screen at one 
 
 Completing a level with the playback bot prevents completion, but can still count as a full run to some mods like Death Tracker
 
-Turn off Click Between Frames (during playback) to fix click state issues (needed to make click toggles work)
-
 Please do not switch start position while recording in practice mode as that will break the recording
 
-Frame Stepper currently breaks recordings
+Frame Stepper currently (might) break recordings (I haven't tested the new update)
 
 # Limitations
 

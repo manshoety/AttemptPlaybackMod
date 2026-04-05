@@ -69,6 +69,8 @@
 // Once dead, allow new allocation to remove the ghost early
 // Make glow work on ghosts
 // Massively optimize Attempts class to be way smaller (lot of uneeded bools from the early versions of this mod)
+// Check for big y position change for the wave trail so know when we teleport to cut the trail off and start again
+// Dual real player 2nd player wave trail weirdness (maybe reset the 2nd player wave trail when starting dual)
 
 using namespace geode::prelude;
 
@@ -831,7 +833,7 @@ public:
 
     void InitialGamemodeSetProcessAttemptIdx(size_t attemptIdx) {
         if (attemptIdx >= attempts.size()) return;
-        if (m_playerObjectPool.inUseCount() >= m_playerObjectPool.capacity() - 1) return;
+        if (m_playerObjectPool.inUseCount() >= m_playerObjectPool.capacity() - 2) return;
 
         Attempt& a = attempts[attemptIdx];
 
@@ -874,7 +876,7 @@ public:
 
             Attempt& a = attempts[attemptIdx];
 
-            if (m_playerObjectPool.inUseCount() >= m_playerObjectPool.capacity() - 1) {
+            if (m_playerObjectPool.inUseCount() >= m_playerObjectPool.capacity() - 2) {
                 return;
             }
 
@@ -2175,6 +2177,9 @@ public:
         }
 
         if (botActive) {
+            m_playerPrevTeleported = false;
+            m_p2JustSpawned = false;
+            m_prevHadP2 = false;
             // Check for start position switch
             if (ccpDistance(m_currentReplayStartPos, {(float)m_pl->m_player1->m_positionX, (float)m_pl->m_player1->m_positionY}) > kReplayStartTolerance) {
                 if (!isRecording()) toggleRecording();
@@ -2263,6 +2268,7 @@ public:
         m_filterByStartPosition = false;
         applyBotSafety_(false);
 
+        m_playerPrevTeleported = false;
         m_preloadedIndices.clear();
         m_preloadedSet.clear();
         m_primedIndices.clear();
@@ -2909,6 +2915,7 @@ public:
         m_freezePlayerXAtEnd = false;
         m_freezePlayerX = 0.f;
         m_freezePlayerY = 0.f;
+        m_playerPrevTeleported = false;
     }
 
     void restartLevel() { 
@@ -3230,7 +3237,7 @@ public:
             if (m_currentOwner->hadDual && m_pl->m_player2 && !m_currentOwner->p2.empty()) {
                 size_t idx2 = m_replayIdx2;
                 if (idx2 >= m_currentOwner->p2.size()) idx2 = m_currentOwner->p2.size() - 1;
-                applyFrameToPlayer_Only_(m_pl->m_player2, m_currentOwner->p2, idx2, px2, false, false);
+                applyFrameToPlayer_Only_(m_pl->m_player2, m_currentOwner->p2, idx2, px2, m_p2JustSpawned, false);
             }
         }
 
@@ -3515,7 +3522,7 @@ public:
                 for (auto it = m_wantToPrimeIndices.begin(); 
                     it != m_wantToPrimeIndices.end(); ) {
                     if (currentPreloaded >= maxPreloadPerFrame) break;
-                    if (m_playerObjectPool.inUseCount() >= m_playerObjectPool.capacity() - 1) {
+                    if (m_playerObjectPool.inUseCount() >= m_playerObjectPool.capacity() - 2) {
                         break;
                     }
 
@@ -3622,7 +3629,7 @@ public:
                         (ghostTime >= a.p2.front().t - 0.0001);
 
                     if (!a.primedP1 || (showP2 && !a.primedP2)) {
-                        if ((m_playerObjectPool.inUseCount() < m_playerObjectPool.capacity() - 1)
+                        if ((m_playerObjectPool.inUseCount() < m_playerObjectPool.capacity() - 2)
                     || a.g1 || a.g2) {
                             // false when the ghost would start already dead
                             if (primeGhostToPX_(a, ai, px, px2)) {
@@ -3904,6 +3911,8 @@ private:
 
     static constexpr float kReplayStartTolerance = 30.0f;
     static constexpr float kTolSq = kReplayStartTolerance * kReplayStartTolerance;
+    static constexpr float kWaveTeleportedTolerance = 30.0f;
+    bool m_playerPrevTeleported = false;
     bool m_filterByStartPosition = false;
 
     std::vector<uint32_t> m_preloadedIndices;
@@ -5071,6 +5080,7 @@ private:
             bool& trailActive,
             bool& prevHolding,
             bool& prevDartSlide,
+            bool& prevTeleported,
             bool isP2,
             float playerX
         ) {
@@ -5409,6 +5419,17 @@ private:
                         else if (fNext.vehicleSize != f.vehicleSize) {
                             trail->addPoint({ix, iy});
                         }
+
+                        // Teleport visual wacky stuff
+                        if (prevTeleported) {
+                            trail->resumeStroke();
+                            trail->addPoint({ix, iy});
+                            prevTeleported = false;
+                        }
+                        if (std::abs(fNext.y - f.y) > kWaveTeleportedTolerance) {
+                            trail->stopStroke();
+                            prevTeleported = true;
+                        }
                         
                         // Wave size update
                         const float targetSize = overrideWaveSize ? fNext.vehicleSize : fNext.waveSize;
@@ -5442,7 +5463,7 @@ private:
             processPlayer(
                 a.p1, a.acc1Time, a.g1, a.last1, a.g1CurMode,
                 a.i1, a.d1, a.primedP1, a.eolFrozenP1,
-                a.trailactive1, a.previouslyHolding1, a.prevStateDartSlide1,
+                a.trailactive1, a.previouslyHolding1, a.prevStateDartSlide1, a.prevTeleported1,
                 false, px
             );
         }
@@ -5454,7 +5475,7 @@ private:
             processPlayer(
                 a.p2, a.acc2Time, a.g2, a.last2, a.g2CurMode,
                 a.i2, a.d2, a.primedP2, a.eolFrozenP2,
-                a.trailactive2, a.previouslyHolding2, a.prevStateDartSlide2,
+                a.trailactive2, a.previouslyHolding2, a.prevStateDartSlide2, a.prevTeleported2,
                 true, px2 + a.ghostOffsetPx
             );
         }
@@ -6002,7 +6023,6 @@ private:
         p->setVisible(true);
         p->setOpacity(255);
 
-
         if (p->m_isDashing != finterp.isDashing) {
             if (finterp.isDashing) p->startDashing(attemptplayback::p0d());
             else p->stopDashing();
@@ -6015,14 +6035,45 @@ private:
             forceMode(p, finterp.mode, /*isRealPlayer*/ true);
         }
 
-        if (p2JustSpawned && p->m_waveTrail)
-            p->m_waveTrail->reset();
+        const bool isWave = (currentMode(p, m_pl->m_isPlatformer) == IconType::Wave);
+        const float ix = a.x;
+        const float iy = a.y;
 
-        if (currentMode(p, m_pl->m_isPlatformer) == IconType::Wave)
-            p->setRotation(a.rot);
-        else
-            p->setRotation(finterp.rot);
+        // Wave teleport goop
+        if (m_playerPrevTeleported) {
+            p->playerTeleported();
+            if (isWave && p->m_waveTrail) {
+                p->m_waveTrail->reset();
+                p->m_waveTrail->resumeStroke();
+                p->m_waveTrail->addPoint({ix, iy});
+            }
+            m_playerPrevTeleported = false;
+        }
+        if (b && std::abs(static_cast<float>(b->y) - iy) > kWaveTeleportedTolerance) {
+            if (isWave && p->m_waveTrail) p->m_waveTrail->stopStroke();
+            p->playerTeleported();
+            m_playerPrevTeleported = true;
+        }
+
+        // if (!isP1) log::info("P2 spawned: {}, p2x: {}", m_p2JustSpawned, p->getPositionX());
+
+        const bool P2HasSpawnedNoWay = (p2JustSpawned || p->getPositionX() == 0.f);
+        
         p->setPosition({ finterp.x, finterp.y });
+
+        if (isWave) {
+            p->setRotation(a.rot);
+            
+            // Fix player 2 wave trail visual bug when spawning in
+            if (P2HasSpawnedNoWay && !isP1 && p->m_waveTrail) {
+                p->m_waveTrail->stopStroke();
+                p->m_waveTrail->reset();
+                p->m_waveTrail->resumeStroke();
+                p->m_waveTrail->addPoint({ix, iy});
+            }
+            
+        }
+        else p->setRotation(finterp.rot);
     }
 
     static void emitTransitionsOverRange_(const std::vector<Frame>& v,

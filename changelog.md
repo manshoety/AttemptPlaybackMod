@@ -1,3 +1,5 @@
+# 1.4.30
+- Fixed visual bugs for wave trails for ghosts and the player
 # 1.4.29
 - Only load Attempts into memory when needed
 - Way more accurate RAM estimate (includes attempt data + player object size)

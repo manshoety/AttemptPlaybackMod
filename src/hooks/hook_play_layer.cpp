@@ -58,6 +58,11 @@ class $modify(PLHook, PlayLayer) {
         }
         PlayLayer::onQuit();
     }
+    static void onModify(auto& self) {
+        if (auto res = self.setHookPriorityPost("PlayLayer::levelComplete", Priority::First); !res) {
+            geode::log::warn("Failed to set hook priority: {}", res.unwrapErr());
+        }
+    }
     $override void levelComplete() {
         //log::info("[PlayLayer] levelComplete");
         if (Ghosts::I().isModEnabled()) {

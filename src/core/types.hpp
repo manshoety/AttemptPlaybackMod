@@ -790,6 +790,8 @@ struct Attempt {
     bool previouslyHoldingR2 = false;
     bool prevStateDartSlide1 = false;
     bool prevStateDartSlide2 = false;
+    bool prevTeleported1 = false;
+    bool prevTeleported2 = false;
     IconType g1CurMode = IconType::Cube;
     IconType g2CurMode = IconType::Cube;
     cocos2d::ccColor3B c1{255,255,255};
