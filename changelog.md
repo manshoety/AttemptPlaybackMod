@@ -1,6 +1,7 @@
-# 1.4.32
+# 1.4.33
 - Using playback on a level and completing it no longer counts for Death Tracker
 - Time warp on death for replays
+- Dual Ghost visibility fix
 # 1.4.31
 - Less recording delay for players who want minimal input delay
 # 1.4.30

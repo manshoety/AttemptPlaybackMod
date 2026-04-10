@@ -3952,6 +3952,7 @@ private:
     static constexpr float kReplayStartTolerance = 30.0f;
     static constexpr float kTolSq = kReplayStartTolerance * kReplayStartTolerance;
     static constexpr float kWaveTeleportedTolerance = 30.0f;
+    static constexpr float kNoDualTimeGap = 0.1f;
     static constexpr float kYEqualEps = 0.1f;
     bool m_playerPrevTeleported = false;
     bool m_filterByStartPosition = false;
@@ -5189,6 +5190,24 @@ private:
                     //ghost->m_robotSprite->stopAnimations();
                     // Need another name for these?
                     eolFrozen = true;
+                }
+
+                // Make P2 invisible when there's a P2 data gap (not in dual mode)
+                if (isP2 && ghost) {
+                    bool hideForGap = false;
+                    if (drawIdx < lastIdx) {
+                        const double t0 = frames[drawIdx].t;
+                        const double t1 = frames[drawIdx+1].t;
+                        const double gap = t1 - t0;
+
+                        if (gap > kNoDualTimeGap && ghostTime > t0 && ghostTime < t1) {
+                            hideForGap = true;
+                        }
+                    }
+                    if (hideForGap) {
+                        a.setP2Visible(false, true);
+                        return;
+                    }
                 }
 
                 if (frameIdx == previousIDX) return;
