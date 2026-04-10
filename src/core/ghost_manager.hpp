@@ -2763,9 +2763,11 @@ public:
                     if (endIdx < tailOwner->p1.size()) {
                         m_freezePlayerX = tailOwner->p1[endIdx].x;
                         m_freezePlayerY = tailOwner->p1[endIdx].y;
+                        m_freezePlayerRotation = tailOwner->p1[endIdx].rot;
                     } else {
                         m_freezePlayerX = tailOwner->p1.back().x;
                         m_freezePlayerY = tailOwner->p1.back().y;
+                        m_freezePlayerRotation = tailOwner->p1.back().rot;
                     }
                     
                     if (!tailOwner->p2.empty()) {
@@ -2773,13 +2775,16 @@ public:
                         if (endIdx2 < tailOwner->p2.size()) {
                             m_freezePlayerXP2 = tailOwner->p2[endIdx2].x;
                             m_freezePlayerYP2 = tailOwner->p2[endIdx2].y;
+                            m_freezePlayerRotationP2 = tailOwner->p2[endIdx2].rot;
                         } else {
                             m_freezePlayerXP2 = tailOwner->p2.back().x;
                             m_freezePlayerYP2 = tailOwner->p2.back().y;
+                            m_freezePlayerRotationP2 = tailOwner->p2.back().rot;
                         }
                     } else {
                         m_freezePlayerXP2 = 0.f;
                         m_freezePlayerYP2 = 0.f;
+                        m_freezePlayerRotationP2 = 0.f;
                     }
                     
                     // log::info("[Bot] Set freeze position for endTime={:.3f}: ({:.1f}, {:.1f})", 
@@ -2792,6 +2797,7 @@ public:
             m_freezePlayerY = 0.f;
             m_freezePlayerXP2 = 0.f;
             m_freezePlayerYP2 = 0.f;
+            m_freezePlayerRotationP2 = 0.f;
         }
         
         restartLevel();
@@ -3057,6 +3063,15 @@ public:
         m_lastAttemptTime = m_pl->m_attemptTime;
 
         if (!botActive) return;
+
+        // Check when not dual
+        if (m_prevHadP2) {
+            float p2pos = 0.f;
+            if (m_pl->m_player2) p2pos = m_pl->m_player2->getPositionX();
+            if (p2pos == 0.f) m_prevHadP2 = false;
+            // log::info("p2 pos: {}", p2pos);
+        }
+        else m_px2 = m_px;
         
         bool timeWentBack = (m_lastAttemptTime < m_prevSessionTime - 0.05);
         m_IHateMirrorPortalsSoRewind = timeWentBack;
@@ -3101,6 +3116,46 @@ public:
         m_activeOwnerSerial = newOwnerSerial;
         
         //log::info("[TIME TAKEN] preupdate {:.8f}", getTimeMs() - tStart);
+    }
+
+    void checkIfPlayerIsDonePlaybackThingMaybePerhapsYeah() {
+        if (m_replayKind == ReplayKind::PracticeComposite) finalTime = m_replayEndTime;
+        else finalTime = m_currentOwner->p1.back().t;
+
+        if (finalTime <= 0.1) {
+            return;
+        }
+
+        if (!m_freezePlayerXAtEnd && m_lastAttemptTime >= finalTime) {
+            m_freezePlayerXAtEnd = true;
+            if (m_currentOwner->completed) return;
+            m_pl->applyTimeWarp(0.000001f);
+            m_pl->updateTimeWarp(0.000001f);
+            m_pl->pauseAudio();
+            
+            if (m_replayKind == ReplayKind::BestSingle) {
+                if (m_currentOwner && !m_currentOwner->p1.empty()) {
+                    m_freezePlayerX = m_currentOwner->p1.back().x;
+                    m_freezePlayerY = m_currentOwner->p1.back().y;
+                    m_freezePlayerRotation = m_currentOwner->p1.back().rot;
+                    if (!m_currentOwner->p2.empty()) {
+                        m_freezePlayerXP2 = m_currentOwner->p2.back().x;
+                        m_freezePlayerYP2 = m_currentOwner->p2.back().y;
+                        m_freezePlayerRotationP2 = m_currentOwner->p2.back().rot;
+                    }
+                }
+            }
+        }
+
+        if (m_freezePlayerXAtEnd && !m_currentOwner->completed) {
+            m_pl->m_player1->setPosition({m_freezePlayerX, m_freezePlayerY});
+            m_pl->m_player1->setRotation(m_freezePlayerRotation);
+            if (m_pl->m_player2 && m_pl->m_player2->isVisible()) {
+                m_pl->m_player2->setPosition({m_freezePlayerXP2, m_freezePlayerYP2});
+                m_pl->m_player2->setRotation(m_freezePlayerRotationP2);
+            }
+                
+        }
     }
 
     void updateFreezePlayerX_() {
@@ -3197,6 +3252,7 @@ public:
                     applyFrameToPlayer_Only_(m_pl->m_player2, m_currentOwner->p2, idx2, m_lastAttemptTime, m_p2JustSpawned, false);
                 }
             }
+            checkIfPlayerIsDonePlaybackThingMaybePerhapsYeah();
             return;
         }
 
@@ -3206,11 +3262,13 @@ public:
             geode::log::warn("NO CURRENT OWNER");
             return;
         }
+
         // geode::log::warn("[applySegmentBasedReplay_] (m_currentOwner->serial <= 0) {}", (m_currentOwner->serial <= 0));
         if (m_currentOwner->serial <= 0) {
             geode::log::warn("NEGATIVE OWNER SERIAL");
             return;
         }
+
         // geode::log::warn("[applySegmentBasedReplay_] (m_currentOwner->p1.empty()) {}", (m_currentOwner->p1.empty()));
         if (m_currentOwner->p1.empty()) {
             geode::log::warn("EMPTY OWNER DATA");
@@ -3230,7 +3288,7 @@ public:
             }
         }
 
-        updateFreezePlayerX_();
+        checkIfPlayerIsDonePlaybackThingMaybePerhapsYeah();
     }
 
     void recordUpdate(bool isPlayer1) {
@@ -3701,6 +3759,8 @@ private:
     double m_prevSessionTime = 0.0;
     double m_offsetUnitsPerSecond = 311.f;
 
+    double finalTime = 0.f;
+
     bool overrideWaveSize = true;
 
     inline static SfxLimiter g_explodeLimiter{20};
@@ -3863,6 +3923,8 @@ private:
     float m_freezePlayerXP2 = 0.f;
     float m_freezePlayerYP2 = 0.f;
     double m_replayEndTime = 0.f;
+    float m_freezePlayerRotation = 0.f;
+    float m_freezePlayerRotationP2 = 0.f;
 
     int m_practiceCompositeOwnerSerial = -1;
     std::string m_customSaveId;
@@ -5963,6 +6025,7 @@ private:
         bool isP1 = true
     ) {
         if (!p || v.empty()) return;
+        if (m_freezePlayerXAtEnd) return;
 
         const double firstT = v.front().t;
         const double lastT  = v.back().t;
