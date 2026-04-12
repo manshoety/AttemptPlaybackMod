@@ -316,7 +316,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.33", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.34", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),

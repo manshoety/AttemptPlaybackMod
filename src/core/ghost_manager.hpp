@@ -2921,6 +2921,7 @@ public:
         m_freezePlayerX = 0.f;
         m_freezePlayerY = 0.f;
         m_playerPrevTeleported = false;
+        invalidatePrimedPlayerObjectRefs();
     }
 
     void restartLevel() { 
