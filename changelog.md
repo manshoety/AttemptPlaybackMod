@@ -1,3 +1,8 @@
+# 1.4.41
+- Fix: double clicking issue when not in two player mode in dual
+- Fix: ghost wave trail staying visible after ending playback
+- Fix: preload issue where it would sometimes not detect some attempts
+- Fix: dual ghost death visibility issue
 # 1.4.36
 - New Toggle: Don't record Noclip Attempts (only works for normal attempts, not practice mode)
 # 1.4.33

@@ -557,15 +557,23 @@ public:
     ) {
         std::vector<uint32_t> sorted = preloadOrder;
 
-        // Practice mode needs to preload from the start
         if (m_replayKind == ReplayKind::PracticeComposite) {
-            auto getEndT = [&](int attemptIndex) -> double {
-                const Attempt& a = attempts[attemptIndex];
-                return (!a.p1.empty()) ? static_cast<double>(a.p1.back().t) : 0.0;
+            auto getEndT = [&](uint32_t serial) -> double {
+                const Attempt* a = findLoadedAttemptBySerialOnly_(static_cast<int>(serial));
+                if (a && !a->p1.empty()) {
+                    return static_cast<double>(a->p1.back().t);
+                }
+
+                const APXAttemptDiskInfo* entry = findCatalogEntryBySerial_(static_cast<int>(serial));
+                if (entry) {
+                    return 0.0;
+                }
+
+                return 0.0;
             };
 
             std::sort(sorted.begin(), sorted.end(),
-                [&](int lhs, int rhs) {
+                [&](uint32_t lhs, uint32_t rhs) {
                     const double tL = getEndT(lhs);
                     const double tR = getEndT(rhs);
                     if (tL != tR) return tL < tR;
@@ -592,20 +600,24 @@ public:
 
         if (takeCount <= 0) return;
 
-        std::vector<int> candidateIds = m_preloadableIndexesInAttemptsList;
-        if (candidateIds.empty()) return;
+        std::vector<uint32_t> candidateSerials = m_preloadableSerials;
+        if (candidateSerials.empty()) return;
 
-        auto getEndT = [&](int attemptIndex) -> double {
-            const Attempt& a = attempts[attemptIndex];
-            return (!a.p1.empty()) ? static_cast<double>(a.p1.back().t) : 0.0;
+        auto getEndT = [&](uint32_t serial) -> double {
+            float endX = 0.0f;
+            double endT = 0.0;
+            getPreloadSortInfoForSerial_(static_cast<int>(serial), endX, endT);
+            return endT;
         };
 
-        auto getEndX = [&](int attemptIndex) -> float {
-            const Attempt& a = attempts[attemptIndex];
-            return (!a.p1.empty()) ? static_cast<float>(a.p1.back().x) : 0.0f;
+        auto getEndX = [&](uint32_t serial) -> float {
+            float endX = 0.0f;
+            double endT = 0.0;
+            getPreloadSortInfoForSerial_(static_cast<int>(serial), endX, endT);
+            return endX;
         };
 
-        outOrder.reserve(std::min(takeCount, static_cast<int>(candidateIds.size())));
+        outOrder.reserve(std::min(takeCount, static_cast<int>(candidateSerials.size())));
 
         PreloadSortMode sortMode = m_preloadSortMode;
         if (m_replayKind == ReplayKind::PracticeComposite) {
@@ -614,7 +626,7 @@ public:
 
         switch (sortMode) {
             case PreloadSortMode::Best: {
-                std::sort(candidateIds.begin(), candidateIds.end(),
+                std::sort(candidateSerials.begin(), candidateSerials.end(),
                     [&](int lhs, int rhs) {
                         const float xL = getEndX(lhs);
                         const float xR = getEndX(rhs);
@@ -629,22 +641,22 @@ public:
 
                 outOrder.insert(
                     outOrder.end(),
-                    candidateIds.begin(),
-                    candidateIds.begin() + std::min(takeCount, static_cast<int>(candidateIds.size()))
+                    candidateSerials.begin(),
+                    candidateSerials.begin() + std::min(takeCount, static_cast<int>(candidateSerials.size()))
                 );
                 break;
             }
 
             case PreloadSortMode::Recent: {
-                std::sort(candidateIds.begin(), candidateIds.end(),
+                std::sort(candidateSerials.begin(), candidateSerials.end(),
                     [&](int lhs, int rhs) {
                         return lhs > rhs;
                     });
 
                 outOrder.insert(
                     outOrder.end(),
-                    candidateIds.begin(),
-                    candidateIds.begin() + std::min(takeCount, static_cast<int>(candidateIds.size()))
+                    candidateSerials.begin(),
+                    candidateSerials.begin() + std::min(takeCount, static_cast<int>(candidateSerials.size()))
                 );
                 break;
             }
@@ -652,7 +664,7 @@ public:
             case PreloadSortMode::Random:
             default: {
                 // Sort candidates by endT first
-                std::sort(candidateIds.begin(), candidateIds.end(),
+                std::sort(candidateSerials.begin(), candidateSerials.end(),
                     [&](int lhs, int rhs) {
                         const double tL = getEndT(lhs);
                         const double tR = getEndT(rhs);
@@ -668,24 +680,24 @@ public:
                         64,
                         std::max(
                             takeCount / 2,
-                            static_cast<int>(std::sqrt(static_cast<float>(candidateIds.size())))
+                            static_cast<int>(std::sqrt(static_cast<float>(candidateSerials.size())))
                         )
                     )
                 );
 
                 const int numBuckets = std::max(
                     1,
-                    std::min(desiredBuckets, static_cast<int>(candidateIds.size()))
+                    std::min(desiredBuckets, static_cast<int>(candidateSerials.size()))
                 );
 
                 std::vector<std::vector<int>> buckets(numBuckets);
 
-                for (size_t i = 0; i < candidateIds.size(); ++i) {
+                for (size_t i = 0; i < candidateSerials.size(); ++i) {
                     const int bucket = std::min(
                         numBuckets - 1,
-                        static_cast<int>((i * static_cast<size_t>(numBuckets)) / candidateIds.size())
+                        static_cast<int>((i * static_cast<size_t>(numBuckets)) / candidateSerials.size())
                     );
-                    buckets[bucket].push_back(candidateIds[i]);
+                    buckets[bucket].push_back(candidateSerials[i]);
                 }
 
                 std::mt19937 rng(static_cast<uint32_t>(m_levelIDOnAttach) ^ 0x9E3779B9u);
@@ -749,6 +761,9 @@ public:
         m_preloadActive = false;
 
         if (targetCount <= 0) return;
+
+        m_attemptCountsDirty = true;
+        rebuildAttemptCountsIfNeeded();
 
         const auto wantPractice = practiceFilterEvenWhenBotNotOn();
 
@@ -821,27 +836,36 @@ public:
 
         if (!m_preloadActive || maxPerTick <= 0) return;
 
-        const auto wantPractice = practiceFilterEvenWhenBotNotOn();
-
         int work = 0;
-        int skippedAlreadyLoaded = 0;
-        int skippedNoData = 0;
         
         while (work < maxPerTick &&
             m_preloadLoaded < m_preloadTarget &&
             m_preloadCursor < m_preloadOrder.size())
         {
-            const size_t idx = m_preloadOrder[m_preloadCursor];
+            const int serial = static_cast<int>(m_preloadOrder[m_preloadCursor]);
+
+            Attempt* loaded = ensureAttemptLoadedBySerial_(serial, false);
+            if (!loaded) {
+                ++m_preloadCursor;
+                continue;
+            }
+
+            const size_t idx = findLoadedAttemptIndexBySerial_(serial);
+            if (idx == SIZE_MAX || idx >= attempts.size()) {
+                ++m_preloadCursor;
+                continue;
+            }
+
             Attempt& a = attempts[idx];
-            //log::info("preload idx: {}, already preloaded: {}", idx, a.preloaded);
             preloadAttempt_(a, idx, true);
-            //log::info("preloaded: {}, iconsAssigned: {}", a.preloaded, a.iconsAssigned);
             InitialGamemodeSetProcessAttemptIdx(idx);
+
             if (a.preloaded) {
                 ++m_preloadLoaded;
                 ++work;
             }
-            m_preloadCursor++;
+
+            ++m_preloadCursor;
         }
 
         if (m_preloadLoaded >= m_preloadTarget || m_preloadCursor >= m_preloadOrder.size()) {
@@ -883,22 +907,29 @@ public:
         int batchSize,
         int startIndex = 0
     ) {
-        if (!orderList || orderList->empty() || attempts.empty()) return;
+        if (!orderList || orderList->empty()) return;
 
         const auto& order = *orderList;
         const int end = std::min(startIndex + batchSize, static_cast<int>(order.size()));
 
         for (int i = startIndex; i < end; ++i) {
-            const int attemptIdx = static_cast<int>(order[i]);
+            const int serial = static_cast<int>(order[i]);
 
-            if (attemptIdx < 0 || attemptIdx >= static_cast<int>(attempts.size()))
+            Attempt* loaded = ensureAttemptLoadedBySerial_(serial, false);
+            if (!loaded) {
                 continue;
+            }
 
-            Attempt& a = attempts[attemptIdx];
+            const size_t attemptIdx = findLoadedAttemptIndexBySerial_(serial);
+            if (attemptIdx == SIZE_MAX || attemptIdx >= attempts.size()) {
+                continue;
+            }
 
             if (m_playerObjectPool.inUseCount() >= m_playerObjectPool.capacity() - 2) {
                 return;
             }
+
+            Attempt& a = attempts[attemptIdx];
 
             auto h = m_playerObjectPool.acquireForOwner(a.serial, static_cast<uint32_t>(attemptIdx), false);
             if (h) {
@@ -1812,6 +1843,9 @@ public:
 
         m_pl = pl;
 
+        m_isTwoPlayer = m_pl && m_pl->m_levelSettings && m_pl->m_levelSettings->m_twoPlayerMode;
+        // log::info("is two player mode: {}", m_isTwoPlayer);
+
         m_ghostRoot = cocos2d::CCNode::create();
         m_ghostRoot->ignoreAnchorPointForPosition(true);
         m_ghostRoot->setPosition({0, 0});
@@ -1882,6 +1916,8 @@ public:
         if (!modEnabled || (m_pl->m_isPlatformer && !m_allow_platformer)) {
             clearAllGhostNodes();
             attempts.clear();
+            m_loadedSerials.clear();
+            clearAttemptCatalog_();
             invalidateAttemptPointerCaches_();
             recording = false;
             playback = false;
@@ -2274,14 +2310,20 @@ public:
             Attempt& a = attempts[use.attemptIdx];
 
             if (use.hasP1) {
-                if (a.g1) a.setP1Visible(false, true);
+                if (a.g1) {
+                    a.setP1Visible(false, true);
+                    if (a.g1->m_waveTrail) a.g1->m_waveTrail->setVisible(false);
+                }
                 a.g1 = nullptr;
                 a.g1Idx = -1;
                 a.primedP1 = false;
             }
 
             if (use.hasP2) {
-                if (a.g2) a.setP2Visible(false, true);
+                if (a.g2) {
+                    a.setP2Visible(false, true);
+                    if (a.g2->m_waveTrail) a.g2->m_waveTrail->setVisible(false);
+                }
                 a.g2 = nullptr;
                 a.g2Idx = -1;
                 a.primedP2 = false;
@@ -2294,8 +2336,14 @@ public:
             }
         }
 
-        if (m_current.g1) m_current.setP1Visible(false, true);
-        if (m_current.g2) m_current.setP2Visible(false, true);
+        if (m_current.g1) {
+            m_current.setP1Visible(false, true);
+            if (m_current.g1->m_waveTrail) m_current.g1->m_waveTrail->setVisible(false);
+        }
+        if (m_current.g2) {
+            m_current.setP2Visible(false, true);
+            if (m_current.g2->m_waveTrail) m_current.g2->m_waveTrail->setVisible(false);
+        }
         m_current.g1 = nullptr;
         m_current.g2 = nullptr;
         m_current.g1Idx = -1;
@@ -2655,10 +2703,6 @@ public:
     }
 
     void syncInputsToCurrentIndexP1_() {
-        if (!m_pl) return;
-        if (!m_currentOwner) return;
-        if (m_replayOwnerIndex==-1) return;
-
         if (m_pl->m_player1 && !m_currentOwner->p1.empty() && m_replayIdx1 < m_currentOwner->p1.size()) {
             const Frame& F = m_currentOwner->p1[m_replayIdx1];
             if (F.hold  != botPrevHold1) {
@@ -2698,9 +2742,6 @@ public:
     }
 
     void syncInputsToCurrentIndexP2_() {
-        if (!m_pl) return;
-        if (!m_currentOwner) return;
-        if (m_replayOwnerIndex==-1) return;
 
         if (m_pl->m_player2 && m_currentOwner->hadDual && !m_currentOwner->p2.empty() && m_replayIdx2  < m_currentOwner->p2.size()) {
             const Frame& F2 = m_currentOwner->p2[m_replayIdx2];
@@ -2873,6 +2914,7 @@ public:
         restartLevel();
     }
 
+
     void startReplayBest() {
         m_freezePlayerXAtEnd = false;
         m_freezePlayerX = 0.f;
@@ -2903,6 +2945,12 @@ public:
         
         block_attempt_push_on_recording_start = false;
         
+        if (!scanAttemptCatalogForLevel_(m_levelIDOnAttach)) {
+            log::warn("[Bot] startReplayBest: failed to scan attempt catalog");
+            m_filterByStartPosition = false;
+            return;
+        }
+
         if (!scanAttemptCatalogForLevel_(m_levelIDOnAttach)) {
             log::warn("[Bot] startReplayBest: failed to scan attempt catalog");
             m_filterByStartPosition = false;
@@ -3126,7 +3174,7 @@ public:
         }
 
         if (isPlayer1) syncInputsToCurrentIndexP1_();
-        else syncInputsToCurrentIndexP2_();
+        else if (m_isTwoPlayer) syncInputsToCurrentIndexP2_();
 
         m_allowSetPlayerClickState = false;
 
@@ -3841,6 +3889,7 @@ private:
     bool m_ghostsExplodeSFX = false;
     bool m_randomIcons = true;
     bool m_IHateMirrorPortalsSoRewind = false;
+    bool m_isTwoPlayer = false;
     float m_px = 0.f;
     float m_px2 = 0.f;
     float m_prevpx2 = 0.f;
@@ -4029,6 +4078,7 @@ private:
 
     std::unordered_set<int> m_practiceSerialSet;
     std::vector<int> m_preloadableIndexesInAttemptsList;
+    std::vector<uint32_t> m_preloadableSerials;
 
     geode::Ref<cocos2d::CCNode> m_ghostRoot = nullptr;
 
@@ -4047,6 +4097,7 @@ private:
     static constexpr float kWaveTeleportedTolerance = 30.0f;
     static constexpr float kNoDualTimeGap = 0.1f;
     static constexpr float kYEqualEps = 0.1f;
+    static constexpr double kP1ContinuesPastP2Threshold = 0.5;
     bool m_playerPrevTeleported = false;
     bool m_filterByStartPosition = false;
 
@@ -4112,14 +4163,14 @@ private:
         // L bozo platformer mode this is being wacky for initial teleports in levels due to y offset
         
         float attemptStartX = a.p1.front().x;
-        //float attemptStartY = a.startY;
+        float attemptStartY = a.startY;
 
-        //float dx = m_currentReplayStartPos.x - attemptStartX;
-        //float dy = m_currentReplayStartPos.y - attemptStartY;
+        float dx = m_currentReplayStartPos.x - attemptStartX;
+        float dy = m_currentReplayStartPos.y - attemptStartY;
         
-        //return ((dx * dx + dy * dy) < kTolSq);
+        return ((dx * dx + dy * dy) < kTolSq);
 
-        return std::fabs(attemptStartX - m_currentReplayStartPos.x) <= kReplayStartTolerance;
+        // return std::fabs(attemptStartX - m_currentReplayStartPos.x) <= kReplayStartTolerance;
     }
 
     void clearAttemptCatalog_() {
@@ -4185,6 +4236,68 @@ private:
         return &attempts[idx];
     }
 
+    bool matchesStartPositionFilterCatalogEntry_(const APXAttemptDiskInfo& entry) const {
+        if (!m_filterByStartPosition || entry.practiceAttempt) return true;
+        return std::fabs(entry.startX - m_currentReplayStartPos.x) <= kReplayStartTolerance;
+    }
+
+    bool getPreloadSortInfoForSerial_(int serial, float& endX, double& endT) const {
+        if (const Attempt* a = findLoadedAttemptBySerialOnly_(serial)) {
+            if (!a->p1.empty()) {
+                endX = static_cast<float>(a->p1.back().x);
+                endT = static_cast<double>(a->p1.back().t);
+                return true;
+            }
+            if (a->hadDual && !a->p2.empty()) {
+                endX = static_cast<float>(a->p2.back().x);
+                endT = static_cast<double>(a->p2.back().t);
+                return true;
+            }
+        }
+
+        if (const APXAttemptDiskInfo* entry = findCatalogEntryBySerial_(serial)) {
+            if (entry->p1Count <= 0) return false;
+            endX = entry->endX;
+            endT = 0.0;
+            return true;
+        }
+
+        endX = 0.0f;
+        endT = 0.0;
+        return false;
+    }
+
+    void buildInitialAttemptsFromPreloadSerialOrder_(
+        const std::vector<uint32_t>& preloadOrder,
+        std::vector<uint32_t>& outInitial
+    ) {
+        std::vector<uint32_t> sorted = preloadOrder;
+
+        if (m_replayKind == ReplayKind::PracticeComposite) {
+            auto getEndT = [&](uint32_t serial) -> double {
+                float endX = 0.0f;
+                double endT = 0.0;
+                getPreloadSortInfoForSerial_(static_cast<int>(serial), endX, endT);
+                return endT;
+            };
+
+            std::sort(sorted.begin(), sorted.end(),
+                [&](uint32_t lhs, uint32_t rhs) {
+                    const double tL = getEndT(lhs);
+                    const double tR = getEndT(rhs);
+                    if (tL != tR) return tL < tR;
+                    return lhs < rhs;
+                });
+        }
+
+        const size_t initialCount = std::min(
+            static_cast<size_t>(m_playerObjectPool.capacity()),
+            sorted.size()
+        );
+
+        outInitial.assign(sorted.begin(), sorted.begin() + initialCount);
+    }
+
     Attempt* ensureAttemptLoadedBySerial_(int serial, bool spawnNow = false) {
         if (serial <= 0) return nullptr;
 
@@ -4192,32 +4305,41 @@ private:
             return already;
         }
 
-        if (!m_pl || m_levelIDOnAttach == 0) {
-            return nullptr;
-        }
+        if (!m_pl || m_levelIDOnAttach == 0) return nullptr;
 
-        if (!scanAttemptCatalogForLevel_(m_levelIDOnAttach)) {
-            return nullptr;
-        }
+        const auto path = fileForLevel_(m_levelIDOnAttach);
+
+        if (!scanAttemptCatalogForLevel_(m_levelIDOnAttach)) return nullptr;
 
         const APXAttemptDiskInfo* entry = findCatalogEntryBySerial_(serial);
-        if (!entry) {
-            return nullptr;
-        }
+        if (!entry) return nullptr;
 
         Attempt loaded{};
         bool usedLegacy = false;
-        if (!loadAPXAttemptByCatalogEntry(fileForLevel_(m_levelIDOnAttach), *entry, loaded, &usedLegacy)) {
-            return nullptr;
-        }
+
+        if (!loadAPXAttemptByCatalogEntry(path, *entry, loaded, &usedLegacy)) return nullptr;
 
         if (m_loadedSerials.count(loaded.serial) != 0) {
-            return findLoadedAttemptBySerialOnly_(loaded.serial);
+            Attempt* existing = findLoadedAttemptBySerialOnly_(loaded.serial);
+            if (existing) return existing;
+
+            m_loadedSerials.erase(loaded.serial);
         }
 
-        m_loadedSerials.insert(loaded.serial);
+        const int loadedSerial = loaded.serial;
+        m_loadedSerials.insert(loadedSerial);
         pushAttempt(std::move(loaded), spawnNow);
-        return findLoadedAttemptBySerialOnly_(serial);
+
+        Attempt* result = findLoadedAttemptBySerialOnly_(serial);
+        if (!result && loadedSerial != serial) {
+            result = findLoadedAttemptBySerialOnly_(loadedSerial);
+        }
+
+        if (!result) {
+            m_loadedSerials.erase(loadedSerial);
+        }
+
+        return result;
     }
 
     void rebuildSerialCache_() const {
@@ -4543,13 +4665,29 @@ private:
 
         int normal = 0;
         int practice = 0;
+
         m_preloadableIndexesInAttemptsList.clear();
+        m_preloadableSerials.clear();
+
+        std::unordered_set<int> loadedSeen;
+        loadedSeen.reserve(attempts.size());
+        for (const auto& a : attempts) {
+            loadedSeen.insert(a.serial);
+        }
+
+        if (m_levelIDOnAttach != 0) {
+            scanAttemptCatalogForLevel_(m_levelIDOnAttach);
+        }
 
         if (m_replayKind == ReplayKind::PracticeComposite) {
-            const auto practiceSerials = m_checkpointMgr.getPracticeSerialsMatchingCurrentStartPos_AllSessions(kReplayStartTolerance);
+            const auto practiceSerials =
+                m_checkpointMgr.getPracticeSerialsMatchingCurrentStartPos_AllSessions(kReplayStartTolerance);
+
             m_practiceSerialSet.clear();
             m_practiceSerialSet.reserve(practiceSerials.size());
-            for (int s : practiceSerials) m_practiceSerialSet.insert(s);
+            for (int s : practiceSerials) {
+                m_practiceSerialSet.insert(s);
+            }
 
             for (size_t i = 0; i < attempts.size(); ++i) {
                 Attempt& a = attempts[i];
@@ -4558,16 +4696,29 @@ private:
                 const bool hasSpawnableData = !a.p1.empty() || (a.hadDual && !a.p2.empty());
                 if (!hasSpawnableData) continue;
 
-                m_preloadableIndexesInAttemptsList.push_back(i);
+                m_preloadableIndexesInAttemptsList.push_back(static_cast<int>(i));
+                m_preloadableSerials.push_back(static_cast<uint32_t>(a.serial));
                 practice++;
             }
+
+            for (const auto& entry : m_attemptCatalog) {
+                if (loadedSeen.find(entry.serial) != loadedSeen.end()) continue;
+                if (m_practiceSerialSet.find(entry.serial) == m_practiceSerialSet.end()) continue;
+                if (entry.p1Count <= 0) continue;
+
+                m_preloadableSerials.push_back(static_cast<uint32_t>(entry.serial));
+                practice++;
+            }
+
             m_cachedPracticeAttempts = practice;
         }
         else {
-
             if (m_onlyShowGhostsThatPassedPercent) {
                 for (size_t i = 0; i < m_ghostsThatPassThePercentThreshold.size(); ++i) {
-                    Attempt& a = attempts[m_ghostsThatPassThePercentThreshold[i]];
+                    const int idx = m_ghostsThatPassThePercentThreshold[i];
+                    if (idx < 0 || idx >= static_cast<int>(attempts.size())) continue;
+
+                    Attempt& a = attempts[idx];
 
                     if (a.practiceAttempt) continue;
                     if (!matchesStartPositionFilter_(a)) continue;
@@ -4575,10 +4726,10 @@ private:
                     const bool hasSpawnableData = !a.p1.empty() || (a.hadDual && !a.p2.empty());
                     if (!hasSpawnableData) continue;
 
-                    m_preloadableIndexesInAttemptsList.push_back(i);
+                    m_preloadableIndexesInAttemptsList.push_back(idx);
+                    m_preloadableSerials.push_back(static_cast<uint32_t>(a.serial));
                     normal++;
                 }
-
             }
             else {
                 for (size_t i = 0; i < attempts.size(); ++i) {
@@ -4590,14 +4741,25 @@ private:
                     const bool hasSpawnableData = !a.p1.empty() || (a.hadDual && !a.p2.empty());
                     if (!hasSpawnableData) continue;
 
-                    m_preloadableIndexesInAttemptsList.push_back(i);
+                    m_preloadableIndexesInAttemptsList.push_back(static_cast<int>(i));
+                    m_preloadableSerials.push_back(static_cast<uint32_t>(a.serial));
+                    normal++;
+                }
+
+                for (const auto& entry : m_attemptCatalog) {
+                    if (loadedSeen.find(entry.serial) != loadedSeen.end()) continue;
+                    if (entry.practiceAttempt) continue;
+                    if (!matchesStartPositionFilterCatalogEntry_(entry)) continue;
+                    if (entry.p1Count <= 0) continue;
+
+                    m_preloadableSerials.push_back(static_cast<uint32_t>(entry.serial));
                     normal++;
                 }
             }
 
-            
             m_cachedNormalAttempts = normal;
         }
+
         m_attemptCountsDirty = false;
     }
 
@@ -4996,15 +5158,15 @@ private:
         seenLoaded.reserve(attempts.size());
 
         // L bozo platformer mode this is being wacky for initial teleports in levels due to y offset
-        //auto matchesStart = [&](float attemptStartX, float attemptStartY) -> bool {
-        //    const float dx = attemptStartX - startPosX;
-        //    const float dy = attemptStartY - startPosY;
-        //    return (dx * dx + dy * dy) <= tolSq;
-        //};
-
-        auto matchesStart = [&](float attemptStartX) -> bool {
-            return std::fabs(attemptStartX - startPosX) <= tolerance;
+        auto matchesStart = [&](float attemptStartX, float attemptStartY) -> bool {
+            const float dx = attemptStartX - startPosX;
+            const float dy = attemptStartY - startPosY;
+            return (dx * dx + dy * dy) <= tolSq;
         };
+
+        //auto matchesStart = [&](float attemptStartX) -> bool {
+        //    return std::fabs(attemptStartX - startPosX) <= tolerance;
+        //};
 
         auto consider = [&](int serial,
                             bool completed,
@@ -5015,8 +5177,8 @@ private:
                             bool hasP1Data) {
             if (!hasP1Data) return;
             if (!matchesPracticeValue_(practiceAttempt, wantPractice)) return;
-            // if (!matchesStart(attemptStartX, attemptStartY)) return;
-            if (!matchesStart(attemptStartX)) return;
+            if (!matchesStart(attemptStartX, attemptStartY)) return;
+            // if (!matchesStart(attemptStartX)) return;
 
             if (completed) {
                 if (endX > bestWinX || (endX == bestWinX && serial > bestWinSerial)) {
@@ -5315,8 +5477,21 @@ private:
                             hideForGap = true;
                         }
                     }
-                    if (atLastFrame || atEndTime) hideForGap = true;
-                    if (hideForGap) {
+                    // When they both die, don't be invisible
+                    // Only be invisible when p2 ended and p1 has more data
+                    bool hideForP2EndedWhileP1Continues = false;
+                    if (!hideForGap && !eolFrozen && (atLastFrame || atEndTime)) {
+                        const double p2LastT = lastT;
+                        const double p1LastT = a.p1.empty()
+                            ? p2LastT
+                            : static_cast<double>(a.p1.back().t);
+
+                        if (p1LastT - p2LastT > kP1ContinuesPastP2Threshold) {
+                            hideForP2EndedWhileP1Continues = true;
+                        }
+                    }
+
+                    if (hideForGap || hideForP2EndedWhileP1Continues) {
                         a.setP2Visible(false, true);
                         return;
                     }
