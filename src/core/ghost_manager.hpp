@@ -2985,7 +2985,7 @@ public:
     void onPracticeToggle(bool enabled) {
         // log::info("[onPracticeToggle] enabled={}", enabled);
 
-        if (recording && !recordingBlocked && recordInPractice) {
+        if (recording && !recordingBlocked && recordInPractice && !enabled) {
             if (!m_current.p1.empty()) {
                 double startTime = m_current.baseTimeOffset;
                 float startX = m_current.p1.front().x;
