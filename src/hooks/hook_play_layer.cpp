@@ -81,7 +81,7 @@ class $modify(PLHook, PlayLayer) {
             return;
         }
 
-        if (p0 == this->m_player1 || p0 == this->m_player2) {
+        if (p0 && p0 == this->m_player1 || p0 == this->m_player2) {
             if (G.noclip_enabled) return;
             PlayLayer::destroyPlayer(p0, p1);
             if (this->m_playerDied) {
@@ -143,3 +143,52 @@ class $modify(PLHook, PlayLayer) {
     //    return PlayLayer::getCurrentPercent();
     //}
 };
+
+
+class $modify(DestroyPlayerEarliest, PlayLayer) {
+    static void onModify(auto& self) {
+        if (!self.setHookPriorityPre("PlayLayer::destroyPlayer", Priority::First)) {
+            log::warn("Failed to set earliest destroyPlayer priority");
+        }
+    }
+
+    void destroyPlayer(PlayerObject* p0, GameObject* p1) {
+        if (Ghosts::I().isModEnabled()) {
+            if (p0 && p1 && p0 == this->m_player1 || p0 == this->m_player2) {
+                if (!(p1->m_positionX == 0 && p1->m_positionY == 105)) Ghosts::I().beginPlayerDestroyedCheck();
+            }
+        }
+        
+        PlayLayer::destroyPlayer(p0, p1);
+    }
+};
+
+class $modify(DestroyPlayerLatest, PlayLayer) {
+    static void onModify(auto& self) {
+        if (!self.setHookPriorityPost("PlayLayer::destroyPlayer", Priority::Last)) {
+            log::warn("Failed to set latest destroyPlayer priority");
+        }
+        if (!self.setHookPriorityPost("PlayLayer::resetLevel", Priority::Last)) {
+            log::warn("Failed to set latest resetLevel priority");
+        }
+    }
+
+    void destroyPlayer(PlayerObject* p0, GameObject* p1) {
+        PlayLayer::destroyPlayer(p0, p1);
+
+        if (Ghosts::I().isModEnabled()) {
+            if (p0 && p0 == this->m_player1 || p0 == this->m_player2) {
+                Ghosts::I().endPlayerDestroyedCheck(this->m_playerDied);
+                // log::info("End player destroyed");
+                // log::info("Object: {} {} {} {} {} {}", p1->m_isDisabled, p1->m_isNoTouch,  p1->m_isStartPos,  p1->m_isPassable,  p1->m_positionX,  p1->m_positionY);
+            }
+        }
+    }
+    void resetLevel() {
+        PlayLayer::resetLevel();
+        if (Ghosts::I().isModEnabled()) Ghosts::I().resetNoclipDetectedFlag();
+        // log::info("Reset level");
+    }
+};
+
+

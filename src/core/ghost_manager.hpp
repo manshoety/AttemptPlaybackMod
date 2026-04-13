@@ -220,6 +220,26 @@ public:
         return g;
     }
 
+    bool isNoclipDetected = false;
+    bool setFalseIfPlayerWasDestroyedCheck = false;
+
+    void beginPlayerDestroyedCheck() { setFalseIfPlayerWasDestroyedCheck = true; }
+    void endPlayerDestroyedCheck(bool playerDied) {
+        if (!isNoclipDetected) {
+            if (setFalseIfPlayerWasDestroyedCheck) isNoclipDetected = !playerDied;
+        }
+    }
+    bool didAttemptUseNoclip() {
+        return (setFalseIfPlayerWasDestroyedCheck || isNoclipDetected);
+    }
+    void resetNoclipDetectedFlag() { 
+        isNoclipDetected = false;
+        setFalseIfPlayerWasDestroyedCheck = false;
+    }
+    void updateCurrentAttemptNoclipState() {
+        if (!m_currentDidNoclip) m_currentDidNoclip = didAttemptUseNoclip();
+    }
+
     cocos2d::CCPoint forceSetPosP1{0.f, 0.f};
     cocos2d::CCPoint forceSetPosP2{0.f, 0.f};
 
@@ -390,6 +410,7 @@ public:
             attempts.shrink_to_fit();
             
             m_current = Attempt{};
+            m_currentDidNoclip = false;
             m_loadedSerials.clear();
             clearAttemptCatalog_();
             m_loadedLevelID = 0;
@@ -1661,9 +1682,12 @@ public:
     void setRecordingBlocked(bool on) { 
         recordingBlocked = on; 
         m_current = Attempt{};
+        m_currentDidNoclip = false;
         restartLevel();
     }
     bool isRecordingBlocked() const { return recordingBlocked; }
+    bool isRecordingBlockedOnNoclip() const { return m_recordingBlockedOnNoclip; }
+    void setRecordingBlockedOnNoclip(bool on) { m_recordingBlockedOnNoclip = on; }
     bool isInterpolationEnabled() const { return m_useInterpolation; }
     void setInterpolationEnabled(bool on) { m_useInterpolation = on; }
     bool isGhostsExplodeEnabled() const { return m_ghostsExplode; }
@@ -1834,6 +1858,7 @@ public:
         m_ghostsExplodeSFX = mod->getSavedValue<bool>("ghosts-explode-sfx");
         m_useCustomExplodeSounds = mod->getSavedValue<bool>("custom-ghosts-explode-sfx");
         recordingBlocked = mod->getSavedValue<bool>("recording-blocked");
+        m_recordingBlockedOnNoclip = mod->getSavedValue<bool>("recording-blocked-on-noclip");
 
         //m_useInterpolation = mod->getSavedValue<bool>("interp-enabled");
         m_useInterpolation = false;
@@ -1849,6 +1874,7 @@ public:
         if (!mod->hasSavedValue("custom-ghosts-explode-sfx")) m_useCustomExplodeSounds = false;
         if (!mod->hasSavedValue("randomIcons-enabled")) m_randomIcons = false;
         if (!mod->hasSavedValue("recording-blocked")) recordingBlocked = false;
+        if (!mod->hasSavedValue("recording-blocked-on-noclip")) m_recordingBlockedOnNoclip = false;
         if (!mod->hasSavedValue("ReplayPreventCompletion-enabled")) m_pauseGameAtTheEndOfReplayBot = false;
         m_pauseGameAtTheEndOfReplayBot = false;
 
@@ -3057,11 +3083,14 @@ public:
     }
 
     void preUpdate() {
+        //log::info("Preupdate");
+        //log::info("didAttemptUseNoclip: {}", didAttemptUseNoclip());
         // if (!m_allowWorkThisTick || m_is_quitting || !m_pl) return;
         if (m_is_quitting || !m_pl || !m_pl->m_player1) return;
 
         m_px = m_pl->m_player1->getPositionX();
         m_lastAttemptTime = m_pl->m_attemptTime;
+        updateCurrentAttemptNoclipState();
 
         if (!botActive) return;
 
@@ -3780,6 +3809,7 @@ private:
 
     std::vector<Attempt> attempts;
     Attempt m_current;
+    bool m_currentDidNoclip = false;
 
     bool botActive = false;
     bool resetting = false;
@@ -3804,6 +3834,7 @@ private:
 
     bool recording = true;
     bool recordingBlocked = false;
+    bool m_recordingBlockedOnNoclip = false;
     bool playback = false;
     bool m_playbackArmed = false;
     bool block_attempt_push_on_recording_start = false;
@@ -5587,6 +5618,7 @@ private:
 
     void startNewAttempt() {
         m_current = Attempt{};
+        m_currentDidNoclip = false;
         m_current.serial = m_nextAttemptSerial++;
         m_currentAttemptStart = m_frameCounter;
         
@@ -5868,6 +5900,7 @@ private:
     }
 
     void pushAttempt(Attempt&& a, bool spawnNow = true) {
+        if (m_currentDidNoclip && m_recordingBlockedOnNoclip && !isPracticeMode()) return;
         if (!a.p1.empty()) {
             a.startX = a.p1.front().x;
             a.startY = a.p1.front().y;

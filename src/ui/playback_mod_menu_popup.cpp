@@ -302,6 +302,16 @@ void PlaybackModMenu::buildTemplateUI_() {
                                 .pos(38.f, 5.f)
                                 .anchorPoint(0.f, 0.f)
                                 .scale(0.725f)
+                        ),
+                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleBlockRecordingOnNoclip)))
+                        .id("BlockRecordingOnNoclipToggle"_spr)
+                        .store(m_tgBlockRecordingOnNoclip)
+                        .scale(1.f)
+                        .children(
+                            Build<CCLabelBMFont>::create("Don't record Noclip attempts", "bigFont.fnt")
+                                .pos(38.f, 5.f)
+                                .anchorPoint(0.f, 0.f)
+                                .scale(0.725f)
                         )
                     
                     )
@@ -316,7 +326,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.34", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.35", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
@@ -687,6 +697,21 @@ void PlaybackModMenu::onToggleBlockRecording(CCObject*) {
     G.setRecordingBlocked(on);
 }
 
+void PlaybackModMenu::onToggleBlockRecordingOnNoclip(CCObject*) {
+    auto& G = Ghosts::I();
+    bool on = !G.isRecordingBlockedOnNoclip();
+    if (on) {
+        FLAlertLayer::create(
+            "Attention",
+            gd::string("This only blocks recording for normal attempts. \nPractice mode attempts that use noclip will still be recorded."),
+            "OK"
+        )->show();
+    }
+    Mod::get()->setSavedValue("recording-blocked-on-noclip", on);
+    Mod::get()->setSettingValue("recording-blocked-on-noclip", on);
+    G.setRecordingBlockedOnNoclip(on);
+}
+
 void PlaybackModMenu::onToggleGhostsExplodeSFX(CCObject*) {
     auto& G = Ghosts::I();
     bool on = !G.isGhostsExplodeSFXEnabled();
@@ -827,6 +852,7 @@ void PlaybackModMenu::refreshToggles_() {
     if (m_tgGhostsExplode) m_tgGhostsExplode->toggle(G.isGhostsExplodeEnabled());
     if (m_tgGhostsExplodeSFX) m_tgGhostsExplodeSFX->toggle(G.isGhostsExplodeSFXEnabled());
     if (m_tgBlockRecording) m_tgBlockRecording->toggle(G.isRecordingBlocked());
+    if (m_tgBlockRecording) m_tgBlockRecordingOnNoclip->toggle(G.isRecordingBlockedOnNoclip());
     if (m_tgReplayPreventCompletion) m_tgReplayPreventCompletion->toggle(G.isReplayPreventCompletionEnabled());
 }
 
