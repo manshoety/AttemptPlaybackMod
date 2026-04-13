@@ -1255,6 +1255,17 @@ public:
     }
 
     bool rewriteWholeFileToV6_(std::filesystem::path const& path) {
+        const size_t validAttempts = countAttemptsWithData_(attempts);
+
+        if (validAttempts == 0) {
+            log::error(
+                "[APX save] ABORTING migration rewrite for {}: 0 valid attempts in memory. "
+                "Refusing to overwrite existing file.",
+                geode::utils::string::pathToString(path)
+            );
+            return false;
+        }
+        
         auto tmp = path;
         tmp += ".tmp";
 
@@ -1274,9 +1285,19 @@ public:
             out.write(reinterpret_cast<const char*>(&h), sizeof(h));
             if (!out.good()) return false;
 
+            size_t writtenAttempts = 0;
             for (auto const& a : attempts) {
                 if (!attemptHasData_(a)) continue;
                 if (!writeAPXAttemptCompact(out, a)) return false;
+                ++writtenAttempts;
+            }
+
+            if (writtenAttempts == 0) {
+                log::error(
+                    "[APX save] ABORTING migration rewrite for {}: wrote 0 attempts unexpectedly.",
+                    geode::utils::string::pathToString(path)
+                );
+                return false;
             }
 
             if (!writeAPXPracticePath(out, m_checkpointMgr.getPath())) {
@@ -1329,6 +1350,27 @@ public:
             m_isSaving = false;
             return 0;
         }
+
+        const size_t validAttempts = countAttemptsWithData_(attempts);
+
+        int unsavedValidAttempts = 0;
+        for (auto const& a : attempts) {
+            if (!attemptHasData_(a)) continue;
+            if (!a.recordedThisSession) continue;
+            if (a.persistedOnDisk) continue;
+            ++unsavedValidAttempts;
+        }
+
+        if (validAttempts == 0) {
+            m_isSaving = false;
+            return 0;
+        }
+
+        if (!m_needsMigrationRewrite && unsavedValidAttempts == 0 && !m_checkpointMgr.isDirty()) {
+            m_isSaving = false;
+            return 0;
+        }
+
 
         int written = 0;
 
@@ -3101,7 +3143,7 @@ public:
 
     void preUpdate() {
         //log::info("Preupdate");
-        // log::info("didAttemptUseNoclip: {}", didAttemptUseNoclip());
+        log::info("didAttemptUseNoclip: {}", didAttemptUseNoclip());
         // if (!m_allowWorkThisTick || m_is_quitting || !m_pl) return;
         if (m_is_quitting || !m_pl || !m_pl->m_player1) return;
 
@@ -4901,6 +4943,14 @@ private:
 
     static inline bool attemptHasData_(const Attempt& a) {
         return !a.p1.empty() || !a.p2.empty();
+    }
+
+    static inline size_t countAttemptsWithData_(std::vector<Attempt> const& v) {
+        size_t n = 0;
+        for (auto const& a : v) {
+            if (attemptHasData_(a)) ++n;
+        }
+        return n;
     }
 
     static inline float attemptLastX_(const Attempt& a)  {
