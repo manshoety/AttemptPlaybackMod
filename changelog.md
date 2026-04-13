@@ -1,4 +1,4 @@
-# 1.4.35
+# 1.4.36
 - New Toggle: Don't record Noclip Attempts (only works for normal attempts, not practice mode)
 # 1.4.33
 - Using playback on a level and completing it no longer counts for Death Tracker

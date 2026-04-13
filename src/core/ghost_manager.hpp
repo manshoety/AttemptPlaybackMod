@@ -2983,9 +2983,26 @@ public:
     }
 
     void onPracticeToggle(bool enabled) {
-        //log::info("[onPracticeToggle] enabled={}", enabled);
+        // log::info("[onPracticeToggle] enabled={}", enabled);
 
         if (recording && !recordingBlocked && recordInPractice) {
+            if (!m_current.p1.empty()) {
+                double startTime = m_current.baseTimeOffset;
+                float startX = m_current.p1.front().x;
+                float endX = m_current.p1.back().x;
+                
+                m_checkpointMgr.overwriteSegmentForAttempt(
+                    m_current.serial,
+                    m_current.baseTimeOffset,
+                    0,
+                    m_current.p1.back().t - m_current.baseTimeOffset,
+                    startX,
+                    endX,
+                    m_current.p1.size(),
+                    m_current.p2.size()
+                );
+                pushAttempt(std::move(m_current));
+            }
             m_checkpointMgr.onExitEarly();
         }
 
@@ -3084,7 +3101,7 @@ public:
 
     void preUpdate() {
         //log::info("Preupdate");
-        //log::info("didAttemptUseNoclip: {}", didAttemptUseNoclip());
+        // log::info("didAttemptUseNoclip: {}", didAttemptUseNoclip());
         // if (!m_allowWorkThisTick || m_is_quitting || !m_pl) return;
         if (m_is_quitting || !m_pl || !m_pl->m_player1) return;
 
