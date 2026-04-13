@@ -4108,14 +4108,18 @@ private:
     bool matchesStartPositionFilter_(const Attempt& a) const {
         if (!m_filterByStartPosition || a.m_isPlatformer || a.practiceAttempt) return true;
         if (a.p1.empty()) return false;
+
+        // L bozo platformer mode this is being wacky for initial teleports in levels due to y offset
         
         float attemptStartX = a.p1.front().x;
-        float attemptStartY = a.startY;
+        //float attemptStartY = a.startY;
 
-        float dx = m_currentReplayStartPos.x - attemptStartX;
-        float dy = m_currentReplayStartPos.y - attemptStartY;
+        //float dx = m_currentReplayStartPos.x - attemptStartX;
+        //float dy = m_currentReplayStartPos.y - attemptStartY;
         
-        return ((dx * dx + dy * dy) < kTolSq);
+        //return ((dx * dx + dy * dy) < kTolSq);
+
+        return std::fabs(attemptStartX - m_currentReplayStartPos.x) <= kReplayStartTolerance;
     }
 
     void clearAttemptCatalog_() {
@@ -4991,10 +4995,15 @@ private:
         std::unordered_set<int> seenLoaded;
         seenLoaded.reserve(attempts.size());
 
-        auto matchesStart = [&](float attemptStartX, float attemptStartY) -> bool {
-            const float dx = attemptStartX - startPosX;
-            const float dy = attemptStartY - startPosY;
-            return (dx * dx + dy * dy) <= tolSq;
+        // L bozo platformer mode this is being wacky for initial teleports in levels due to y offset
+        //auto matchesStart = [&](float attemptStartX, float attemptStartY) -> bool {
+        //    const float dx = attemptStartX - startPosX;
+        //    const float dy = attemptStartY - startPosY;
+        //    return (dx * dx + dy * dy) <= tolSq;
+        //};
+
+        auto matchesStart = [&](float attemptStartX) -> bool {
+            return std::fabs(attemptStartX - startPosX) <= tolerance;
         };
 
         auto consider = [&](int serial,
@@ -5006,7 +5015,8 @@ private:
                             bool hasP1Data) {
             if (!hasP1Data) return;
             if (!matchesPracticeValue_(practiceAttempt, wantPractice)) return;
-            if (!matchesStart(attemptStartX, attemptStartY)) return;
+            // if (!matchesStart(attemptStartX, attemptStartY)) return;
+            if (!matchesStart(attemptStartX)) return;
 
             if (completed) {
                 if (endX > bestWinX || (endX == bestWinX && serial > bestWinSerial)) {
