@@ -2326,6 +2326,8 @@ public:
         m_is_quitting = true;
 
         death_sound_preloaded = false;
+
+        m_current = Attempt{};
         
         flushPendingSaves_();
         
