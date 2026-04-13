@@ -8,7 +8,7 @@
   },
   "id": "manshoety.attemptplayback",
   "name": "Attempt Playback",
-  "version": "v1.4.37",
+  "version": "v1.4.38",
   "developer": "manshoety",
   "description": "Allows you to see all past attempts as ghosts",
   "dependencies": {

@@ -5182,7 +5182,7 @@ private:
             const double lastT = frames.back().t;
 
             double tStart = getTimeMs();  
-            if (!eolFrozen) {
+            if (!eolFrozen && !isP2) {
                 
                 size_t previousIDX = frameIdx;
                 
