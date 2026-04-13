@@ -5182,7 +5182,7 @@ private:
             const double lastT = frames.back().t;
 
             double tStart = getTimeMs();  
-            if (!eolFrozen && !isP2) {
+            if (!eolFrozen) {
                 
                 size_t previousIDX = frameIdx;
                 
@@ -5198,7 +5198,7 @@ private:
                 const bool atEndTime   = (ghostTime >= lastT - kEolTimeTolerance);
 
                 // EOL freeze check
-                if (atLastFrame || atEndTime) {
+                if ((atLastFrame || atEndTime) && !isP2) {
                     if (ghost) {
                         ghost->stopDashing();
                         if (m_ghostsExplode) {
@@ -5253,6 +5253,7 @@ private:
                             hideForGap = true;
                         }
                     }
+                    if (atLastFrame || atEndTime) hideForGap = true;
                     if (hideForGap) {
                         a.setP2Visible(false, true);
                         return;
