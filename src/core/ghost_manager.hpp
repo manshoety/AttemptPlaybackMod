@@ -3143,7 +3143,7 @@ public:
 
     void preUpdate() {
         //log::info("Preupdate");
-        log::info("didAttemptUseNoclip: {}", didAttemptUseNoclip());
+        // log::info("didAttemptUseNoclip: {}", didAttemptUseNoclip());
         // if (!m_allowWorkThisTick || m_is_quitting || !m_pl) return;
         if (m_is_quitting || !m_pl || !m_pl->m_player1) return;
 
