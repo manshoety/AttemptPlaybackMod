@@ -151,9 +151,14 @@ class $modify(DestroyPlayerEarliest, PlayLayer) {
 
     void destroyPlayer(PlayerObject* p0, GameObject* p1) {
         if (Ghosts::I().isModEnabled()) {
+            // I'm dumb and didn't realize this was a thing
+            if (p1 && (p1 == m_anticheatSpike)) {
+                PlayLayer::destroyPlayer(p0, p1);
+                return;
+            }
             // WHY DID SOMEONE MAKE A SAWBLADE THE PLAYER SPAWN OBJECT AND HOW DOES THAT NOT KILL THE PLAYER???
             // To fix that I will just not check until 45 units (1.5 blocks) from the start of the level
-            if (p0 && p0->m_position.x < 45) {
+            if ((p0 && p0->m_position.x < 45)) {
                 PlayLayer::destroyPlayer(p0, p1);
                 return;
             }

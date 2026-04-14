@@ -1,3 +1,6 @@
+# 1.4.42
+- Fix: noclip detection issue with start positions
+- Fix: blocking preload popup when no start pos attempts exist
 # 1.4.41
 - Fix: double clicking issue when not in two player mode in dual
 - Fix: ghost wave trail staying visible after ending playback

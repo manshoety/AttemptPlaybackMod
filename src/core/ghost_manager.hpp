@@ -2947,13 +2947,19 @@ public:
         
         if (!scanAttemptCatalogForLevel_(m_levelIDOnAttach)) {
             log::warn("[Bot] startReplayBest: failed to scan attempt catalog");
-            m_filterByStartPosition = false;
+            m_replayOwnerSerial = -1;
+            m_replayOwnerIndex = -1;
+            m_currentOwner = nullptr;
+            playback = false;
             return;
         }
 
         if (!scanAttemptCatalogForLevel_(m_levelIDOnAttach)) {
             log::warn("[Bot] startReplayBest: failed to scan attempt catalog");
-            m_filterByStartPosition = false;
+            m_replayOwnerSerial = -1;
+            m_replayOwnerIndex = -1;
+            m_currentOwner = nullptr;
+            playback = false;
             return;
         }
 
@@ -2965,22 +2971,31 @@ public:
         );
 
         if (serial <= 0) {
-            log::warn("[Bot] startReplayBest: no non-practice attempts to replay");
-            m_filterByStartPosition = false;
+            log::warn("[Bot] startReplayBest: no non-practice attempts to replay for current start pos");
+            m_replayOwnerSerial = -1;
+            m_replayOwnerIndex = -1;
+            m_currentOwner = nullptr;
+            playback = false;
             return;
         }
 
         Attempt* chosen = ensureAttemptLoadedBySerial_(serial, false);
         if (!chosen || chosen->p1.empty()) {
             log::warn("[Bot] startReplayBest: failed to load chosen attempt serial={}", serial);
-            m_filterByStartPosition = false;
+            m_replayOwnerSerial = -1;
+            m_replayOwnerIndex = -1;
+            m_currentOwner = nullptr;
+            playback = false;
             return;
         }
 
         const size_t idx = findLoadedAttemptIndexBySerial_(serial);
         if (idx == SIZE_MAX) {
             log::warn("[Bot] startReplayBest: loaded serial {} but index lookup failed", serial);
-            m_filterByStartPosition = false;
+            m_replayOwnerSerial = -1;
+            m_replayOwnerIndex = -1;
+            m_currentOwner = nullptr;
+            playback = false;
             return;
         }
 
@@ -2991,7 +3006,10 @@ public:
 
         if (m_compOwnerIdx >= attempts.size() || attempts[m_compOwnerIdx].p1.empty()) {
             log::warn("[Bot] startReplayBest: no data (p1 empty) after filtering. m_compOwnerIdx={}", m_compOwnerIdx);
-            m_filterByStartPosition = false;
+            m_replayOwnerSerial = -1;
+            m_replayOwnerIndex = -1;
+            m_currentOwner = nullptr;
+            playback = false;
             return;
         }
 
@@ -5161,6 +5179,8 @@ private:
         auto matchesStart = [&](float attemptStartX, float attemptStartY) -> bool {
             const float dx = attemptStartX - startPosX;
             const float dy = attemptStartY - startPosY;
+            //log::info("attemptStartX: {}, attemptStartY: {}", attemptStartX, attemptStartY);
+            //log::info("startPosX: {}, startPosY: {}", startPosX, startPosY);
             return (dx * dx + dy * dy) <= tolSq;
         };
 
@@ -5176,8 +5196,11 @@ private:
                             float endX,
                             bool hasP1Data) {
             if (!hasP1Data) return;
+            //log::info("hasP1Data");
             if (!matchesPracticeValue_(practiceAttempt, wantPractice)) return;
+            //log::info("matchesPracticeValue_");
             if (!matchesStart(attemptStartX, attemptStartY)) return;
+            //log::info("matchesStart");
             // if (!matchesStart(attemptStartX)) return;
 
             if (completed) {
