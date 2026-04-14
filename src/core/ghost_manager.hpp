@@ -2702,9 +2702,11 @@ public:
         return best;
     }
 
-    void syncInputsToCurrentIndexP1_() {
-        if (m_pl->m_player1 && !m_currentOwner->p1.empty() && m_replayIdx1 < m_currentOwner->p1.size()) {
-            const Frame& F = m_currentOwner->p1[m_replayIdx1];
+    void syncInputsToCurrentIndexP1_(Attempt* owner) {
+        if (!owner) return;
+
+        if (m_pl->m_player1 && !owner->p1.empty() && m_replayIdx1 < owner->p1.size()) {
+            const Frame& F = owner->p1[m_replayIdx1];
             if (F.hold  != botPrevHold1) {
                 // best method but might not work due to Click Between Frames
                 m_pl->handleButton(F.hold, /*btn=*/1, /*isP1=*/true);
@@ -2741,10 +2743,11 @@ public:
         m_lastEmitIdx1 = m_replayIdx1;
     }
 
-    void syncInputsToCurrentIndexP2_() {
+    void syncInputsToCurrentIndexP2_(Attempt* owner) {
+        if (!owner) return;
 
-        if (m_pl->m_player2 && m_currentOwner->hadDual && !m_currentOwner->p2.empty() && m_replayIdx2  < m_currentOwner->p2.size()) {
-            const Frame& F2 = m_currentOwner->p2[m_replayIdx2];
+        if (m_pl->m_player2 && owner->hadDual && !owner->p2.empty() && m_replayIdx2  < owner->p2.size()) {
+            const Frame& F2 = owner->p2[m_replayIdx2];
             if (F2.hold  != botPrevHold2) {
                 // best method but might not work due to Click Between Frames
                 m_pl->handleButton(F2.hold, /*btn=*/1, /*isP1=*/false);
@@ -3180,19 +3183,44 @@ public:
 
         m_didInitialWarp = true;
     }
+    Attempt* getCurrentReplayOwner_() {
+        if (m_replayKind == ReplayKind::PracticeComposite) {
+            if (m_compOwnerIdx >= 0 && m_compOwnerIdx < static_cast<int>(attempts.size())) {
+                return &attempts[m_compOwnerIdx];
+            }
+            return nullptr;
+        }
+
+        if (m_replayOwnerSerial <= 0) return nullptr;
+        return findLoadedAttemptBySerialOnly_(m_replayOwnerSerial);
+    }
+
+    const Attempt* getCurrentReplayOwner_() const {
+        if (m_replayKind == ReplayKind::PracticeComposite) {
+            if (m_compOwnerIdx >= 0 && m_compOwnerIdx < static_cast<int>(attempts.size())) {
+                return &attempts[m_compOwnerIdx];
+            }
+            return nullptr;
+        }
+
+        if (m_replayOwnerSerial <= 0) return nullptr;
+        return findLoadedAttemptBySerialOnly_(m_replayOwnerSerial);
+    }
 
     void updateClickState(bool isPlayer1) {
         if (!botActive) return;
         if (!m_allowSetPlayerClickState) return;
         if (!m_pl || m_is_quitting) return;
-        if (!m_currentOwner || m_currentOwner->p1.empty()) return;
+
+        Attempt* owner = getCurrentReplayOwner_();
+        if (!owner || owner->p1.empty()) return;
 
         if (m_justStartedBot) {
             m_justStartedBot = false;
         }
 
-        if (isPlayer1) syncInputsToCurrentIndexP1_();
-        else if (m_isTwoPlayer) syncInputsToCurrentIndexP2_();
+        if (isPlayer1) syncInputsToCurrentIndexP1_(owner);
+        else if (m_isTwoPlayer) syncInputsToCurrentIndexP2_(owner);
 
         m_allowSetPlayerClickState = false;
 
