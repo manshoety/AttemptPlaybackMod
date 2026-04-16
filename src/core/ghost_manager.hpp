@@ -63,6 +63,7 @@
 
 // Features I'll (maybe) add:
 // Ability to only replay one practice session or multiple (maybe even name them and save names as a different file). This would be it's own UI. Also have ability to delete certain sessions and maybe even export and import sessions (practice and normal). It would be cool to be able to export your best attempt, and be able to import the best attempt of several people and replay the at the same time, and have the icons maybe exported and imported too? A lot of work but would be cool to have eventually.
+// Simple first addition would be to allow replay of all start positions (it would just load all normal mode attempts and skip the start pos check)
 // Platformer mode isn't implimented when there are checkpoints yet (practice mode works but not normal)
 // Ability to load and export attempt files so you can send them to people
 // Add back the limit ghost updates per frame feature for low end devices
@@ -70,6 +71,7 @@
 // Make glow work on ghosts
 // Massively optimize Attempts class to be way smaller (lot of uneeded bools from the early versions of this mod)
 // Camera pans when teleporting large y
+// People use this for a bot and then don't turn ghost opacity to 0 and load 1 attempt (which loads 1 ghost as well as the player (if that ghost is different than the best run)). Maybe make it so when you load 1, that only does the player and no ghosts.
 
 using namespace geode::prelude;
 
