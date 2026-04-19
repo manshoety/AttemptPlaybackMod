@@ -17,11 +17,17 @@ class $modify(GJBaseGameLayerHook, GJBaseGameLayer) {
     void update(float p0) {
         // log::info("[GJBaseGameLayer] update {}", p0);
         GJBaseGameLayer::update(p0);
+        Ghosts::I().setdisablePlayerMove(false);
         // log::info("[postUpdate]");
         //const auto t0 = std::chrono::steady_clock::now();
         if (Ghosts::I().isModEnabled()) Ghosts::I().postUpdate();
         //log::info("took {:.3f} ms", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
     }
+
+    //void cameraMoveY(float value, float duration, float rate, bool force) {
+    //    log::info("cameraMoveY: value: {}, duration: {}, rate: {}, force: {}", value, duration, rate, force);
+    //    GJBaseGameLayer::cameraMoveY(value, duration, rate, force);
+    //}
 
     //void handleButton(bool down, int button, bool isPlayer1) {
         //log::info("[GJBaseGameLayer] handleButton: down {}, button {}", down, button);

@@ -153,6 +153,8 @@ private:
     float m_lastPercent = -1.f;
     bool m_limitVisibleOn = false;
     bool m_onlyPastOn = false;
+    bool m_initialOnlyPastOn = false;
+    float m_initialPercent = 0.f;
 
 private:
     void onToggleLimitVisible(cocos2d::CCObject*);

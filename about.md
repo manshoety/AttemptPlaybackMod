@@ -8,14 +8,18 @@ Mod menu button is on the left of the pause screen
 
 Visit the mod settings to disable the mod and change some stuff (like Player Object pooling)
 
-Warning: Expect the game to lag when you have a ton of ghosts on screen at one time. Also, understand that recording a large number of attempts may lead to a large attempt save file (which may slow down loading a level and may use a bit of RAM).
+Warning: Expect the game to lag when you have a ton of ghosts on screen at one time. Also, understand that recording a large number of attempts may lead to a large attempt save file (which may slow down loading a level and may use a bit of RAM)
 
 # IMPORTANT
 
 Please do not switch start position while recording in practice mode as that will break the recording
 
+The "Don't record noclip attempts" setting ONLY impacts normal mode. Noclip practice attempts WILL still be recorded (otherwise it would break the practice recording sequence)
+
 # Limitations
 
 This mod is still early in developement so expect some bugs. Please report any bugs on [discord](https://discord.gg/9MmXKBwvnA) in the bug reports channel
 
-This mod is currently intended for classic levels. I have not tested platformer mode so expect that not to work (disabled by default).
+I am aware the camera movement, player rotation, and objects following the player may be a bit buggy during playback. Do not expect levels that use custom minigames to fully work
+
+This mod is currently intended for classic levels. I have not tested platformer mode so expect that not to work (disabled by default)

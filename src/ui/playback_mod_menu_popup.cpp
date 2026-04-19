@@ -66,6 +66,15 @@ namespace replay_ui_detail {
         Mod::get()->setSavedValue("recording-runtime", true);
         G.setActiveGhostsInvisible();
     }
+
+    inline PlaybackModMenu* findPlaybackMenu() {
+        if (auto* scene = CCDirector::sharedDirector()->getRunningScene()) {
+            return typeinfo_cast<PlaybackModMenu*>(
+                scene->getChildByIDRecursive("playbackModMenu-popup"_spr)
+            );
+        }
+        return nullptr;
+    }
 }
 
 namespace {
@@ -326,7 +335,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.43", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.44", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
@@ -1302,6 +1311,9 @@ bool PlaybackSettingsPopup::init(float width, float height) {
     // Pull initial state (defaults should be OFF if Ghosts has no saved state)
     pullFromRuntime_();
 
+    m_initialOnlyPastOn = m_onlyPastOn;
+    m_initialPercent = std::clamp(m_lastPercent, 0.f, 100.f);
+
     m_mainLayer->setLayout(AnchorLayout::create());
 
     Build<CCNode>::create()
@@ -1456,6 +1468,22 @@ void PlaybackSettingsPopup::onClose(CCObject* sender) {
     // const int maxVisible = sanitizeParseClampMaxVisible_();
     const float percent = sanitizeParseClampPercent_();
 
+    const bool onlyPastChanged = (m_initialOnlyPastOn != m_onlyPastOn);
+    const bool percentChanged =
+        std::fabs(percent - m_initialPercent) > 0.0001f;
+
+    const bool shouldStopReplay =
+        replay_ui_detail::isReplayingRuntime() &&
+        (
+            onlyPastChanged ||
+            (m_onlyPastOn && percentChanged)
+        );
+
+    if (shouldStopReplay) {
+        replay_ui_detail::stopReplayRuntime();
+        replay_ui_detail::setFallbackFlag(false);
+    }
+
     // pushLimitVisibleToRuntime_();
     pushCustomDeathSoundToRuntime_();
     pushOnlyPastToRuntime_();
@@ -1536,6 +1564,16 @@ void PlaybackSettingsPopup::onToggleOnlyPast(CCObject*) {
         const float p = sanitizeParseClampPercent_();
         m_lastPercent = p;
         refreshPercentLabel_(p);
+    }
+
+    // Stop replay because preload goop will load different stuff based on that setting
+    if (replay_ui_detail::isReplayingRuntime()) {
+        replay_ui_detail::stopReplayRuntime();
+        replay_ui_detail::setFallbackFlag(false);
+
+        if (auto* menu = replay_ui_detail::findPlaybackMenu()) {
+            menu->syncUIFromRuntime();
+        }
     }
 }
 

@@ -1,3 +1,8 @@
+# 1.4.44
+- Sort of fixed some of the camera weirdness with teleporting while replaying, but its still janky
+- FIX: Preloading 1 attempt now only does the real player and no ghosts (before it did real player and 1 ghost)
+- FIX: Practice replay not loading all needed data
+- FIX: "Only attempts that passed N%" fixes
 # 1.4.42
 - Fix: noclip detection issue with start positions
 - Fix: blocking preload popup when no start pos attempts exist

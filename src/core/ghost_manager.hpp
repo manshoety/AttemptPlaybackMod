@@ -69,9 +69,10 @@
 // Add back the limit ghost updates per frame feature for low end devices
 // Once dead, allow new allocation to remove the ghost early
 // Make glow work on ghosts
+// Make the mod work with mods that add extra icons
 // Massively optimize Attempts class to be way smaller (lot of uneeded bools from the early versions of this mod)
-// Camera pans when teleporting large y
-// People use this for a bot and then don't turn ghost opacity to 0 and load 1 attempt (which loads 1 ghost as well as the player (if that ghost is different than the best run)). Maybe make it so when you load 1, that only does the player and no ghosts.
+// Camera pans when teleporting large y (sort of partially fixed by speeding up the camera when teleporting, but still buggy)
+
 
 using namespace geode::prelude;
 
@@ -334,6 +335,10 @@ public:
     void setPlaybackOnlyPastPercentEnabled(bool on) {
         m_onlyShowGhostsThatPassedPercent = on;
         Mod::get()->setSavedValue("only-show-ghosts-that-passed-percent", on);
+
+        m_attemptCountsDirty = true;
+        buildGhostThatPassedPercentSerialList();
+        rebuildGridThreasholdSet_();
     }
 
     void setPlaybackMaxVisibleGhosts(int maxVisible) {
@@ -344,24 +349,30 @@ public:
     void setPlaybackOnlyPastPercentThreshold(float percent) {
         m_GhostsPassedPercentThreshold = percent;
         Mod::get()->setSavedValue("ghosts-passed-percent-threshold", percent);
+
+        m_attemptCountsDirty = true;
         buildGhostThatPassedPercentSerialList();
         rebuildGridThreasholdSet_();
-        //log::info("setPlaybackOnlyPastPercentThreshold: {}", percent);
     }
 
     void buildGhostThatPassedPercentSerialList() {
         m_ghostsThatPassThePercentThreshold.clear();
         m_playerObjectPool.clearOwners(true);
+
         for (size_t i = 0; i < attempts.size(); ++i) {
-            if (!attempts[i].practiceAttempt && attempts[i].endPercent >= m_GhostsPassedPercentThreshold) {
-                m_ghostsThatPassThePercentThreshold.push_back(i);
-            } else {
-                attempts[i].setP1Visible(false, true);
-                attempts[i].setP2Visible(false, true);
+            Attempt& a = attempts[i];
+
+            if (!a.practiceAttempt && a.endPercent >= m_GhostsPassedPercentThreshold) {
+                m_ghostsThatPassThePercentThreshold.push_back(static_cast<uint32_t>(i)); // loaded attempt indices
+            }
+            else {
+                a.setP1Visible(false, true);
+                a.setP2Visible(false, true);
             }
         }
+
         m_initialAttemptsToSet.clear();
-        buildInitialAttemptsFromPreloadOrder(m_ghostsThatPassThePercentThreshold, m_initialAttemptsToSet);
+        m_attemptCountsDirty = true;
     }
 
     void beginPostUpdateTick_() {
@@ -764,6 +775,8 @@ public:
 
         if (targetCount <= 0) return;
 
+        m_1PreloadedSoDontShowGhosts = (targetCount == 1);
+
         m_attemptCountsDirty = true;
         rebuildAttemptCountsIfNeeded();
 
@@ -793,13 +806,13 @@ public:
         // preloadOrder entries, then sort that list by endT
         buildInitialAttemptsFromPreloadOrder(m_preloadOrder, m_initialAttemptsToSet);
         // do the ones I set the icon for first
-        prioritizeInitialAttemptsInPreloadOrder_();
+        prioritizeInitialAttemptsInPreloadOrder_(targetCount);
 
         m_preloadCursor = 0;
         m_preloadActive = (m_preloadLoaded < m_preloadTarget) && !m_preloadOrder.empty();
     }
 
-    void prioritizeInitialAttemptsInPreloadOrder_() {
+    void prioritizeInitialAttemptsInPreloadOrder_(int targetCount) {
         if (m_initialAttemptsToSet.empty() || m_preloadOrder.empty()) return;
 
         std::unordered_set<uint32_t> initialSet(
@@ -809,23 +822,37 @@ public:
 
         std::unordered_set<uint32_t> added;
         std::vector<uint32_t> reordered;
-        reordered.reserve(m_preloadOrder.size());
+        reordered.reserve(m_preloadOrder.size()+1);
 
-        // First: force the initial list to the front, in its own order.
-        for (int idx : m_initialAttemptsToSet) {
-            if (added.insert(idx).second) {
-                reordered.push_back(idx);
+        if (targetCount>1) {
+
+            // Force the first one to be the real player
+            int firstSerialToLoad = m_preloadOrder[0];
+            if (m_activeOwnerSerial > -1) firstSerialToLoad = m_activeOwnerSerial;
+            else if (m_replayOwnerSerial > -1) firstSerialToLoad = m_replayOwnerSerial;
+
+            reordered.push_back(firstSerialToLoad);
+            added.insert(firstSerialToLoad);
+
+            // First: force the initial list to the front, in its own order.
+            for (int idx : m_initialAttemptsToSet) {
+                if (added.insert(idx).second) {
+                    reordered.push_back(idx);
+                }
             }
-        }
 
-        // Then: append the rest of the preload order, skipping anything already added.
-        for (int idx : m_preloadOrder) {
-            if (added.insert(idx).second) {
-                reordered.push_back(idx);
+            // Then: append the rest of the preload order, skipping anything already added.
+            for (int idx : m_preloadOrder) {
+                if (added.insert(idx).second) {
+                    reordered.push_back(idx);
+                }
             }
-        }
 
-        m_preloadOrder = std::move(reordered);
+            m_preloadOrder = std::move(reordered);
+        }
+        else {
+            m_preloadOrder.clear();
+        }
     }
 
     void preloadStep(int maxPerTick) {
@@ -1842,6 +1869,7 @@ public:
         m_current.g1 = nullptr;
         m_current.g2 = nullptr;
         m_replayOwnerIndex = -1;
+        m_1PreloadedSoDontShowGhosts = false;
 
         m_pl = pl;
 
@@ -2859,7 +2887,12 @@ public:
         //    m_didInitialWarp = true;
         //}
 
-        if (m_replayOwnerSerial > 0) {
+        
+
+        // first attempt in sequence
+        int m_replayOwnerSerial = m_checkpointMgr.findOwnerSerialForTime(0.f);
+        // log::info("m_replayOwnerSerial: {}", m_replayOwnerSerial);
+        if (m_replayOwnerSerial > -1) {
             m_activeOwnerSerial = m_replayOwnerSerial;
         }
 
@@ -3060,6 +3093,9 @@ public:
         m_freezePlayerY = 0.f;
         m_playerPrevTeleported = false;
         invalidatePrimedPlayerObjectRefs();
+        m_initialAttemptsToSet.clear();
+        m_preloadOrder.clear();
+        m_1PreloadedSoDontShowGhosts = false;
     }
 
     void restartLevel() { 
@@ -3648,7 +3684,7 @@ public:
 
         //log::info("[TIME TAKEN] postupdate initial {:.9f}", getTimeMs() - tStart);
         
-        if (drawGhosts) {
+        if (drawGhosts && !m_1PreloadedSoDontShowGhosts) {
             m_ghostUpdateAccum += static_cast<float>(dt);
             
             // Check if ghost offset changed
@@ -3957,6 +3993,7 @@ private:
     double m_lastAttemptTime = 0.0;
     double m_prevSessionTime = 0.0;
     double m_offsetUnitsPerSecond = 311.f;
+    bool m_1PreloadedSoDontShowGhosts = false;
 
     double finalTime = 0.f;
 
@@ -3975,6 +4012,7 @@ private:
     bool m_zeroOpacityLatched = false;
 
     size_t m_lastGhostTickFrame = 0;
+    size_t m_speedUpCameraAnimationAfterTeleportForNFrames = 0;
 
     std::vector<Attempt> attempts;
     Attempt m_current;
@@ -4772,48 +4810,49 @@ private:
             m_cachedPracticeAttempts = practice;
         }
         else {
-            if (m_onlyShowGhostsThatPassedPercent) {
-                for (size_t i = 0; i < m_ghostsThatPassThePercentThreshold.size(); ++i) {
-                    const int idx = m_ghostsThatPassThePercentThreshold[i];
-                    if (idx < 0 || idx >= static_cast<int>(attempts.size())) continue;
+            auto loadedMatchesNormalReplayFilter = [&](const Attempt& a) -> bool {
+                if (a.practiceAttempt) return false;
+                if (!matchesStartPositionFilter_(a)) return false;
 
-                    Attempt& a = attempts[idx];
+                const bool hasSpawnableData = !a.p1.empty() || (a.hadDual && !a.p2.empty());
+                if (!hasSpawnableData) return false;
 
-                    if (a.practiceAttempt) continue;
-                    if (!matchesStartPositionFilter_(a)) continue;
-
-                    const bool hasSpawnableData = !a.p1.empty() || (a.hadDual && !a.p2.empty());
-                    if (!hasSpawnableData) continue;
-
-                    m_preloadableIndexesInAttemptsList.push_back(idx);
-                    m_preloadableSerials.push_back(static_cast<uint32_t>(a.serial));
-                    normal++;
+                if (m_onlyShowGhostsThatPassedPercent &&
+                    a.endPercent < m_GhostsPassedPercentThreshold) {
+                    return false;
                 }
+
+                return true;
+            };
+
+            auto catalogMatchesNormalReplayFilter = [&](const APXAttemptDiskInfo& entry) -> bool {
+                if (entry.practiceAttempt) return false;
+                if (!matchesStartPositionFilterCatalogEntry_(entry)) return false;
+                if (entry.p1Count <= 0) return false;
+
+                if (m_onlyShowGhostsThatPassedPercent &&
+                    entry.endPercent < m_GhostsPassedPercentThreshold) {
+                    return false;
+                }
+
+                return true;
+            };
+
+            for (size_t i = 0; i < attempts.size(); ++i) {
+                Attempt& a = attempts[i];
+                if (!loadedMatchesNormalReplayFilter(a)) continue;
+
+                m_preloadableIndexesInAttemptsList.push_back(static_cast<int>(i));
+                m_preloadableSerials.push_back(static_cast<uint32_t>(a.serial));
+                normal++;
             }
-            else {
-                for (size_t i = 0; i < attempts.size(); ++i) {
-                    Attempt& a = attempts[i];
 
-                    if (a.practiceAttempt) continue;
-                    if (!matchesStartPositionFilter_(a)) continue;
+            for (const auto& entry : m_attemptCatalog) {
+                if (loadedSeen.find(entry.serial) != loadedSeen.end()) continue;
+                if (!catalogMatchesNormalReplayFilter(entry)) continue;
 
-                    const bool hasSpawnableData = !a.p1.empty() || (a.hadDual && !a.p2.empty());
-                    if (!hasSpawnableData) continue;
-
-                    m_preloadableIndexesInAttemptsList.push_back(static_cast<int>(i));
-                    m_preloadableSerials.push_back(static_cast<uint32_t>(a.serial));
-                    normal++;
-                }
-
-                for (const auto& entry : m_attemptCatalog) {
-                    if (loadedSeen.find(entry.serial) != loadedSeen.end()) continue;
-                    if (entry.practiceAttempt) continue;
-                    if (!matchesStartPositionFilterCatalogEntry_(entry)) continue;
-                    if (entry.p1Count <= 0) continue;
-
-                    m_preloadableSerials.push_back(static_cast<uint32_t>(entry.serial));
-                    normal++;
-                }
+                m_preloadableSerials.push_back(static_cast<uint32_t>(entry.serial));
+                normal++;
             }
 
             m_cachedNormalAttempts = normal;
@@ -6158,27 +6197,27 @@ private:
     void rebuildGridThreasholdSet_() {
         m_gridThreshold.clear();
 
-        // throw away any prior preload build state
-        m_spans.clear();
-        m_spans.reserve(m_ghostsThatPassThePercentThreshold.size());
-
-        for (size_t k = 0; k < m_ghostsThatPassThePercentThreshold.size(); ++k) {
-            const size_t attemptIdx = (size_t)m_ghostsThatPassThePercentThreshold[k];
-            if (attemptIdx >= attempts.size()) continue;
-
-            // Always recompute
-            AttemptSpan sp = makeSpan_(attempts[attemptIdx]);
-            m_spans.push_back(sp);
-
-            if (sp.lastX > sp.firstX) {
-                // Store attemptIdx so downstream can do attempts[candidate]
-                m_gridThreshold.insert((int)attemptIdx, (float)sp.firstX, (float)sp.lastX);
-            }
-        }
-
         m_cachedCandidates.clear();
         m_cachedBinL = INT_MAX;
         m_cachedBinR = INT_MIN;
+
+        for (size_t k = 0; k < m_preloadedIndices.size(); ++k) {
+            const size_t attemptIdx = static_cast<size_t>(m_preloadedIndices[k]);
+            if (attemptIdx >= attempts.size()) continue;
+
+            Attempt& a = attempts[attemptIdx];
+
+            if (a.practiceAttempt) continue;
+            if (a.endPercent < m_GhostsPassedPercentThreshold) continue;
+            if (!a.preloaded) continue;
+
+            AttemptSpan sp = makeSpan_(a);
+            if (sp.lastX > sp.firstX) {
+                m_gridThreshold.insert(static_cast<int>(attemptIdx),
+                                    static_cast<float>(sp.firstX),
+                                    static_cast<float>(sp.lastX));
+            }
+        }
     }
 
     void rebuildGridPreloadedSet_() {
@@ -6227,7 +6266,7 @@ private:
     }
 
     void pushAttempt(Attempt&& a, bool spawnNow = true) {
-        if (m_currentDidNoclip && m_recordingBlockedOnNoclip && !isPracticeMode()) return;
+        if (!botActive && m_currentDidNoclip && m_recordingBlockedOnNoclip && !isPracticeMode()) return;
         if (!a.p1.empty()) {
             a.startX = a.p1.front().x;
             a.startY = a.p1.front().y;
@@ -6466,25 +6505,90 @@ private:
 
         // Wave teleport goop
         if (m_playerPrevTeleported) {
-            p->playerTeleported();
+            //p->playerTeleported();
             if (isWave && p->m_waveTrail) {
                 p->m_waveTrail->reset();
                 p->m_waveTrail->resumeStroke();
                 p->m_waveTrail->addPoint({ix, iy});
             }
+            auto gl = GJBaseGameLayer::get();
+            //gl->updateCamera(20.0f);
             m_playerPrevTeleported = false;
         }
-        if (b && std::fabs(static_cast<float>(b->y) - iy) > kWaveTeleportedTolerance) {
+        bool teleported = (b && std::fabs(static_cast<float>(b->y) - iy) > kWaveTeleportedTolerance);
+        if (teleported) {
             if (isWave && p->m_waveTrail) p->m_waveTrail->stopStroke();
-            p->playerTeleported();
+            //p->playerTeleported();
+            auto gl = GJBaseGameLayer::get();
+            //gl->updateCamera(20.0f);
             m_playerPrevTeleported = true;
         }
 
         // if (!isP1) log::info("P2 spawned: {}, p2x: {}", m_p2JustSpawned, p->getPositionX());
 
         const bool P2HasSpawnedNoWay = (p2JustSpawned || p->getPositionX() == 0.f);
-        
+
+        //if (m_playerPrevTeleported) {
+        //    auto bl = GJBaseGameLayer::get();
+        //    bool prevState = disablePlayerMove;
+        //    disablePlayerMove = false;
+        //    m_teleport_helper.snapTeleport(bl, p, {finterp.x, finterp.y});
+        //    disablePlayerMove = prevState;
+        //    m_playerPrevTeleported = false;
+        //}
+        //else 
+
+        //auto bl = GJBaseGameLayer::get();
+        //bool prevState = disablePlayerMove;
+        //m_teleport_helper.snapTeleport(bl, p, {finterp.x, finterp.y});
+
+        float prevY = p->getPositionY();
+        float prevX = p->getPositionX();
+
         p->setPosition({ finterp.x, finterp.y });
+
+        if (std::fabs(iy - prevY) > kWaveTeleportedTolerance*8) m_speedUpCameraAnimationAfterTeleportForNFrames = 5;
+
+        if (m_speedUpCameraAnimationAfterTeleportForNFrames > 0) {
+            auto gl = GJBaseGameLayer::get();
+            gl->updateCamera(20.0f);
+            m_speedUpCameraAnimationAfterTeleportForNFrames--;
+        }
+
+        //if (m_playerPrevTeleported) {
+        //    auto gl = GJBaseGameLayer::get();
+        //    gl->updateCamera(20.0f);
+        //}
+
+        // Doesn't work well. I might have to record camera pos for each teleport in the level and save that as an extra thing for each level save file
+        /*
+        if (std::fabs(finterp.y - prevY) > kWaveTeleportedTolerance) {
+            // Same camera position stuff I do 
+            auto* director = cocos2d::CCDirector::sharedDirector();
+            auto* worldNode = m_pl->m_objectLayer;
+                
+            cocos2d::CCPoint tlScreen{director->m_fScreenLeft, director->m_fScreenTop};
+            cocos2d::CCPoint brScreen{director->m_fScreenRight, director->m_fScreenBottom};
+                
+            cocos2d::CCPoint tl = worldNode->convertToNodeSpace(tlScreen);
+            cocos2d::CCPoint br = worldNode->convertToNodeSpace(brScreen);
+
+            // Handle mirror portal coordinate inversion
+            if (tl.x > br.x) std::swap(tl.x, br.x);
+            if (br.y > tl.y) std::swap(br.y, tl.y);
+
+            const float middleY = tl.y - br.y;
+
+            
+            // gl->cameraMoveY(finterp.y - middleY, 0.f, 0.f, true);
+            // gl->checkCameraLimitAfterTeleport(p, finterp.y - middleY);
+            // gl->moveCameraToPos({ finterp.x, finterp.y });
+            // m_teleport_helper.snapTeleport(gl, p, {prevX, prevY}, {finterp.x, finterp.y});
+            // gl->resetStaticCamera(true, true);
+            
+        }*/
+        
+
 
         if (isWave) {
             p->setRotation(a.rot);
