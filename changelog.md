@@ -1,3 +1,5 @@
+# 1.4.45
+- Preload changes: best mode default, set real player objects in reverse order (earliest deaths appear first)
 # 1.4.44
 - Sort of fixed some of the camera weirdness with teleporting while replaying, but its still janky
 - FIX: Preloading 1 attempt now only does the real player and no ghosts (before it did real player and 1 ghost)

@@ -335,7 +335,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.44", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.45", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
@@ -1078,7 +1078,10 @@ bool PreloadAttemptsPopup::init(float width, float height) {
         Ghosts::I().setPreloadSortMode(m_sortMode);
     });
 
-    m_sortMode = Ghosts::I().getPreloadSortMode();
+    // m_sortMode = Ghosts::I().getPreloadSortMode();
+    // For now I'll default set it to "best" since that gives best results when loading a large number
+    m_sortMode = PreloadSortMode::Best;
+
     m_sortRadio.select(preloadSortModeToIndex(m_sortMode));
     Ghosts::I().setPreloadSortMode(m_sortMode);
 

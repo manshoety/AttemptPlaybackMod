@@ -802,6 +802,11 @@ public:
             return;
         }
 
+        // Reverse so the earliest deaths have real player objects (only normal mode or max load)
+        if (!wantPractice && (m_preloadSortMode == PreloadSortMode::Best || targetCount == m_cachedNormalAttempts)) {
+            std::reverse(m_preloadOrder.begin(), m_preloadOrder.end());
+        }
+
         // Build the smaller real player object initial set list from the first N
         // preloadOrder entries, then sort that list by endT
         buildInitialAttemptsFromPreloadOrder(m_preloadOrder, m_initialAttemptsToSet);
