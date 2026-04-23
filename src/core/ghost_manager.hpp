@@ -73,7 +73,6 @@
 // Massively optimize Attempts class to be way smaller (lot of uneeded bools from the early versions of this mod)
 // Camera pans when teleporting large y (sort of partially fixed by speeding up the camera when teleporting, but still buggy)
 
-
 using namespace geode::prelude;
 
 #if defined(_MSC_VER)
@@ -2336,6 +2335,8 @@ public:
             invalidatePrimedPlayerObjectRefs();
             InitialGamemodeSet();
         }
+
+        //log::info("inUseCount: {}, activeAttempts: {}, currentlyHiddenSerials: {}", m_playerObjectPool.inUseCount(), m_playerObjectPool.getActiveAttempts().size(), m_currentlyHiddenSerials.size());
     }
 
     void invalidatePrimedPlayerObjectRefs() {
@@ -2388,6 +2389,7 @@ public:
         m_primedSet.clear();
         m_wantToPrimeIndices.clear();
         m_wantToPrimeSet.clear();
+        m_currentlyHiddenSerials.clear();
     }
 
     void setActiveGhostsInvisible() {
@@ -4920,34 +4922,52 @@ private:
         const double endT = std::max(lastT(a.p1), lastT(a.p2));
 
         // Deterministic signed random in [-1, 1]
-        float u = signedUnit_(
-            (uint32_t)a.serial ^
-            (uint32_t)m_levelIDOnAttach ^
+        const float u = signedUnit_(
+            static_cast<uint32_t>(a.serial) ^
+            static_cast<uint32_t>(m_levelIDOnAttach) ^
             0x9E3779B9u
         );
 
         float offsetPx = u * static_cast<float>(m_randomDistPx);
 
+        constexpr float kMinOffsetPx = -100.0f;
+        constexpr float kMaxOffsetPx = 174.0f;
         constexpr float kMinMagPx = 10.0f;
-        if (std::fabs(offsetPx) < kMinMagPx) {
-            offsetPx = (offsetPx >= 0.f ? kMinMagPx : -kMinMagPx);
-            if (offsetPx == 0.f) offsetPx = kMinMagPx;
-        }
+        constexpr double kEndGapSec = 0.5;
 
         const double ups = std::max(1e-6, m_offsetUnitsPerSecond);
 
-        // prevent forward time offset from making the ghost die too soon
-        constexpr double kEndGapSec = 0.5;
+        // Positive limit:
+        const double maxForwardTime = std::max(0.0, endT - kEndGapSec);
+        const double maxForwardPxD  = maxForwardTime * ups;
+        const float usableMaxPx = std::min(
+            kMaxOffsetPx,
+            static_cast<float>(std::max(0.0, maxForwardPxD))
+        );
 
-        if (offsetPx > 0.f) {
-            const double maxForwardTime = std::max(0.0, endT - kEndGapSec);
-            const double maxForwardPxD  = maxForwardTime * ups;
-            const float  maxForwardPx   = static_cast<float>(maxForwardPxD);
+        // Negative limit with wrapping:
+        auto wrapIntoWindow = [](float x, float lo, float hi) -> float {
+            if (hi <= lo) return lo;
+            if (x >= lo && x <= hi) return x;
 
-            if (maxForwardPx <= 0.f) {
-                offsetPx = 0.f;
-            } else if (offsetPx > maxForwardPx) {
-                offsetPx = maxForwardPx;
+            const double span = static_cast<double>(hi) - static_cast<double>(lo);
+            double y = static_cast<double>(x) - static_cast<double>(lo);
+            y = std::fmod(y, span);
+            if (y < 0.0) y += span;
+            return static_cast<float>(static_cast<double>(lo) + y);
+        };
+
+        offsetPx = wrapIntoWindow(offsetPx, kMinOffsetPx, usableMaxPx);
+
+        // Don't have 0 offset to avoid weird overlap
+        if (std::fabs(offsetPx) < kMinMagPx) {
+            const float posCandidate = std::min(kMinMagPx, usableMaxPx);
+            const float negCandidate = -kMinMagPx;
+
+            if (offsetPx >= 0.f && posCandidate >= kMinMagPx) {
+                offsetPx = posCandidate;
+            } else {
+                offsetPx = negCandidate;
             }
         }
 

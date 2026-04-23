@@ -143,11 +143,13 @@ void GhostDistancePopup::computePreviewScale_() {
     }
     m_cubeVisualPx = measured;
 
-    m_pxPerGameX = m_cubeVisualPx / kUnitsPerCube;
-
     const float innerW = m_previewCard->getContentSize().width - 40.f;
-    const float halfW = std::max(0.f, innerW * 0.5f);
-    m_maxGamePx = std::max(1.f, halfW / std::max(1.f, m_pxPerGameX));
+
+    const float naturalPxPerGameX = m_cubeVisualPx / kUnitsPerCube;
+    const float totalVisualGamePx = (-m_minGamePx) + m_maxGamePx;
+    const float fitPxPerGameX = innerW / std::max(1.f, totalVisualGamePx);
+
+    m_pxPerGameX = std::min(naturalPxPerGameX, fitPxPerGameX);
 }
 
 void GhostDistancePopup::layoutPreview_() {
@@ -156,15 +158,25 @@ void GhostDistancePopup::layoutPreview_() {
     const float innerW = m_previewCard->getContentSize().width - 40.f;
     const float innerH = m_previewCard->getContentSize().height - 20.f;
 
-    const float cx = 20.f + innerW * 0.5f;
     const float cy = 10.f + innerH * 0.5f;
 
-    const float clampedGame = std::clamp(m_distancePx, 0.f, m_maxGamePx);
-    const float dx = clampedGame * m_pxPerGameX;
+    const float negLimit = -m_minGamePx;
+    const float posLimit =  m_maxGamePx;
 
-    if (m_player)      m_player->setPosition({ cx, cy });
-    if (m_ghostAhead)  m_ghostAhead->setPosition({ cx + dx, cy });
-    if (m_ghostBehind) m_ghostBehind->setPosition({ cx - dx, cy });
+    const float totalSpanPx = (negLimit + posLimit) * m_pxPerGameX;
+    const float startX = 20.f + std::max(0.f, (innerW - totalSpanPx) * 0.5f);
+
+    const float playerX = startX + negLimit * m_pxPerGameX;
+
+    const float aheadGame  = std::clamp(m_distancePx, 0.f, posLimit);
+    const float behindGame = std::clamp(m_distancePx, 0.f, negLimit);
+
+    const float dxAhead  = aheadGame  * m_pxPerGameX;
+    const float dxBehind = behindGame * m_pxPerGameX;
+
+    if (m_player)      m_player->setPosition({ playerX, cy });
+    if (m_ghostAhead)  m_ghostAhead->setPosition({ playerX + dxAhead, cy });
+    if (m_ghostBehind) m_ghostBehind->setPosition({ playerX - dxBehind, cy });
 }
 
 void GhostDistancePopup::onSlide(CCObject* obj) {
@@ -192,7 +204,6 @@ void GhostDistancePopup::setSavedDistance_(float px) {
     const int dist = std::max(0, (int)std::lround(px));
     Mod::get()->setSavedValue(kKeyGhostDist, (int64_t)dist);
     Ghosts::I().setGhostDistance(dist);
-    
 }
 
 cocos2d::CCLayer* CreateGhostDistancePopup() {

@@ -140,11 +140,14 @@ public:
 
                 // Only trust the mapping if the slot is still live and still belongs to this owner
                 if (s.inUse && s.owner == ownerKey) {
+                    if (s.attemptIdx != attemptIdx || s.isP2 != isP2) {
+                        unmarkAttemptUse_(s.attemptIdx, s.isP2);
+                    }
+
                     s.attemptIdx = attemptIdx;
                     s.isP2 = isP2;
                     markAttemptUse_(attemptIdx, isP2);
 
-                    // If pointer is null (for example after ghost pool was cleared), reacquire it
                     if (!s.po) {
                         s.po = m_ghostPool->acquire(s.ghostSerial);
                     }

@@ -1,3 +1,6 @@
+# 1.4.46
+- FIX: Ghosts not resetting properly on restart (leading to many not showing up after restart)
+- FIX: With max ghost offset, negative ghosts could be off the screen, now they wrap around to positive
 # 1.4.45
 - Preload changes: best mode default, set real player objects in reverse order (earliest deaths appear first)
 # 1.4.44

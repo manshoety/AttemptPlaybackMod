@@ -45,7 +45,8 @@ private:
 
     float m_cubeVisualPx = 30.f;
     float m_pxPerGameX = 1.f;
-    float m_maxGamePx = 400.f;
+    float m_minGamePx = -100.f;
+    float m_maxGamePx = 174.f;
     static constexpr float kUnitsPerCube = 30.f;
     static constexpr const char* kKeyGhostDist = "ghost-distance";
 
