@@ -287,6 +287,16 @@ public:
 
     PreloadSortMode m_preloadSortMode = PreloadSortMode::Best;
 
+    void refreshCustomDeathSfxNow(bool resetGhostObjects) {
+        customLastWrite = {};
+        refreshCustomExplodeSfx_(customSfx, customLastWrite);
+
+        if (resetGhostObjects) {
+            invalidatePrimedPlayerObjectRefs();
+            InitialGamemodeSet();
+        }
+    }
+
     void setPreloadSortMode(PreloadSortMode sortMode) { 
         m_preloadSortMode = sortMode;
         savePreloadSortMode(m_preloadSortMode);
@@ -1805,6 +1815,7 @@ public:
     void setPlaybackCustomDeathSoundEnabled(bool on) {
         Mod::get()->setSavedValue("custom-ghosts-explode-sfx", on);
         m_useCustomExplodeSounds = on;
+        if (on) refreshAndPreloadCustomExplodeSfx_(true);
     }
     bool isRandomIconsEnabled() const { return m_randomIcons; }
     void setRandomIconsEnabled(bool on) {
@@ -1898,7 +1909,10 @@ public:
         getOrCreateBatch_();
 
         customLastWrite = {};
-        refreshCustomExplodeSfx_(customSfx, customLastWrite);
+        m_lastCustomSfxRefreshTick = 0;
+
+        if (m_useCustomExplodeSounds) refreshAndPreloadCustomExplodeSfx_(true);
+        else customSfx.clear();
 
         clearAllGhostNodes();
         m_preloadedIndices.clear();
@@ -2336,7 +2350,7 @@ public:
             InitialGamemodeSet();
         }
 
-        //log::info("inUseCount: {}, activeAttempts: {}, currentlyHiddenSerials: {}", m_playerObjectPool.inUseCount(), m_playerObjectPool.getActiveAttempts().size(), m_currentlyHiddenSerials.size());
+        // log::info("inUseCount: {}, activeAttempts: {}, currentlyHiddenSerials: {}", m_playerObjectPool.inUseCount(), m_playerObjectPool.getActiveAttempts().size(), m_currentlyHiddenSerials.size());
     }
 
     void invalidatePrimedPlayerObjectRefs() {
@@ -3841,16 +3855,18 @@ public:
                     //if (!matchesStartPositionFilter_(a)) continue;
 
                     // Owner check
-                    if (isOwnerAnywhereInRoute_(ai, a)) {
+                    if (isOwnerAnywhereInRoute_(a)) {
                         if (a.g1) a.setP1Visible(false);
                         if (a.g2) a.setP2Visible(false);
                         a.primedP1 = a.primedP2 = false;
-                        //log::info("[OWNER REJECT] ai: {}", ai);
+                        // log::info("[OWNER REJECT] ai: {}", ai);
                         continue;
                     }
 
                     const double ghostTime = std::max(0.0, m_lastAttemptTime + a.ghostOffsetTime);
                     const double firstTimeP1 = a.p1.front().t;
+
+                    // log::info("[OWNER] ai: {}", ai);
                     
                     if (ghostTime < firstTimeP1 - 0.0001) {
                         a.setP1Visible(false);
@@ -3858,6 +3874,7 @@ public:
                         a.primedP1 = a.primedP2 = false;
                         continue;
                     }
+                    // log::info("[TIME] ai: {}", ai);
 
 
                     if (a.eolFrozenP1) {
@@ -3902,6 +3919,8 @@ public:
                         }
                     }
 
+                    // log::info("[EOL] ai: {}", ai);
+
                     const bool showP2 = a.hadDual && !a.p2.empty() &&
                         (ghostTime >= a.p2.front().t - 0.0001);
 
@@ -3920,6 +3939,8 @@ public:
                             continue;
                         }
                     }
+
+                    // log::info("[PRIMED] ai: {}", ai);
 
                     if (!a.colorsAssigned) {
                         refreshAttemptColors_(a);
@@ -4232,6 +4253,32 @@ private:
     // Cache the directory scan (updates when folder changes)
     std::vector<std::string> customSfx;
     std::filesystem::file_time_type customLastWrite{};
+    uint64_t m_lastCustomSfxRefreshTick = 0;
+
+    static constexpr uint64_t kCustomSfxRefreshIntervalTicks = 120;
+
+    void refreshAndPreloadCustomExplodeSfx_(bool force = false) {
+        if (!m_useCustomExplodeSounds)
+            return;
+
+        if (!force) {
+            const uint64_t elapsed = m_tickId - m_lastCustomSfxRefreshTick;
+            if (elapsed < kCustomSfxRefreshIntervalTicks)
+                return;
+        }
+
+        m_lastCustomSfxRefreshTick = m_tickId;
+
+        if (force) {
+            customLastWrite = {};
+        }
+
+        refreshCustomExplodeSfx_(customSfx, customLastWrite);
+
+        if (!customSfx.empty()) {
+            g_explodeLimiter.preloadAll(customSfx);
+        }
+    }
 
     void invalidateAttemptPointerCaches_() {
         m_currentOwner = nullptr;
@@ -4501,50 +4548,59 @@ private:
         return gm->colorForIdx(paletteIdx);
     }
 
-    FORCE_INLINE bool routeOwnersActive_() const {
-        return botActive
-            && m_hideAllOwnersDuringPracticeReplay
+    FORCE_INLINE bool practiceRouteOwnerHidingEnabled_() const {
+        return m_hideAllOwnersDuringPracticeReplay
             && (m_replayKind == ReplayKind::PracticeComposite)
             && routeIsComposite_();
+    }
+
+    FORCE_INLINE bool routeOwnersActive_() const {
+        return botActive && practiceRouteOwnerHidingEnabled_();
     }
 
     void rebuildRouteOwnerCache_() {
         m_routeOwnerSerials.clear();
         m_currentlyHiddenSerials.clear();
 
-        if (!routeOwnersActive_())
+        if (!practiceRouteOwnerHidingEnabled_())
             return;
 
-        const size_t est = m_spans.size() + 64;
-        m_routeOwnerSerials.reserve(est * 2);
-        m_currentlyHiddenSerials.reserve(est * 2);
+        const auto replaySeq = m_checkpointMgr.getReplaySequence();
 
-        if (!m_spans.empty()) {
-            for (auto const& sp : m_spans) {
-                if (sp.ownerSerial > 0) {
-                    m_routeOwnerSerials.insert(sp.ownerSerial);
-                    m_currentlyHiddenSerials.insert(sp.ownerSerial);
-                }
+        if (replaySeq.empty()) {
+            return;
+        }
+
+        m_routeOwnerSerials.reserve(replaySeq.size() * 2 + 8);
+        m_currentlyHiddenSerials.reserve(replaySeq.size() * 2 + 8);
+
+        for (auto const& seg : replaySeq) {
+            if (seg.ownerSerial > 0) {
+                m_routeOwnerSerials.insert(seg.ownerSerial);
             }
         }
 
-        m_checkpointMgr.gatherSessionOwnerSerials(m_routeOwnerSerials);
+        if (m_activeOwnerSerial > 0) {
+            m_routeOwnerSerials.insert(m_activeOwnerSerial);
+        }
 
-        m_currentlyHiddenSerials.reserve(m_currentlyHiddenSerials.size() + m_routeOwnerSerials.size());
         for (int serial : m_routeOwnerSerials) {
             m_currentlyHiddenSerials.insert(serial);
         }
     }
 
-    FORCE_INLINE bool isOwnerAnywhereInRoute_(size_t ai, Attempt const& a) const {
+    FORCE_INLINE bool isOwnerAnywhereInRoute_(Attempt const& a) const {
         if (!botActive) return false;
         if (a.ignorePlayback) return true;
 
-        if (m_hideAllOwnersDuringPracticeReplay && 
-            (m_replayKind == ReplayKind::PracticeComposite) &&
-            routeIsComposite_()) {
-            return (m_currentlyHiddenSerials.count(a.serial) != 0) || (m_activeOwnerSerial == a.serial);
-        }
+        if (!practiceRouteOwnerHidingEnabled_())
+            return false;
+
+        if (a.serial > 0 && m_routeOwnerSerials.count(a.serial) != 0)
+            return true;
+
+        if (a.serial > 0 && a.serial == m_activeOwnerSerial)
+            return true;
 
         return false;
     }
@@ -5577,7 +5633,8 @@ private:
                                 std::string sfxPath;
 
                                 if (m_useCustomExplodeSounds) {
-                                    refreshCustomExplodeSfx_(customSfx, customLastWrite);
+                                    refreshAndPreloadCustomExplodeSfx_(false);
+
                                     if (!customSfx.empty()) {
                                         std::uniform_int_distribution<size_t> dist(0, customSfx.size() - 1);
                                         sfxPath = customSfx[dist(rng)];
@@ -5661,6 +5718,8 @@ private:
             const float nv = fNext.vehicleSize;
             const float nw = fNext.waveSize;
             const double nt = fNext.t;
+
+            const float lasty = pc.y;
 
             float ix = fx, iy = fy, irot = fr;
             float iveh = fv, iwave = fw;
@@ -5890,12 +5949,16 @@ private:
                     }
 
                     if (trailActive && trail) {
+                        const bool isMovingUp = (iy > lasty);
                         // Add points on hold/slide state changes
                         if (fNext.hold != prevHolding) {
                             prevHolding = fNext.hold;
                             trail->addPoint({ix, iy});
                         }
                         else if (fNext.vehicleSize != f.vehicleSize) {
+                            trail->addPoint({ix, iy});
+                        }
+                        else if (pc.wasMovingUp != isMovingUp) {    
                             trail->addPoint({ix, iy});
                         }
                         else {
@@ -5905,6 +5968,9 @@ private:
                                 trail->addPoint({ix, iy});
                             }
                         }
+                        
+
+                        pc.wasMovingUp = isMovingUp;
                         
                         // Teleport visual wacky stuff
                         if (prevTeleported) {

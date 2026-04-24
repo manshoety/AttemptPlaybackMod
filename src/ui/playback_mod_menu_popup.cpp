@@ -335,7 +335,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.46", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.47", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
@@ -1531,6 +1531,8 @@ void PlaybackSettingsPopup::onToggleLimitVisible(CCObject*) {
 void PlaybackSettingsPopup::onToggleCustomDeathSound(CCObject*) {
     m_customDeathSoundOn = !m_customDeathSoundOn;
     refreshDependentVisibility_();
+    const bool resetGhostObjects = Ghosts::I().isReplaying();
+    Ghosts::I().refreshCustomDeathSfxNow(resetGhostObjects);
 }
 
 void PlaybackSettingsPopup::onOpenCustomDeathSoundFolder(CCObject*) {
@@ -1557,7 +1559,9 @@ void PlaybackSettingsPopup::onOpenCustomDeathSoundFolder(CCObject*) {
 
 void PlaybackSettingsPopup::onDownloadMemeSounds(CCObject*) {
     syncBundledExplodeSfxIntoCustomDir_();
-}
+    const bool resetGhostObjects = Ghosts::I().isReplaying();
+    Ghosts::I().refreshCustomDeathSfxNow(resetGhostObjects);
+} 
 
 void PlaybackSettingsPopup::onToggleOnlyPast(CCObject*) {
     m_onlyPastOn = !m_onlyPastOn;

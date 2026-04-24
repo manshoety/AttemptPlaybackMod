@@ -9,6 +9,7 @@
 #include <random>
 #include <string>
 #include <vector>
+#include <unordered_set>
 
 #include <Geode/Geode.hpp>
 #include <Geode/binding/FMODAudioEngine.hpp>
@@ -326,17 +327,49 @@ public:
     explicit SfxLimiter(int maxVoices = 20)
         : m_maxVoices(std::max(1, maxVoices)) {}
 
-    void setMaxVoices(int n) { m_maxVoices = std::max(1, n); }
+    void setMaxVoices(int n) {
+        m_maxVoices = std::max(1, n);
+    }
+
+    void clearPreloadCache() {
+        m_preloaded.clear();
+    }
+
+    void preload(std::string const& path) {
+        if (path.empty()) return;
+
+        auto* eng = FMODAudioEngine::sharedEngine();
+        if (!eng) return;
+
+        preloadOnce_(eng, path);
+    }
+
+    void preload(std::filesystem::path const& path) {
+        preload(geode::utils::string::pathToString(path));
+    }
+
+    void preloadAll(std::vector<std::string> const& paths) {
+        auto* eng = FMODAudioEngine::sharedEngine();
+        if (!eng) return;
+
+        for (auto const& s : paths) {
+            preloadOnce_(eng, s);
+        }
+    }
 
     void play(std::filesystem::path const& path, float volume = 1.f, float pitch = 1.f) {
+        play(geode::utils::string::pathToString(path), volume, pitch);
+    }
+
+    void play(std::string const& s, float volume = 1.f, float pitch = 1.f) {
+        if (s.empty()) return;
+
         auto* eng = FMODAudioEngine::sharedEngine();
         if (!eng) return;
 
         pruneDead_(eng);
 
-        const auto s = geode::utils::string::pathToString(path);
-
-        eng->preloadEffect(s);
+        preloadOnce_(eng, s);
 
         while ((int)m_live.size() >= m_maxVoices) {
             eng->stopChannel(m_live.front().channelID);
@@ -361,7 +394,7 @@ public:
             /*loopEnabled*/ false,
             /*effectID*/ effectID,
             /*override*/ false,
-            /*noPreload*/ false,
+            /*noPreload*/ true,
             /*channelID*/ channelID,
             /*uniqueID*/ 0,
             /*minInterval*/ 0.f,
@@ -372,6 +405,14 @@ public:
     }
 
 private:
+    void preloadOnce_(FMODAudioEngine* eng, std::string const& s) {
+        if (!eng || s.empty()) return;
+
+        if (m_preloaded.insert(s).second) {
+            eng->preloadEffect(s);
+        }
+    }
+
     void pruneDead_(FMODAudioEngine* eng) {
         for (auto it = m_live.begin(); it != m_live.end();) {
             FMOD::Channel* ch = eng->channelForChannelID(it->channelID);
@@ -394,6 +435,8 @@ private:
 
 private:
     std::deque<ActiveSfx> m_live;
+    std::unordered_set<std::string> m_preloaded;
+
     int m_maxVoices = 20;
     int m_effectIDCounter = 600000;
 };

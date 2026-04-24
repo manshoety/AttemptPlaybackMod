@@ -1,3 +1,7 @@
+# 1.4.47
+- FIX: Wave trail sliding issue on gravity switch
+- FIX: Ghost visibility bug in practice playback
+- FIX: MASSIVE lag fix when using custom death sounds
 # 1.4.46
 - FIX: Ghosts not resetting properly on restart (leading to many not showing up after restart)
 - FIX: With max ghost offset, negative ghosts could be off the screen, now they wrap around to positive

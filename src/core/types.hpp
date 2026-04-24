@@ -345,6 +345,7 @@ struct PoseCache {
     bool upsideDown = false;
     bool isDashing = false;
     bool visible = false;
+    bool wasMovingUp = false;
     IconAnimationState robotState = IconAnimationState::Idle;
     IconAnimationState spiderState = IconAnimationState::Idle;
 };

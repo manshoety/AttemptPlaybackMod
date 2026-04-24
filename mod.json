@@ -8,7 +8,7 @@
   },
   "id": "manshoety.attemptplayback",
   "name": "Attempt Playback",
-  "version": "v1.4.46",
+  "version": "v1.4.47",
   "developer": "manshoety",
   "description": "Allows you to see all past attempts as ghosts",
   "dependencies": {
@@ -42,7 +42,6 @@
       "min": 250,
       "max": 5000
     },
-    
     "record-in-practice": {
       "name": "Record in Practice",
       "description": "If off, new attempts made in Practice are ignored",
