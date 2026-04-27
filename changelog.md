@@ -1,3 +1,6 @@
+# 1.4.50
+- FIX: Calculates player clicks and state over all frames since last update (fixes accidentally skipping a frame of click or wave update)
+- FIX: Did the same for the ghost waves
 # 1.4.48
 - FIX: Click and frame alignment fix (was 2 frames off)
 - FIX: Wave trail overhaul (all fixes only apply to new recordings)

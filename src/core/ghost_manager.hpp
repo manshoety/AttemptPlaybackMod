@@ -2836,78 +2836,83 @@ public:
     }
 
     void syncInputsToCurrentIndexP1_() {
-        if (m_pl->m_player1 && !m_currentOwner->p1.empty() && m_replayIdx1 < m_currentOwner->p1.size()) {
-            const Frame& F = m_currentOwner->p1[std::min(m_currentOwner->p1.size()-1, m_replayIdx1+2)];
-            if (F.hold  != botPrevHold1) {
-                // best method but might not work due to Click Between Frames
-                m_pl->handleButton(F.hold, /*btn=*/1, /*isP1=*/true);
+        if (!m_pl->m_player1 || m_currentOwner->p1.empty()) return;
+        for (size_t i = m_lastEmitIdx1 + 1; i <= m_replayIdx1; ++i) {
+            if (i < m_currentOwner->p1.size()) {
+                const Frame& F = m_currentOwner->p1[std::min(m_currentOwner->p1.size()-1, i+2)];
+                if (F.hold  != botPrevHold1) {
+                    // best method but might not work due to Click Between Frames
+                    m_pl->handleButton(F.hold, /*btn=*/1, /*isP1=*/true);
 
-                // if didn't work
-                if (F.hold != p1Hold) {
-                    if (F.hold) m_pl->m_player1->pushButton(PlayerButton::Jump);
-                    else m_pl->m_player1->releaseButton(PlayerButton::Jump);
+                    // if didn't work
+                    if (F.hold != p1Hold) {
+                        if (F.hold) m_pl->m_player1->pushButton(PlayerButton::Jump);
+                        else m_pl->m_player1->releaseButton(PlayerButton::Jump);
+                    }
+                    
+                    botPrevHold1  = F.hold;
                 }
-                
-                botPrevHold1  = F.hold;
-            }
-            if (F.holdL != botPrevHoldL1) {
-                m_pl->handleButton(F.holdL, /*btn=*/2, /*isP1=*/true);
+                if (F.holdL != botPrevHoldL1) {
+                    m_pl->handleButton(F.holdL, /*btn=*/2, /*isP1=*/true);
 
-                if (F.holdL != p1LHold) {
-                    if (F.holdL) m_pl->m_player1->pushButton(PlayerButton::Left);
-                    else m_pl->m_player1->releaseButton(PlayerButton::Left);
+                    if (F.holdL != p1LHold) {
+                        if (F.holdL) m_pl->m_player1->pushButton(PlayerButton::Left);
+                        else m_pl->m_player1->releaseButton(PlayerButton::Left);
+                    }
+
+                    botPrevHoldL1 = F.holdL;
                 }
+                if (F.holdR != botPrevHoldR1) {
+                    m_pl->handleButton(F.holdR, /*btn=*/3, /*isP1=*/true);
 
-                botPrevHoldL1 = F.holdL;
-            }
-            if (F.holdR != botPrevHoldR1) {
-                m_pl->handleButton(F.holdR, /*btn=*/3, /*isP1=*/true);
+                    if (F.holdR != p1RHold) {
+                        if (F.holdR) m_pl->m_player1->pushButton(PlayerButton::Right);
+                        else m_pl->m_player1->releaseButton(PlayerButton::Right);
+                    }
 
-                if (F.holdR != p1RHold) {
-                    if (F.holdR) m_pl->m_player1->pushButton(PlayerButton::Right);
-                    else m_pl->m_player1->releaseButton(PlayerButton::Right);
+                    botPrevHoldR1 = F.holdR;
                 }
-
-                botPrevHoldR1 = F.holdR;
             }
         }
         m_lastEmitIdx1 = m_replayIdx1;
     }
 
     void syncInputsToCurrentIndexP2_() {
+        if (!m_pl->m_player2 || !m_currentOwner->hadDual || m_currentOwner->p2.empty()) return;
+        for (size_t i = m_lastEmitIdx2 + 1; i <= m_replayIdx2; ++i) {
+            if (i < m_currentOwner->p2.size()) {
+                const Frame& F2 = m_currentOwner->p2[std::min(m_currentOwner->p2.size()-1, i+2)];
+                if (F2.hold  != botPrevHold2) {
+                    // best method but might not work due to Click Between Frames
+                    m_pl->handleButton(F2.hold, /*btn=*/1, /*isP1=*/false);
 
-        if (m_pl->m_player2 && m_currentOwner->hadDual && !m_currentOwner->p2.empty() && m_replayIdx2  < m_currentOwner->p2.size()) {
-            const Frame& F2 = m_currentOwner->p2[std::min(m_currentOwner->p2.size()-1, m_replayIdx2+2)];
-            if (F2.hold  != botPrevHold2) {
-                // best method but might not work due to Click Between Frames
-                m_pl->handleButton(F2.hold, /*btn=*/1, /*isP1=*/false);
-
-                // if didn't work
-                if (F2.hold != p2Hold) {
-                    if (F2.hold)  m_pl->m_player2->pushButton(PlayerButton::Jump);
-                    else m_pl->m_player2->releaseButton(PlayerButton::Jump);
+                    // if didn't work
+                    if (F2.hold != p2Hold) {
+                        if (F2.hold)  m_pl->m_player2->pushButton(PlayerButton::Jump);
+                        else m_pl->m_player2->releaseButton(PlayerButton::Jump);
+                    }
+                    botPrevHold2 = F2.hold;
                 }
-                botPrevHold2 = F2.hold;
-            }
-            if (F2.holdL != botPrevHoldL2) {
-                m_pl->handleButton(F2.holdL, /*btn=*/2, /*isP1=*/false);
+                if (F2.holdL != botPrevHoldL2) {
+                    m_pl->handleButton(F2.holdL, /*btn=*/2, /*isP1=*/false);
 
-                if (F2.holdL != p2LHold) {
-                    if (F2.holdL) m_pl->m_player2->pushButton(PlayerButton::Left);
-                    else m_pl->m_player2->releaseButton(PlayerButton::Left);
+                    if (F2.holdL != p2LHold) {
+                        if (F2.holdL) m_pl->m_player2->pushButton(PlayerButton::Left);
+                        else m_pl->m_player2->releaseButton(PlayerButton::Left);
+                    }
+                    
+                    botPrevHoldL2 = F2.holdL;
                 }
-                
-                botPrevHoldL2 = F2.holdL;
-            }
-            if (F2.holdR != botPrevHoldR2) {
-                m_pl->handleButton(F2.holdR, /*btn=*/3, /*isP1=*/false);
+                if (F2.holdR != botPrevHoldR2) {
+                    m_pl->handleButton(F2.holdR, /*btn=*/3, /*isP1=*/false);
 
-                if (F2.holdR != p2RHold) {
-                    if (F2.holdR) m_pl->m_player2->pushButton(PlayerButton::Right);
-                    else m_pl->m_player2->releaseButton(PlayerButton::Right);
+                    if (F2.holdR != p2RHold) {
+                        if (F2.holdR) m_pl->m_player2->pushButton(PlayerButton::Right);
+                        else m_pl->m_player2->releaseButton(PlayerButton::Right);
+                    }
+                    
+                    botPrevHoldR2 = F2.holdR;
                 }
-                
-                botPrevHoldR2 = F2.holdR;
             }
         }
         m_lastEmitIdx2 = m_replayIdx2;
@@ -3424,6 +3429,7 @@ public:
 
         if (isPlayer1) syncInputsToCurrentIndexP1_();
         else if (m_isTwoPlayer) syncInputsToCurrentIndexP2_();
+        else m_lastEmitIdx2 = m_replayIdx2;
 
         m_allowSetPlayerClickState = false;
 
@@ -3633,12 +3639,12 @@ public:
             size_t idx1 = m_replayIdx1 + 2;
             if (idx1 >= m_currentOwner->p1.size()) idx1 = m_currentOwner->p1.size() - 1;
             
-            if (isPlayer1) applyFrameToPlayer_Only_(m_pl->m_player1, m_currentOwner->p1, idx1, m_currentSessionTime, true);
+            if (isPlayer1) applyFrameToPlayerOverRange(m_pl->m_player1, m_currentOwner->p1, idx1, m_currentSessionTime, true);
             else {
                 if (m_currentOwner->hadDual && m_pl->m_player2 && !m_currentOwner->p2.empty()) {
                     size_t idx2 = m_replayIdx2 + 2;
                     if (idx2 >= m_currentOwner->p2.size()) idx2 = m_currentOwner->p2.size() - 1;
-                    applyFrameToPlayer_Only_(m_pl->m_player2, m_currentOwner->p2, idx2, m_currentSessionTime, false);
+                    applyFrameToPlayerOverRange(m_pl->m_player2, m_currentOwner->p2, idx2, m_currentSessionTime, false);
                 }
             }
             checkIfPlayerIsDonePlaybackThingMaybePerhapsYeah();
@@ -3668,12 +3674,12 @@ public:
         size_t idx1 = m_replayIdx1 + 2;
         if (idx1 >= m_currentOwner->p1.size()) idx1 = m_currentOwner->p1.size() - 1;
         
-        if (isPlayer1) applyFrameToPlayer_Only_(m_pl->m_player1, m_currentOwner->p1, idx1, m_currentSessionTime, true);
+        if (isPlayer1) applyFrameToPlayerOverRange(m_pl->m_player1, m_currentOwner->p1, idx1, m_currentSessionTime, true);
         else {
             if (m_currentOwner->hadDual && m_pl->m_player2 && !m_currentOwner->p2.empty()) {
                 size_t idx2 = m_replayIdx2 + 2;
                 if (idx2 >= m_currentOwner->p2.size()) idx2 = m_currentOwner->p2.size() - 1;
-                applyFrameToPlayer_Only_(m_pl->m_player2, m_currentOwner->p2, idx2, m_currentSessionTime, false);
+                applyFrameToPlayerOverRange(m_pl->m_player2, m_currentOwner->p2, idx2, m_currentSessionTime, false);
             }
         }
 
@@ -5869,6 +5875,7 @@ private:
             const double lastT = frames.back().t;
 
             double tStart = getTimeMs();  
+            size_t previousIDXForWavePoints = std::min(frameIdx, lastIdx);
             if (!eolFrozen) {
                 
                 size_t previousIDX = frameIdx;
@@ -6224,7 +6231,24 @@ private:
                         const bool isMovingUp = (iy > lasty);
                         bool addedWavePoint = false;
                         // Add points on hold/slide state changes
-                        if (f.wavePointThisFrame) {
+                        if (drawIdx > previousIDXForWavePoints) {
+                            const size_t waveStart = std::min(previousIDXForWavePoints + 1, lastIdx);
+                            const size_t waveEnd = std::min(drawIdx, lastIdx);
+
+                            for (size_t wi = waveStart; wi <= waveEnd; ++wi) {
+                                const Frame& wf = frames[wi];
+
+                                if (wf.wavePointThisFrame) {
+                                    hasWavePointData = true;
+
+                                    if (wi == drawIdx) {
+                                        trail->addPoint({ix, iy});
+                                    } else {
+                                        trail->addPoint({wf.x, wf.y});
+                                    }
+                                }
+                            }
+                        } else if (f.wavePointThisFrame) {
                             hasWavePointData = true;
                             trail->addPoint({ix, iy});
                         }
@@ -6754,20 +6778,21 @@ private:
         //p1RHold = p2RHold = false;
     }
 
-    void waveTrailAddPointToPlayer(HardStreak* m_waveTrail, cocos2d::CCPoint point, bool isP1) {
+    void waveTrailAddPointToPlayer(HardStreak* m_waveTrail, cocos2d::CCPoint point, bool isP1, bool m_skip) {
+        if (m_skip) return;
         m_allowWavePointAdding = true;
         m_waveTrail->addPoint(point);
         m_allowWavePointAdding = false;
         // if (!isP1) log::info("px: {}, py: {}", point.x, point);
     }
 
-    void applyFrameToPlayer_Only_(
+    void applyFrameToPlayerOverRange(
         PlayerObject* p,
         const std::vector<Frame>& v,
         size_t baseIdx,
         double sessionTime,
-        bool isP1 = true
-    ) {
+        bool isP1 = true) {
+        
         if (!m_setRealPlayerPosition) return;
         if (!p || v.empty()) return;
         if (m_freezePlayerXAtEnd) return;
@@ -6775,210 +6800,124 @@ private:
         const double firstT = v.front().t;
         const double lastT  = v.back().t;
         const bool inside  = (sessionTime >= firstT && sessionTime <= lastT);
+        size_t& lastApplyIdx = isP1 ? m_lastEmitIdx1 : m_lastEmitIdx2;
 
-        size_t i = baseIdx;
-        if (i >= v.size()) i = v.size() - 1;
+        const size_t endIdx = std::min(baseIdx, v.size() - 1);
 
-        const Frame& a = v[i];
-        const bool haveNext = (i + 1 < v.size());
-        const Frame* b = haveNext ? &v[i + 1] : nullptr;
+        size_t startIdx = endIdx;
 
-        bool hasData = false;
-        Frame finterp{};
-
-        if (m_useInterpolation && inside && b &&
-            sessionTime >= a.t && sessionTime <= b->t) {
-
-            const double dt = b->t - a.t;
-            const double t  = dt > 1e-9 ? (sessionTime - a.t) / dt : 0.0;
-
-            finterp = a;
-
-            finterp.x   = a.x   + (b->x   - a.x)   * t;
-            finterp.y   = a.y   + (b->y   - a.y)   * t;
-            finterp.rot = a.rot + (b->rot - a.rot) * t;
-
-            finterp.mode        = a.mode;
-            finterp.upsideDown  = a.upsideDown;
-            finterp.isDashing   = a.isDashing;
-
-            hasData = true;
-            
-        }
-        else {
-            finterp = a;
-            hasData = true;
+        if (lastApplyIdx != std::numeric_limits<size_t>::max() &&
+            lastApplyIdx < endIdx &&
+            lastApplyIdx < v.size()) {
+            startIdx = lastApplyIdx + 1;
         }
 
-        if (p->m_isDashing != finterp.isDashing) {
-            if (finterp.isDashing) p->startDashing(attemptplayback::p0d());
-            else p->stopDashing();
-        }
+        log::info("p1: {} from {} to {}", isP1, startIdx, endIdx);
 
-        if (p->m_isUpsideDown != finterp.upsideDown)
-            p->flipGravity(finterp.upsideDown, true);
+        for (size_t i = startIdx; i <= endIdx; ++i) {
+            if (i >= v.size()) i = v.size() - 1;
+            const Frame& a = v[i];
+            const bool haveNext = (i + 1 < v.size());
+            const Frame* b = haveNext ? &v[i + 1] : nullptr;
 
-        if (currentMode(p, m_pl->m_isPlatformer) != finterp.mode) {
-            forceMode(p, finterp.mode, /*isRealPlayer*/ true);
-        }
+            if (p->m_isDashing != a.isDashing) {
+                if (a.isDashing) p->startDashing(attemptplayback::p0d());
+                else p->stopDashing();
+            }
 
-        const bool isWave = (currentMode(p, m_pl->m_isPlatformer) == IconType::Wave);
-        const float ix = a.x;
-        const float iy = a.y;
-        float prevY = p->getPositionY();
-        float prevX = p->getPositionX();
+            if (p->m_isUpsideDown != a.upsideDown)
+                p->flipGravity(a.upsideDown, true);
 
-        bool addedWavePoint = false;
-        if (isWave && a.wavePointThisFrame && p->m_waveTrail) {
-            m_hasWavePointData = true;
-            waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1);
-            addedWavePoint = true;
-        }
-        else if (isWave && !addedWavePoint && prevHold != a.hold) {
-            waveTrailAddPointToPlayer(p->m_waveTrail, {prevX, prevY}, isP1);
-            addedWavePoint = true;
-        }
-        prevHold = a.hold;
+            if (currentMode(p, m_pl->m_isPlatformer) != a.mode) {
+                forceMode(p, a.mode, /*isRealPlayer*/ true);
+            }
 
-        
+            const bool isWave = (currentMode(p, m_pl->m_isPlatformer) == IconType::Wave);
+            const float ix = a.x;
+            const float iy = a.y;
+            float prevY = p->getPositionY();
+            float prevX = p->getPositionX();
 
-        //MovementDirection currentMovementDirection = MovementDirection::Flat;
+            bool addedWavePoint = false;
+            if (isWave && a.wavePointThisFrame && p->m_waveTrail) {
+                m_hasWavePointData = true;
+                waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, m_p2JustSpawned);
+                addedWavePoint = true;
+            }
+            else if (isWave && !addedWavePoint && prevHold != a.hold) {
+                waveTrailAddPointToPlayer(p->m_waveTrail, {prevX, prevY}, isP1, m_p2JustSpawned);
+                addedWavePoint = true;
+            }
+            prevHold = a.hold;
 
-        //if (prevY > iy) currentMovementDirection = MovementDirection::Down;
-        //else if (prevY < iy) currentMovementDirection = MovementDirection::Up;
-
-        //if (isWave && p->m_waveTrail && currentMovementDirection != m_movementDirection && !addedWavePoint) {
-        //    waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy});
-        //    addedWavePoint = true;
-        //}
-        //m_movementDirection = currentMovementDirection;
-
-        if (isWave && p->m_waveTrail) {
-            p->m_waveTrail->setVisible(true);
-            p->m_waveTrail->setOpacity(255);
-            p->m_waveTrail->resumeStroke();
-        }
-
-        // Wave teleport goop
-        if (m_playerPrevTeleported) {
-            //p->playerTeleported();
             if (isWave && p->m_waveTrail) {
-                p->m_waveTrail->reset();
-                p->m_waveTrail->resumeStroke();
-                if (!addedWavePoint) {
-                    waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1);
-                    addedWavePoint = true;
-                }
-            }
-            auto gl = GJBaseGameLayer::get();
-            //gl->updateCamera(20.0f);
-            m_playerPrevTeleported = false;
-        }
-        bool teleported = (b && std::fabs(static_cast<float>(b->y) - iy) > kWaveTeleportedTolerance);
-        if (teleported) {
-            if (isWave && p->m_waveTrail) p->m_waveTrail->stopStroke();
-            //p->playerTeleported();
-            auto gl = GJBaseGameLayer::get();
-            //gl->updateCamera(20.0f);
-            m_playerPrevTeleported = true;
-        }
-
-        // if (!isP1) log::info("P2 spawned: {}, p2x: {}", m_p2JustSpawned, p->getPositionX());
-
-        p->setVisible(true);
-        p->setOpacity(255);
-        
-        //if (m_playerPrevTeleported) {
-        //    auto bl = GJBaseGameLayer::get();
-        //    bool prevState = disablePlayerMove;
-        //    disablePlayerMove = false;
-        //    m_teleport_helper.snapTeleport(bl, p, {finterp.x, finterp.y});
-        //    disablePlayerMove = prevState;
-        //    m_playerPrevTeleported = false;
-        //}
-        //else 
-
-        //auto bl = GJBaseGameLayer::get();
-        //bool prevState = disablePlayerMove;
-        //m_teleport_helper.snapTeleport(bl, p, {finterp.x, finterp.y});
-
-        p->setPosition({ finterp.x, finterp.y });
-
-        if (std::fabs(iy - prevY) > kWaveTeleportedTolerance*8) m_speedUpCameraAnimationAfterTeleportForNFrames = 5;
-
-        if (m_speedUpCameraAnimationAfterTeleportForNFrames > 0) {
-            auto gl = GJBaseGameLayer::get();
-            gl->updateCamera(20.0f);
-            m_speedUpCameraAnimationAfterTeleportForNFrames--;
-        }
-
-        //if (m_playerPrevTeleported) {
-        //    auto gl = GJBaseGameLayer::get();
-        //    gl->updateCamera(20.0f);
-        //}
-
-        // Doesn't work well. I might have to record camera pos for each teleport in the level and save that as an extra thing for each level save file
-        /*
-        if (std::fabs(finterp.y - prevY) > kWaveTeleportedTolerance) {
-            // Same camera position stuff I do 
-            auto* director = cocos2d::CCDirector::sharedDirector();
-            auto* worldNode = m_pl->m_objectLayer;
-                
-            cocos2d::CCPoint tlScreen{director->m_fScreenLeft, director->m_fScreenTop};
-            cocos2d::CCPoint brScreen{director->m_fScreenRight, director->m_fScreenBottom};
-                
-            cocos2d::CCPoint tl = worldNode->convertToNodeSpace(tlScreen);
-            cocos2d::CCPoint br = worldNode->convertToNodeSpace(brScreen);
-
-            // Handle mirror portal coordinate inversion
-            if (tl.x > br.x) std::swap(tl.x, br.x);
-            if (br.y > tl.y) std::swap(br.y, tl.y);
-
-            const float middleY = tl.y - br.y;
-
-            
-            // gl->cameraMoveY(finterp.y - middleY, 0.f, 0.f, true);
-            // gl->checkCameraLimitAfterTeleport(p, finterp.y - middleY);
-            // gl->moveCameraToPos({ finterp.x, finterp.y });
-            // m_teleport_helper.snapTeleport(gl, p, {prevX, prevY}, {finterp.x, finterp.y});
-            // gl->resetStaticCamera(true, true);
-            
-        }*/
-        
-
-
-        if (isWave) {
-            p->setRotation(a.rot);
-
-            if (m_fixWaveTrailAfterSpawnP2ForNFrames > 0) {
-                p->m_waveTrail->stopStroke();
-                p->m_waveTrail->reset();
-                p->m_waveTrail->resumeStroke();
-                if (!addedWavePoint) {
-                    waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1);
-                    addedWavePoint = true;
-                }
-                m_fixWaveTrailAfterSpawnP2ForNFrames--;
-            }
-            
-            // Fix player 2 wave trail visual bug when spawning in
-            if (m_p2JustSpawned && p->m_waveTrail) {
-                m_fixWaveTrailAfterSpawnP2ForNFrames = 2;
-                p->m_waveTrail->reset();
-                p->m_waveTrail->resumeStroke();
-                if (!addedWavePoint) {
-                    waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1);
-                    addedWavePoint = true;
-                }
                 p->m_waveTrail->setVisible(true);
                 p->m_waveTrail->setOpacity(255);
-                m_p2JustSpawned = false;
+                p->m_waveTrail->resumeStroke();
             }
-            
+
+            // Wave teleport goop
+            if (m_playerPrevTeleported) {
+                if (isWave && p->m_waveTrail) {
+                    p->m_waveTrail->reset();
+                    p->m_waveTrail->resumeStroke();
+                    if (!addedWavePoint) {
+                        waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, m_p2JustSpawned);
+                        addedWavePoint = true;
+                    }
+                }
+                auto gl = GJBaseGameLayer::get();
+                m_playerPrevTeleported = false;
+            }
+            bool teleported = (b && std::fabs(static_cast<float>(b->y) - iy) > kWaveTeleportedTolerance);
+            if (teleported) {
+                if (isWave && p->m_waveTrail) p->m_waveTrail->stopStroke();
+                m_playerPrevTeleported = true;
+            }
+
+            p->setVisible(true);
+            p->setOpacity(255);
+
+            p->setPosition({ a.x, a.y });
+
+            if (std::fabs(iy - prevY) > kWaveTeleportedTolerance*8) m_speedUpCameraAnimationAfterTeleportForNFrames = 5;
+
+            if (m_speedUpCameraAnimationAfterTeleportForNFrames > 0) {
+                auto gl = GJBaseGameLayer::get();
+                gl->updateCamera(20.0f);
+                m_speedUpCameraAnimationAfterTeleportForNFrames--;
+            }
+
+            if (isWave) {
+                p->setRotation(a.rot);
+
+                //if (m_fixWaveTrailAfterSpawnP2ForNFrames > 0) {
+                //    p->m_waveTrail->stopStroke();
+                //    p->m_waveTrail->reset();
+                //    p->m_waveTrail->resumeStroke();
+                //    if (!addedWavePoint) {
+                //        waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, false);
+                //        addedWavePoint = true;
+                //    }
+                //    m_fixWaveTrailAfterSpawnP2ForNFrames--;
+                //}
+                
+                // Fix player 2 wave trail visual bug when spawning in
+                if (m_p2JustSpawned && p->m_waveTrail) {
+                    //m_fixWaveTrailAfterSpawnP2ForNFrames = 2;
+                    p->m_waveTrail->reset();
+                    p->m_waveTrail->resumeStroke();
+                    if (!addedWavePoint) {
+                        waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, false);
+                        addedWavePoint = true;
+                    }
+                    p->m_waveTrail->setVisible(true);
+                    p->m_waveTrail->setOpacity(255);
+                    m_p2JustSpawned = false;
+                }
+            }
+            else p->setRotation(a.rot);
         }
-        else p->setRotation(finterp.rot);
-        
-        // m_allowWavePointAdding = !addedWavePoint;
     }
 
     static void emitTransitionsOverRange_(const std::vector<Frame>& v,
