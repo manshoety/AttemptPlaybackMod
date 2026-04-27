@@ -1,3 +1,5 @@
+# 1.4.51
+- FIX: more wave trail fixes
 # 1.4.50
 - FIX: Calculates player clicks and state over all frames since last update (fixes accidentally skipping a frame of click or wave update)
 - FIX: Did the same for the ghost waves

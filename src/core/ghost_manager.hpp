@@ -2309,7 +2309,7 @@ public:
         forceSetPosP1.y = 105.f;
         forceSetPosP2.x = 0.f;
         forceSetPosP2.y = 105.f;
-        prevHold = false;
+        m_noP2Check = false;
 
         // log::info("onReset");
 
@@ -3445,6 +3445,7 @@ public:
         if (hasP2Now && !m_prevHadP2) m_p2JustSpawned = true;
         // m_p2JustSpawned = (hasP2Now && !m_prevHadP2); Now set this in applyFrameToPlayer_Only_
         m_prevHadP2 = hasP2Now;
+        m_noP2Check = false;
     }
 
     void preUpdate() {
@@ -3457,16 +3458,17 @@ public:
         m_currentSessionTime = m_baseTime + m_pl->m_attemptTime;
         updateCurrentAttemptNoclipState();
 
-        if (!botActive) return;
-
         // Check when not dual
-        if (m_prevHadP2) {
-            float p2pos = 0.f;
-            if (m_pl->m_player2) p2pos = m_pl->m_player2->getPositionX();
-            if (p2pos == 0.f) m_prevHadP2 = false;
-            // log::info("p2 pos: {}", p2pos);
+        if (m_noP2Check) {
+            m_prevHadP2 = false;
+            m_p2JustSpawned = false;
         }
-        else m_px2 = m_px;
+        m_noP2Check = true;
+
+        // log::info("m_prevHadP2: {}", m_prevHadP2);
+
+        if (!botActive) return;
+        if (!m_prevHadP2) m_px2 = m_px;
         
         bool timeWentBack = (m_currentSessionTime < m_prevSessionTime - 0.05);
         m_IHateMirrorPortalsSoRewind = timeWentBack;
@@ -4152,6 +4154,7 @@ private:
     bool death_sound_preloaded = false;
     bool m_p2JustSpawned = false;
     bool m_prevHadP2 = false;
+    bool m_noP2Check = false;
     bool m_ghostsExplode = false;
     bool m_ghostsExplodeSFX = false;
     bool m_randomIcons = true;
@@ -4170,7 +4173,6 @@ private:
     bool m_allowWavePointAdding = false;
     bool m_skipHardStreakCheck = false;
     MovementDirection m_movementDirection = MovementDirection::Flat;
-    bool prevHold = false;
 
     double finalTime = 0.f;
 
@@ -6778,12 +6780,36 @@ private:
         //p1RHold = p2RHold = false;
     }
 
-    void waveTrailAddPointToPlayer(HardStreak* m_waveTrail, cocos2d::CCPoint point, bool isP1, bool m_skip) {
-        if (m_skip) return;
+    bool waveTrailAddPointToPlayer(HardStreak* m_waveTrail, cocos2d::CCPoint point, bool isP1, bool m_skip) {
+        if (m_skip) return false;
+        if (!m_waveTrail || !m_waveTrail->m_pointArray) return false;
+
+        auto arr = m_waveTrail->m_pointArray;
+
+        if (arr->count() > 0) {
+            auto lastObj = arr->lastObject();
+            auto lastNode = static_cast<PointNode*>(lastObj);
+
+            if (!lastNode) return false;
+
+            cocos2d::CCPoint previousPoint = lastNode->m_point;
+
+            //log::info(
+            //    "previous point: px={}, py={} | new point: px={}, py={}",
+            //    previousPoint.x, previousPoint.y,
+            //    point.x, point.y
+            //);
+
+            if (previousPoint.x == point.x && previousPoint.y == point.y) return false;
+            if (point.x < previousPoint.x) return false;
+        }
+
         m_allowWavePointAdding = true;
         m_waveTrail->addPoint(point);
         m_allowWavePointAdding = false;
-        // if (!isP1) log::info("px: {}, py: {}", point.x, point);
+
+        // log::info("p1: {} px: {}, py: {}", isP1, point.x, point.y);
+        return true;
     }
 
     void applyFrameToPlayerOverRange(
@@ -6796,6 +6822,8 @@ private:
         if (!m_setRealPlayerPosition) return;
         if (!p || v.empty()) return;
         if (m_freezePlayerXAtEnd) return;
+
+        // log::info("isP1: {}, time: {}", isP1, sessionTime);
 
         const double firstT = v.front().t;
         const double lastT  = v.back().t;
@@ -6812,13 +6840,15 @@ private:
             startIdx = lastApplyIdx + 1;
         }
 
-        log::info("p1: {} from {} to {}", isP1, startIdx, endIdx);
+        // log::info("p1: {} from {} to {}", isP1, startIdx, endIdx);
 
         for (size_t i = startIdx; i <= endIdx; ++i) {
             if (i >= v.size()) i = v.size() - 1;
             const Frame& a = v[i];
             const bool haveNext = (i + 1 < v.size());
             const Frame* b = haveNext ? &v[i + 1] : nullptr;
+            const bool havePrevious = (i>0);
+            const Frame* prev = havePrevious ? &v[i - 1] : nullptr;
 
             if (p->m_isDashing != a.isDashing) {
                 if (a.isDashing) p->startDashing(attemptplayback::p0d());
@@ -6841,14 +6871,11 @@ private:
             bool addedWavePoint = false;
             if (isWave && a.wavePointThisFrame && p->m_waveTrail) {
                 m_hasWavePointData = true;
-                waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, m_p2JustSpawned);
-                addedWavePoint = true;
+                addedWavePoint = waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, m_p2JustSpawned);
             }
-            else if (isWave && !addedWavePoint && prevHold != a.hold) {
-                waveTrailAddPointToPlayer(p->m_waveTrail, {prevX, prevY}, isP1, m_p2JustSpawned);
-                addedWavePoint = true;
+            else if (isWave && !addedWavePoint && prev && prev->hold != a.hold) {
+                addedWavePoint = waveTrailAddPointToPlayer(p->m_waveTrail, {static_cast<float>(prev->x), static_cast<float>(prev->y)}, isP1, m_p2JustSpawned);
             }
-            prevHold = a.hold;
 
             if (isWave && p->m_waveTrail) {
                 p->m_waveTrail->setVisible(true);
@@ -6862,8 +6889,7 @@ private:
                     p->m_waveTrail->reset();
                     p->m_waveTrail->resumeStroke();
                     if (!addedWavePoint) {
-                        waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, m_p2JustSpawned);
-                        addedWavePoint = true;
+                        addedWavePoint = waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, m_p2JustSpawned);
                     }
                 }
                 auto gl = GJBaseGameLayer::get();
@@ -6908,8 +6934,7 @@ private:
                     p->m_waveTrail->reset();
                     p->m_waveTrail->resumeStroke();
                     if (!addedWavePoint) {
-                        waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, false);
-                        addedWavePoint = true;
+                        addedWavePoint = waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, false);
                     }
                     p->m_waveTrail->setVisible(true);
                     p->m_waveTrail->setOpacity(255);
