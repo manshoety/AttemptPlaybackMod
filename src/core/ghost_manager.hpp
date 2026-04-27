@@ -74,19 +74,13 @@
 // Camera pans when teleporting large y (sort of partially fixed by speeding up the camera when teleporting, but still buggy)
 
 // Fix:
-// glow color incorrect on ghosts
 // wave trail color when reverse color selected
-// wave trail of dual when entering still buggy (single wave going in and out of dual)
-// Player frame when dual has separate icons and colors
+// Player frame when dual has separate icons (I did the colors and glow already)
 // If wave trail larger maybe set the ghost trail larger, but be careful of weird values that aren't reflecting the actual wave trail people see on screen
-// Check if the game updates position or rotation first and mimic that with the player update
-// Ensure click is occuring on correct frame (for 240 and for 60 fps)
-// Change the bool for wave sliding in recording that I don't use anymore into a bool for "set wave point this frame" (hook the function)
 // Wave trail sometimes vanishes for some reason on real player, so ensure that is visible (player 2 teleported which stopped and started p2 wave trail, then p2 teleported and had no wave trail)
 // Ensure this doesn't conflict with the wave trail draw fix mod on Geode
 // Player rotation is set by the game after I set it, so slightly wrong (ensure overriding this doesn't break follow player rotation objects)
 // On every ghost death it turns on and off auto-deafen
-// 
 
 using namespace geode::prelude;
 
@@ -5232,29 +5226,47 @@ private:
         if (!a.colorsAssigned) {
             if (colors == ColorMode::Random) {
                 uint32_t seed = static_cast<uint32_t>(a.serial) ^ 0xA5339E4Du;
-                a.c1 = randomGameColor(seed);
-                a.c2 = randomGameColor(seed ^ 0xBADA551u);
+                a.c1p1 = randomGameColor(seed);
+                a.c2p1 = randomGameColor(seed ^ 0xBADA551u);
+                a.c1p2 = a.c1p1;
+                a.c2p2 = a.c2p1;
             } else {
-                a.c1 = chooseColor1();
-                a.c2 = chooseColor2();
+                a.c1p1 = chooseColor1(true);
+                a.c2p1 = chooseColor2(true);
+                a.c1p2 = chooseColor1(false);
+                a.c2p2 = chooseColor2(false);
+                a.cgp1 = chooseGlowColor(true, a.hasGlowP1);
+                a.cgp2 = chooseGlowColor(false, a.hasGlowP2);
             }
             a.colorsAssigned = true;
         }
 
         if (a.g1) {
-            a.g1->setColor(a.c1);
-            a.g1->setSecondColor(a.c2);
+            a.g1->setColor(a.c1p1);
+            a.g1->setSecondColor(a.c2p1);
             if (a.g1->m_waveTrail) {
-                if (m_pl->m_player1->m_switchWaveTrailColor) a.g1->m_waveTrail->setColor(a.c2);
-                else a.g1->m_waveTrail->setColor(a.c1);
+                if (m_pl->m_player1->m_switchWaveTrailColor) a.g1->m_waveTrail->setColor(a.c2p1);
+                else a.g1->m_waveTrail->setColor(a.c1p1);
+            }
+            if (a.hasGlowP1) {
+                a.g1->m_hasGlow = true;
+                a.g1->updatePlayerGlow();
+                a.g1->enableCustomGlowColor(a.cgp1);
+                a.g1->updateGlowColor();
             }
         }
         if (a.g2) {
-            a.g2->setColor(a.c1);
-            a.g2->setSecondColor(a.c2);
+            a.g2->setColor(a.c1p2);
+            a.g2->setSecondColor(a.c2p2);
             if (a.g2->m_waveTrail) {
-                if (m_pl->m_player2->m_switchWaveTrailColor) a.g2->m_waveTrail->setColor(a.c1);
-                else a.g2->m_waveTrail->setColor(a.c2);
+                if (m_pl->m_player2->m_switchWaveTrailColor) a.g2->m_waveTrail->setColor(a.c1p2);
+                else a.g2->m_waveTrail->setColor(a.c2p2);
+            }
+            if (a.hasGlowP2) {
+                a.g2->m_hasGlow = true;
+                a.g2->updatePlayerGlow();
+                a.g2->enableCustomGlowColor(a.cgp2);
+                a.g2->updateGlowColor();
             }
         }
     }
@@ -6343,24 +6355,46 @@ private:
         }
     }
 
-    cocos2d::ccColor3B chooseColor1() {
+    cocos2d::ccColor3B chooseColor1(bool isP1) {
         if (colors == ColorMode::PlayerColors) {
-            if (auto gm = GameManager::sharedState()) {
-                int idx = gm->getPlayerColor();
-                return gm->colorForIdx(idx);
+            //if (auto gm = GameManager::sharedState()) {
+            //    int idx = gm->getPlayerColor();
+            //    return gm->colorForIdx(idx);
+            //}
+            if (isP1) {
+                if (m_pl->m_player1) return m_pl->m_player1->m_originalMainColor;
             }
+            else if (m_pl->m_player2) return m_pl->m_player2->m_originalMainColor;
             return {255,255,255};
         } else if (colors == ColorMode::Black) {
             return {0, 0, 0};
         }
         return {255,255,255};
     }
-    cocos2d::ccColor3B chooseColor2() {
+    cocos2d::ccColor3B chooseColor2(bool isP1) {
         if (colors == ColorMode::PlayerColors) {
-            if (auto gm = GameManager::sharedState()) {
-                int idx = gm->getPlayerColor2();
-                return gm->colorForIdx(idx);
+            //if (auto gm = GameManager::sharedState()) {
+            //    int idx = gm->getPlayerColor2();
+            //    return gm->colorForIdx(idx);
+            //}
+            if (isP1) {
+                if (m_pl->m_player1) return m_pl->m_player1->m_originalSecondColor;
             }
+            else if (m_pl->m_player2) return m_pl->m_player2->m_originalSecondColor;
+            return {255,255,255};
+        } else if (colors == ColorMode::Black) {
+            return {0, 0, 0};
+        }
+        return {255,255,255};
+    }
+    cocos2d::ccColor3B chooseGlowColor(bool isP1, bool& hasGlow) {
+        if (isP1 && m_pl->m_player1) hasGlow = m_pl->m_player1->m_hasGlow;
+        else if (m_pl->m_player2) hasGlow = m_pl->m_player2->m_hasGlow;
+        if (colors == ColorMode::PlayerColors) {
+            if (isP1) {
+                if (m_pl->m_player1 && m_pl->m_player1->m_hasCustomGlowColor) return m_pl->m_player1->m_glowColor;
+            }
+            else if (m_pl->m_player2 && m_pl->m_player2->m_hasCustomGlowColor) return m_pl->m_player2->m_glowColor;
             return {255,255,255};
         } else if (colors == ColorMode::Black) {
             return {0, 0, 0};
@@ -6446,42 +6480,6 @@ private:
         m_ghostBatches.clear();
         m_ghostBatches.shrink_to_fit();
         m_currentBatchIdx = 0;
-    }
-
-    static PlayerObject* buildGhostPO_NoBatch(PlayLayer* pl, cocos2d::CCNode* parent,
-                           const cocos2d::ccColor3B& c1,
-                           const cocos2d::ccColor3B& c2,
-                           GLubyte opacity,
-                           const Frame* startF) {
-        auto gm = GameManager::sharedState();
-        int playerId = gm->getPlayerFrame();
-        int shipId = gm->getPlayerShip();
-        
-        cocos2d::CCLayer* layer = nullptr;
-        if (parent) layer = typeinfo_cast<cocos2d::CCLayer*>(parent);
-        if (!layer) layer = pl;
-        
-        auto* po = PlayerObject::create(playerId, shipId, pl, layer, false);
-        if (!po) return nullptr;
-        
-        po->disablePlayerControls();
-        po->setVisible(false);
-        po->setOpacity(opacity);
-        po->setZOrder(5);
-        po->m_playEffects = true;
-        
-        IconType initMode = startF ? startF->mode : (pl && pl->m_player1 ? currentMode(pl->m_player1, pl->m_isPlatformer) : IconType::Cube);
-        if (startF) applyPoseHard(po, *startF, pl);
-        else setPOFrameForIcon(po, initMode);
-
-        applyOpacityTree(po, opacity);
-
-        if (po->m_waveTrail) {
-            po->m_waveTrail->reset();
-            po->m_waveTrail->setVisible(false);
-        }
-        
-        return po;
     }
 
     void rebuildGridThreasholdSet_() {
@@ -6605,45 +6603,6 @@ private:
 
         auto& aa = attempts[idx];
 
-        if (spawnNow && !isPureRecordingMode_()) {
-            GhostBatch& batch = getOrCreateBatch_();
-            
-            if (!aa.g1 && !aa.p1.empty()) {
-                aa.g1 = buildGhostPO_NoBatch(m_pl, batch.node, aa.c1, aa.c2, aa.opacity, &aa.p1.front());
-                if (aa.g1) {
-                    batch.node->addChild(aa.g1, 0);
-                    batch.count++;
-                    if (aa.g1->m_waveTrail && batch.trailNode) {
-                        aa.g1->m_waveTrail->retain();
-                        if (aa.g1->m_waveTrail->getParent()) {
-                            aa.g1->m_waveTrail->removeFromParentAndCleanup(false);
-                        }
-                        batch.trailNode->addChild(aa.g1->m_waveTrail, 0);
-                        aa.g1->m_waveTrail->release();
-                    }
-                    aa.g1CurMode = aa.p1.front().mode;
-                }
-            }
-            if (aa.hadDual && !aa.g2 && !aa.p2.empty()) {
-                GhostBatch& batch2 = getOrCreateBatch_();
-                aa.g2 = buildGhostPO_NoBatch(m_pl, batch2.node, aa.c1, aa.c2, aa.opacity, &aa.p2.front());
-                if (aa.g2) {
-                    batch2.node->addChild(aa.g2, 0);
-                    batch2.count++;
-                    if (aa.g2->m_waveTrail && batch2.trailNode) {
-                        aa.g2->m_waveTrail->retain();
-                        if (aa.g2->m_waveTrail->getParent()) {
-                            aa.g2->m_waveTrail->removeFromParentAndCleanup(false);
-                        }
-                        batch2.trailNode->addChild(aa.g2->m_waveTrail, 0);
-                        aa.g2->m_waveTrail->release();
-                    }
-                    aa.g2CurMode = aa.p2.front().mode;
-                }
-            }
-            refreshAttemptColors_(aa);
-        }
-
         AttemptSpan sp = makeSpan_(aa);
         if (idx >= m_spans.size()) m_spans.resize(idx + 1);
         m_spans[idx] = sp;
@@ -6723,30 +6682,6 @@ private:
         //p1Hold = p2Hold = false;
         //p1LHold = p2LHold = false;
         //p1RHold = p2RHold = false;
-    }
-
-    void setP2PosOnly(
-        PlayerObject* p,
-        const std::vector<Frame>& v,
-        size_t baseIdx,
-        double sessionTime
-    ) {
-        if (!m_setRealPlayerPosition) return;
-        if (!p || v.empty()) return;
-        if (m_freezePlayerXAtEnd) return;
-
-        const double firstT = v.front().t;
-        const double lastT  = v.back().t;
-        const bool inside  = (sessionTime >= firstT && sessionTime <= lastT);
-
-        size_t i = baseIdx;
-        if (i >= v.size()) i = v.size() - 1;
-
-        const Frame& a = v[i];
-        const float ix = a.x;
-        const float iy = a.y;
-
-        p->setPosition({ ix, iy });
     }
 
     void waveTrailAddPointToPlayer(HardStreak* m_waveTrail, cocos2d::CCPoint point, bool isP1) {

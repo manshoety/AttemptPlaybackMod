@@ -1,6 +1,9 @@
 # 1.4.48
-- FIX: Frame click alignment fix
-- FIX: Bunch of wave trail fixes
+- FIX: Click and frame alignment fix (was 2 frames off)
+- FIX: Wave trail overhaul (all fixes only apply to new recordings)
+- FIX: Ghosts now reflect correct P1 P2 colors when different (will fix wave color soon)
+- FIX: Glow color now works on ghosts
+- Separate dual icons for ghosts sounds annoying to impliment so maybe I'll do that when I have more time
 # 1.4.47
 - FIX: Wave trail sliding issue on gravity switch
 - FIX: Ghost visibility bug in practice playback

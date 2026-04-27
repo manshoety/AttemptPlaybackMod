@@ -802,8 +802,14 @@ struct Attempt {
     bool hasWavePointData = false;
     IconType g1CurMode = IconType::Cube;
     IconType g2CurMode = IconType::Cube;
-    cocos2d::ccColor3B c1{255,255,255};
-    cocos2d::ccColor3B c2{255,255,255};
+    cocos2d::ccColor3B c1p1{255,255,255};
+    cocos2d::ccColor3B c2p1{255,255,255};
+    cocos2d::ccColor3B cgp1{255,255,255};
+    cocos2d::ccColor3B c1p2{255,255,255};
+    cocos2d::ccColor3B c2p2{255,255,255};
+    cocos2d::ccColor3B cgp2{255,255,255};
+    bool hasGlowP1 = false;
+    bool hasGlowP2 = false;
     bool colorsAssigned = false;
 
     std::array<int,9> randomFrame{ };
