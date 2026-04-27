@@ -6224,7 +6224,7 @@ private:
                                     
                             trail->setZOrder(-3);
                             trail->setVisible(true);
-                            trail->addPoint({ix, iy});
+                            waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                         }
                         else log::info("NO GHOST TRAIL");
                     }
@@ -6244,31 +6244,31 @@ private:
                                     hasWavePointData = true;
 
                                     if (wi == drawIdx) {
-                                        trail->addPoint({ix, iy});
+                                        waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                                     } else {
-                                        trail->addPoint({wf.x, wf.y});
+                                        waveTrailAddPointToPlayer(trail, {wf.x, wf.y}, !isP2, false);
                                     }
                                 }
                             }
                         } else if (f.wavePointThisFrame) {
                             hasWavePointData = true;
-                            trail->addPoint({ix, iy});
+                            waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                         }
                         if (!hasWavePointData) {
                             if (f.hold != prevHolding) {
-                                trail->addPoint({ix, iy});
+                                waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                             }
                             else if (fNext.vehicleSize != f.vehicleSize) {
-                                trail->addPoint({ix, iy});
+                                waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                             }
                             else if (pc.wasMovingUp != isMovingUp) {    
-                                trail->addPoint({ix, iy});
+                                waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                             }
                             else {
                                 const bool stateDartSlide = (std::fabs(fNext.y - f.y) <= kYEqualEps);
                                 if (stateDartSlide != prevDartSlide) {
                                     prevDartSlide = stateDartSlide;
-                                    trail->addPoint({ix, iy});
+                                    waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                                 }
                             }
                         }
@@ -6279,7 +6279,7 @@ private:
                         // Teleport visual wacky stuff
                         if (prevTeleported) {
                             trail->resumeStroke();
-                            trail->addPoint({ix, iy});
+                            waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                             prevTeleported = false;
                         }
                         if (std::fabs(fNext.y - f.y) > kWaveTeleportedTolerance) {
