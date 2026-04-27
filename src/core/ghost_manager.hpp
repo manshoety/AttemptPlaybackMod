@@ -2206,7 +2206,7 @@ public:
         botPrevHoldR1 = botPrevHoldR2 = false;
 
         const Attempt* owner = nullptr;
-        double startTime = getLastCheckpointTime();
+        m_baseTime = getStartTime();
         
         if (m_replayKind == ReplayKind::BestSingle) {
             if (m_replayOwnerSerial > 0) {
@@ -2220,7 +2220,7 @@ public:
 
             m_replayAttempt = nullptr;
         } else {
-            int serial = m_checkpointMgr.findOwnerSerialForTime(startTime);
+            int serial = m_checkpointMgr.findOwnerSerialForTime(m_baseTime);
             if (serial > 0) {
                 owner = ensureAttemptLoadedBySerial_(serial, false);
                 m_replayOwnerSerial = serial;
@@ -2253,11 +2253,10 @@ public:
         m_didInitialWarp = true;
 
         // Set starting time
-        m_currentSessionTime = startTime;
-        m_lastAttemptTime = startTime;
-        m_prevSessionTime = startTime;
+        m_currentSessionTime = m_baseTime;
+        m_prevSessionTime = m_baseTime;
         
-        adjustReplayCursorToTime_(m_lastAttemptTime);
+        adjustReplayCursorToTime_(m_currentSessionTime);
 
         m_justStartedBot = false;
     }
@@ -2366,8 +2365,9 @@ public:
 
         startNewAttempt();
 
-        m_currentSessionTime = 0.0;
-        m_prevSessionTime = 0.0;
+        m_currentSessionTime = getStartTime();
+        m_prevSessionTime = m_currentSessionTime;
+        m_baseTime = m_currentSessionTime;
 
         m_frameCounter = 0;
         m_lastGhostTickFrame = 0;
@@ -2957,8 +2957,21 @@ public:
 
         //buildCompositePracticePath(std::optional<bool>(true));
 
-        m_replayOwnerSerial = m_checkpointMgr.findOwnerSerialForTime(0.0);
+        if (m_baseTime != 0.0) {
+            m_checkpointMgr.offsetSelectedSessionBaseTimeIfZero(m_baseTime);
+        }
+
+        m_replayOwnerSerial = m_checkpointMgr.findOwnerSerialForTime(m_baseTime);
         m_activeOwnerSerial = m_replayOwnerSerial > 0 ? m_replayOwnerSerial : -1;
+        if (m_activeOwnerSerial > 0) {
+            Attempt* chosen = ensureAttemptLoadedBySerial_(m_activeOwnerSerial, false);
+            // Old start pos attempts will have timestep 0.f but new ones have the correct timestep, so offset them all (oopsies this might be slow)
+            if (m_baseTime != 0.f && chosen->baseTimeOffset == 0.f) {
+                chosen->baseTimeOffset = m_baseTime;
+                const uint32_t offsetQ = runtimeQuantTimeQ_(m_baseTime);
+                offsetAttemptTimesFast(*chosen, offsetQ);
+            }
+        }
 
         rebuildRouteOwnerCache_();
         rebuildRouteOwnerCache_();
@@ -3013,7 +3026,13 @@ public:
             int tailSerial = m_checkpointMgr.findOwnerSerialForTime(m_replayEndTime);
             
             if (tailSerial > 0) {
-                const Attempt* tailOwner = findAttemptBySerial_(tailSerial);
+                Attempt* tailOwner = findAttemptBySerial_(tailSerial);
+                // Old start pos attempts will have timestep 0.f but new ones have the correct timestep, so offset them all (oopsies this might be slow)
+                if (m_baseTime != 0.f && tailOwner->baseTimeOffset == 0.f) {
+                    tailOwner->baseTimeOffset = m_baseTime;
+                    const uint32_t offsetQ = runtimeQuantTimeQ_(m_baseTime);
+                    offsetAttemptTimesFast(*tailOwner, offsetQ);
+                }
                 if (tailOwner && !tailOwner->p1.empty()) {
                     // Find the frame closest to endTime
                     size_t endIdx = idxForTime(tailOwner->acc1Time, tailOwner->p1, m_replayEndTime);
@@ -3142,6 +3161,13 @@ public:
             return false;
         }
 
+        // Old start pos attempts will have timestep 0.f but new ones have the correct timestep, so offset them all (oopsies this might be slow)
+        if (m_baseTime != 0.f && chosen->baseTimeOffset == 0.f) {
+            chosen->baseTimeOffset = m_baseTime;
+            const uint32_t offsetQ = runtimeQuantTimeQ_(m_baseTime);
+            offsetAttemptTimesFast(*chosen, offsetQ);
+        }
+
         const size_t idx = findLoadedAttemptIndexBySerial_(serial);
         if (idx == SIZE_MAX) {
             log::warn("[Bot] startReplayBest: loaded serial {} but index lookup failed", serial);
@@ -3235,10 +3261,15 @@ public:
     void setdisablePlayerMove(bool on) { disablePlayerMove = on; }
     bool shouldDisableHardStreakAddPoint() const { return !m_allowWavePointAdding && botActive && m_hasWavePointData; }
     void setAllowWavePointAdding(bool on ) { m_allowWavePointAdding = on; }
+    bool skipHardStreakCheck() const { return m_skipHardStreakCheck; }
 
-    double getLastCheckpointTime() {
-        if (m_pl && m_pl->getLastCheckpoint()) {
+    double getStartTime() {
+        if (isPracticeMode() && m_pl->getLastCheckpoint()) {
             return m_pl->getLastCheckpoint()->m_gameState.m_levelTime;
+        }
+        else {
+            auto gl = GJBaseGameLayer::get();
+            if (gl) return gl->m_gameState.m_levelTime;
         }
         return 0.f;
     }
@@ -3312,7 +3343,7 @@ public:
         if (m_didInitialWarp) return;
 
         // Use time 0 to get the first owner
-        const Attempt* owner = getReplayOwner_(0.0);
+        const Attempt* owner = getReplayOwner_(getStartTime());
         if (!owner || owner->p1.empty()) return;
 
         const float px = m_pl->m_player1->getPositionX();
@@ -3417,7 +3448,7 @@ public:
         if (m_is_quitting || !m_pl || !m_pl->m_player1) return;
 
         m_px = m_pl->m_player1->getPositionX();
-        m_lastAttemptTime = m_pl->m_attemptTime;
+        m_currentSessionTime = m_baseTime + m_pl->m_attemptTime;
         updateCurrentAttemptNoclipState();
 
         if (!botActive) return;
@@ -3431,12 +3462,12 @@ public:
         }
         else m_px2 = m_px;
         
-        bool timeWentBack = (m_lastAttemptTime < m_prevSessionTime - 0.05);
+        bool timeWentBack = (m_currentSessionTime < m_prevSessionTime - 0.05);
         m_IHateMirrorPortalsSoRewind = timeWentBack;
 
         int previousOwnerSerial = m_activeOwnerSerial;
         
-        adjustReplayCursorToTime_(m_lastAttemptTime);
+        adjustReplayCursorToTime_(m_currentSessionTime);
         maybeInitialWarpToReplayStart_();
 
         if (!m_currentOwner || m_currentOwner->p1.empty()) {
@@ -3484,7 +3515,7 @@ public:
             return;
         }
 
-        if (!m_freezePlayerXAtEnd && m_lastAttemptTime >= finalTime) {
+        if (!m_freezePlayerXAtEnd && m_currentSessionTime >= finalTime) {
             m_freezePlayerXAtEnd = true;
             if (m_currentOwner->completed) return;
             m_pl->applyTimeWarp(0.000001f);
@@ -3555,9 +3586,9 @@ public:
             return;
         }
         
-        if (!m_freezePlayerXAtEnd && m_lastAttemptTime >= lastTime - 0.05) {
+        if (!m_freezePlayerXAtEnd && m_currentSessionTime >= lastTime - 0.05) {
             //log::info("[Bot] updateFreezePlayerX_: FREEZING at time={:.3f}, lastTime={:.3f}", 
-            //        m_lastAttemptTime, lastTime);
+            //        m_currentSessionTime, lastTime);
             m_freezePlayerXAtEnd = true;
             m_freezePlayerX = lastX;
             m_freezePlayerY = lastY;
@@ -3602,12 +3633,12 @@ public:
             size_t idx1 = m_replayIdx1 + 2;
             if (idx1 >= m_currentOwner->p1.size()) idx1 = m_currentOwner->p1.size() - 1;
             
-            if (isPlayer1) applyFrameToPlayer_Only_(m_pl->m_player1, m_currentOwner->p1, idx1, m_lastAttemptTime, true);
+            if (isPlayer1) applyFrameToPlayer_Only_(m_pl->m_player1, m_currentOwner->p1, idx1, m_currentSessionTime, true);
             else {
                 if (m_currentOwner->hadDual && m_pl->m_player2 && !m_currentOwner->p2.empty()) {
                     size_t idx2 = m_replayIdx2 + 2;
                     if (idx2 >= m_currentOwner->p2.size()) idx2 = m_currentOwner->p2.size() - 1;
-                    applyFrameToPlayer_Only_(m_pl->m_player2, m_currentOwner->p2, idx2, m_lastAttemptTime, false);
+                    applyFrameToPlayer_Only_(m_pl->m_player2, m_currentOwner->p2, idx2, m_currentSessionTime, false);
                 }
             }
             checkIfPlayerIsDonePlaybackThingMaybePerhapsYeah();
@@ -3637,12 +3668,12 @@ public:
         size_t idx1 = m_replayIdx1 + 2;
         if (idx1 >= m_currentOwner->p1.size()) idx1 = m_currentOwner->p1.size() - 1;
         
-        if (isPlayer1) applyFrameToPlayer_Only_(m_pl->m_player1, m_currentOwner->p1, idx1, px, true);
+        if (isPlayer1) applyFrameToPlayer_Only_(m_pl->m_player1, m_currentOwner->p1, idx1, m_currentSessionTime, true);
         else {
             if (m_currentOwner->hadDual && m_pl->m_player2 && !m_currentOwner->p2.empty()) {
                 size_t idx2 = m_replayIdx2 + 2;
                 if (idx2 >= m_currentOwner->p2.size()) idx2 = m_currentOwner->p2.size() - 1;
-                applyFrameToPlayer_Only_(m_pl->m_player2, m_currentOwner->p2, idx2, px2, false);
+                applyFrameToPlayer_Only_(m_pl->m_player2, m_currentOwner->p2, idx2, m_currentSessionTime, false);
             }
         }
 
@@ -3770,8 +3801,8 @@ public:
 
         //log::error("[postUpdate] playerx: {}", m_pl->m_player1->m_positionX);
 
-        const double dt = m_lastAttemptTime - m_prevSessionTime;
-        m_prevSessionTime = m_lastAttemptTime;
+        const double dt = m_currentSessionTime - m_prevSessionTime;
+        m_prevSessionTime = m_currentSessionTime;
 
         if (isPureRecordingMode_() || isPreloadingAttempts()) {
             ++m_frameCounter;
@@ -3971,7 +4002,7 @@ public:
                         continue;
                     }
 
-                    const double ghostTime = std::max(0.0, m_lastAttemptTime + a.ghostOffsetTime);
+                    const double ghostTime = std::max(0.0, m_currentSessionTime + a.ghostOffsetTime);
                     const double firstTimeP1 = a.p1.front().t;
 
                     // log::info("[OWNER] ai: {}", ai);
@@ -4064,6 +4095,7 @@ public:
                 // Update visible ghosts
                 const int total = static_cast<int>(showable.size());
                 if (total > 0) {
+                    m_skipHardStreakCheck = true;
                     if (m_perfUnlimited) {
                         for (const size_t ai : showable) {
                             updateGhostForAttempt_(attempts[ai], px, px2, ai, 
@@ -4084,6 +4116,7 @@ public:
                         }
                         m_rrPhase = (m_rrPhase + 1) % stride;
                     }
+                    m_skipHardStreakCheck = false;
                 }
             }
         }
@@ -4126,12 +4159,13 @@ private:
     float m_prevpx2 = 0.f;
     bool m_p2Moving = false;
     double m_currentSessionTime = 0.0;
-    double m_lastAttemptTime = 0.0;
     double m_prevSessionTime = 0.0;
+    double m_baseTime = 0.0f;
     double m_offsetUnitsPerSecond = 311.f;
     bool m_1PreloadedSoDontShowGhosts = false;
     bool m_hasWavePointData = false;
     bool m_allowWavePointAdding = false;
+    bool m_skipHardStreakCheck = false;
     MovementDirection m_movementDirection = MovementDirection::Flat;
     bool prevHold = false;
 
@@ -5150,7 +5184,7 @@ private:
         return ( (h / 4294967296.0f) * 2.f ) - 1.f;
     }
 
-    void applyRandomOffsetSingle(Attempt& a) {
+    void applyRandomOffsetSingle(Attempt& a, bool forceNegative) {
         if (m_randomDistPx == 0) {
             a.ghostOffsetPx = 0.f;
             a.ghostOffsetTime = 0.0;
@@ -5198,7 +5232,12 @@ private:
             return static_cast<float>(static_cast<double>(lo) + y);
         };
 
-        offsetPx = wrapIntoWindow(offsetPx, kMinOffsetPx, usableMaxPx);
+        if (forceNegative) {
+            offsetPx = -std::fabs(offsetPx);
+            offsetPx = wrapIntoWindow(offsetPx, kMinOffsetPx, -kMinMagPx);
+        } else {
+            offsetPx = wrapIntoWindow(offsetPx, kMinOffsetPx, usableMaxPx);
+        }
 
         // Don't have 0 offset to avoid weird overlap
         if (std::fabs(offsetPx) < kMinMagPx) {
@@ -5218,7 +5257,7 @@ private:
 
     void applyRandomOffsetsAll_() {
         for (auto& a : attempts) {
-            applyRandomOffsetSingle(a);
+            applyRandomOffsetSingle(a, isOwnerAnywhereInRoute_(a));
         }
     }
     
@@ -5230,6 +5269,10 @@ private:
                 a.c2p1 = randomGameColor(seed ^ 0xBADA551u);
                 a.c1p2 = a.c1p1;
                 a.c2p2 = a.c2p1;
+                hasGlowActive(true, a.hasGlowP1);
+                hasGlowActive(false, a.hasGlowP2);
+                if (a.hasGlowP1) a.cgp1 = randomGameColor(seed ^ 0x6C8E9CF5u);
+                if (a.hasGlowP2) a.cgp2 = randomGameColor(seed ^ 0xD1B54A35u);
             } else {
                 a.c1p1 = chooseColor1(true);
                 a.c2p1 = chooseColor2(true);
@@ -5283,11 +5326,36 @@ private:
         }
     }
 
+    static inline void offsetAttemptTimesFast(Attempt& a, uint32_t offsetQ) {
+        if (offsetQ == 0) return;
+
+        auto offsetFrames = [offsetQ](std::vector<Frame>& frames) {
+            if (frames.empty()) return;
+
+            Frame* p = frames.data();
+            Frame* e = p + frames.size();
+
+            for (; p != e; ++p) {
+                p->t.q += offsetQ;
+            }
+        };
+
+        offsetFrames(a.p1);
+        offsetFrames(a.p2);
+    }
+
     void preloadAttempt_(Attempt& a, size_t attemptIdx = SIZE_MAX, bool force=false) {
         if (!force && a.preloaded) return;
         if (!m_pl || !m_pl->m_player1) return;
 
         a.m_isPlatformer = m_pl->m_isPlatformer;
+
+        // Old start pos attempts will have timestep 0.f but new ones have the correct timestep, so offset them all (oopsies this might be slow)
+        if (m_baseTime != 0.f && a.baseTimeOffset == 0.f) {
+            a.baseTimeOffset = m_baseTime;
+            const uint32_t offsetQ = runtimeQuantTimeQ_(m_baseTime);
+            offsetAttemptTimesFast(a, offsetQ);
+        }
 
         if (!a.acc1Time.valid() && !a.p1.empty()) {
             buildAccelTime(a.p1, a.acc1Time);
@@ -5375,10 +5443,12 @@ private:
 
     bool primeGhostToPX_(Attempt& a, size_t attemptIdx, float pxw, float px2w) {
         //log::info("Priming");
-        double ghostTime = m_lastAttemptTime + a.ghostOffsetTime;
+        double ghostTime = m_currentSessionTime + a.ghostOffsetTime;
         if (ghostTime < 0.0) ghostTime = 0.0;
 
         if (!a.p1.empty() && ghostTime > a.p1.back().t) return false;
+
+        bool isAnOwner = isOwnerAnywhereInRoute_(a);
         
         if (!a.p1.empty() && !a.primedP1) {
             //log::info("p1 not created");
@@ -5402,7 +5472,7 @@ private:
             
             // One frame late to apply
             if (!a.offsetApplied) {
-                applyRandomOffsetSingle(a);
+                applyRandomOffsetSingle(a, isAnOwner);
                 a.offsetApplied = true;
             }
             
@@ -5773,7 +5843,7 @@ private:
         
         //double tStart2 = getTimeMs();     
     
-        const double ghostTime = std::max(0.0, m_lastAttemptTime + a.ghostOffsetTime);
+        const double ghostTime = std::max(0.0, m_currentSessionTime + a.ghostOffsetTime);
         constexpr double kEolTimeTolerance = 0.02;
 
         // Unified player processing lambda
@@ -6302,10 +6372,10 @@ private:
         m_current.startX = startX;
         m_current.startY = startY;
 
-        double baseTime = getLastCheckpointTime();
-        m_current.baseTimeOffset = baseTime;
+        m_baseTime = getStartTime();
+        m_current.baseTimeOffset = m_baseTime;
 
-        //log::info("[startNewAttempt] m_current.baseTimeOffset: {}, m_pl->m_attemptTime: {}", m_currentSessionTime, m_pl->m_attemptTime);
+        // log::info("[startNewAttempt] baseTime: {}", m_baseTime);
 
         //if (recording) {
             //m_current.seed = seedutils::getCurrentSeed();
@@ -6387,9 +6457,12 @@ private:
         }
         return {255,255,255};
     }
-    cocos2d::ccColor3B chooseGlowColor(bool isP1, bool& hasGlow) {
+    void hasGlowActive(bool isP1, bool& hasGlow) {
         if (isP1 && m_pl->m_player1) hasGlow = m_pl->m_player1->m_hasGlow;
         else if (m_pl->m_player2) hasGlow = m_pl->m_player2->m_hasGlow;
+    }
+    cocos2d::ccColor3B chooseGlowColor(bool isP1, bool& hasGlow) {
+        hasGlowActive(isP1, hasGlow);
         if (colors == ColorMode::PlayerColors) {
             if (isP1) {
                 if (m_pl->m_player1 && m_pl->m_player1->m_hasCustomGlowColor) return m_pl->m_player1->m_glowColor;

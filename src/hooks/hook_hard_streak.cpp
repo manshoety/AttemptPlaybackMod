@@ -11,7 +11,7 @@ class $modify(HardStreakHook, HardStreak) {
     void addPoint(cocos2d::CCPoint point) {
         auto& G = Ghosts::I();
 
-        if (G.isModEnabled()) {
+        if (G.isModEnabled() && !G.skipHardStreakCheck()) {
             if (auto* base = GJBaseGameLayer::get()) {
                 if (auto* pl = typeinfo_cast<PlayLayer*>(base)) {
                     if (pl->m_player1 && this == pl->m_player1->m_waveTrail) {

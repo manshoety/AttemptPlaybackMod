@@ -15,6 +15,28 @@ public:
 
     bool noValidSessionForStartX() const { return m_noValidSessionForStartX; }
     void clearNoValidSessionForStartX() { m_noValidSessionForStartX = false; }
+
+    size_t offsetSelectedSessionBaseTimeIfZero(double offset) {
+        if (!std::isfinite(offset) || offset == 0.0) return 0;
+
+        PracticeSession* session = m_path.selectedSession();
+        if (!session) return 0;
+
+        size_t changed = 0;
+
+        for (auto& seg : session->segments) {
+            if (seg.baseTimeOffset == 0.0) {
+                seg.baseTimeOffset = offset;
+                ++changed;
+            }
+        }
+
+        if (changed != 0) {
+            session->updateSpan();
+        }
+
+        return changed;
+    }
     
     void restorePath(const PracticePath& path) {
         m_path = path;

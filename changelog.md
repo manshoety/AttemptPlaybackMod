@@ -4,6 +4,9 @@
 - FIX: Ghosts now reflect correct P1 P2 colors when different (will fix wave color soon)
 - FIX: Glow color now works on ghosts
 - Separate dual icons for ghosts sounds annoying to impliment so maybe I'll do that when I have more time
+- FIX: Massive fix of the start timestamp for startpos, but requires offset math for pre-update attempts (meaning slower loading for old attempts)
+- Be aware old practice runs from start positions no longer work (you must record new ones for now, might be able to fix later)
+- FIX: Bunch of other stuff that would take too long to explain
 # 1.4.47
 - FIX: Wave trail sliding issue on gravity switch
 - FIX: Ghost visibility bug in practice playback
