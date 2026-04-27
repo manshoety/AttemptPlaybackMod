@@ -3923,9 +3923,6 @@ public:
                         }
                     }
                 }
-                
-
-                
 
                 // log::info("[SCREEN] tl.x: {}, br.x: {}, tl.y: {}, br.y: {}", tl.x, br.x, tl.y, br.y);
                 // log::info("[BIN] m_cachedBinL: {}, m_cachedBinR: {}", m_cachedBinL, m_cachedBinR);
@@ -6627,7 +6624,7 @@ private:
     }
 
     void pushAttempt(Attempt&& a, bool spawnNow = true) {
-        if (!botActive && m_currentDidNoclip && m_recordingBlockedOnNoclip && !isPracticeMode()) return;
+        if (spawnNow && !botActive && m_currentDidNoclip && m_recordingBlockedOnNoclip && !isPracticeMode()) return;
         if (!a.p1.empty()) {
             a.startX = a.p1.front().x;
             a.startY = a.p1.front().y;
