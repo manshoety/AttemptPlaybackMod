@@ -6,6 +6,7 @@
 #include "../core/ghost_manager.hpp"
 #include "../core/globals.hpp"
 #include <Geode/loader/Log.hpp>
+#include <chrono>
 
 using namespace geode::prelude;
 
@@ -70,7 +71,7 @@ class $modify(MyPlayerObject, PlayerObject) {
         const bool isP1 = pl && this == pl->m_player1;
         const bool isP2 = pl && this == pl->m_player2;
 
-        //log::info("Setting player pos: isP1: {}", isP1);
+        // log::info("Setting player pos: isP1: {}", isP1);
         //log::info("Next lets check if the position is valid");
         //log::info("x: {}, y: {}", position.x, position.y);
         //log::info("Position is valid");
@@ -100,7 +101,10 @@ class $modify(MyPlayerObject, PlayerObject) {
 
         PlayerObject::setPosition(position);
     }
+
+
     void update(float p0) { //  is p0 the frac of real GJ update?
+        // start time here
         if (Ghosts::I().isModEnabled()) {
             if (auto* pl = typeinfo_cast<PlayLayer*>(this->m_gameLayer)) {
                 if (pl) {
@@ -109,7 +113,6 @@ class $modify(MyPlayerObject, PlayerObject) {
                         //log::info("update");
                         Ghosts::I().setdisablePlayerMove(false);
                         
-                        Ghosts::I().updateClickState(/*isPlayer1*/true);
                         Ghosts::I().applySegmentBasedReplay_(/*isPlayer1*/true);
                         
                         Ghosts::I().beginPostUpdateTick_();
@@ -120,7 +123,9 @@ class $modify(MyPlayerObject, PlayerObject) {
                         Ghosts::I().endPostUpdateTick_();
 
                         PlayerObject::update(p0);
+
                         //log::info("update done");
+                        Ghosts::I().updateClickState(/*isPlayer1*/true);
 
                         Ghosts::I().setdisablePlayerMove(true);
 
@@ -128,7 +133,7 @@ class $modify(MyPlayerObject, PlayerObject) {
                     }
                     else if (this == pl->m_player2) {
                         Ghosts::I().setdisablePlayerMove(false);
-                        Ghosts::I().updateClickState(/*isPlayer1*/false);
+                        
                         Ghosts::I().applySegmentBasedReplay_(/*isPlayer1*/false);
                         
                         Ghosts::I().beginPostUpdateTick_();
@@ -138,7 +143,10 @@ class $modify(MyPlayerObject, PlayerObject) {
                         
                         Ghosts::I().endPostUpdateTick_();
 
+                        
                         PlayerObject::update(p0);
+
+                        Ghosts::I().updateClickState(/*isPlayer1*/false);
                         Ghosts::I().setdisablePlayerMove(true);
 
                         return;
@@ -147,7 +155,7 @@ class $modify(MyPlayerObject, PlayerObject) {
                 }
             }
         }
-
+        // end time here
         PlayerObject::update(p0);
     }
 
@@ -162,6 +170,8 @@ class $modify(MyPlayerObject, PlayerObject) {
 
         PlayerObject::releaseAllButtons();
     }
+
+    
 
     //void flipGravity(bool p0, bool p1) {
         // log::info("[PlayerObject] flipGravity({}, {})", p0, p1);

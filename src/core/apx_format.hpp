@@ -14,4 +14,6 @@ static constexpr uint16_t kAPXCompactAttemptVersion = kAPXCompactAttemptVersion_
 static constexpr uint32_t kAPXPathVersion_V4 = 4;  // old PATH with checkpoints/activeChain
 static constexpr uint32_t kAPXPathVersion_V5 = 5;  // new PATH without checkpoints
 
-static constexpr uint32_t kAPXVersion = 7;
+// V8 removes old wave slide and replaces it with the wave point bool thingy (wavePointThisFrame)
+static constexpr uint32_t kAPXVersion = 8;
+static constexpr uint32_t kAPXVersion_WavePointThisFrame = 8;

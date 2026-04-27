@@ -96,6 +96,73 @@ public:
         m_path.activeSessionId = 0;
         return -1;
     }
+
+
+
+    std::vector<int> getPracticeSerialsMatchingStartX_AllSessions(float targetX, int xTol) const {
+        if (!std::isfinite(targetX)) return {};
+
+        std::vector<PracticeSession const*> matches;
+        matches.reserve(m_path.sessions.size());
+
+        for (auto const& s : m_path.sessions) {
+            if (s.segments.empty()) continue;
+
+            const float sx = sessionStartX_(s);
+            if (!std::isfinite(sx)) continue;
+
+            if (std::fabs(sx - targetX) <= static_cast<float>(xTol)) {
+                matches.push_back(&s);
+            }
+        }
+
+        // Most-progress and longest replay sessions first
+        std::sort(matches.begin(), matches.end(),
+            [](PracticeSession const* a, PracticeSession const* b) {
+                const double ae = sessionAbsEnd_(*a);
+                const double be = sessionAbsEnd_(*b);
+                if (ae != be) return ae > be;
+                return a->sessionId > b->sessionId;
+            }
+        );
+
+        std::unordered_set<int> seen;
+        std::vector<int> out;
+        out.reserve(512);
+
+        for (auto const* s : matches) {
+            // Include every serial saved in the session
+            for (int serial : s->allAttemptSerials) {
+                if (serial <= 0) continue;
+                if (seen.insert(serial).second) {
+                    out.push_back(serial);
+                }
+            }
+
+            // Also include segment owners
+            for (auto const& seg : s->segments) {
+                if (seg.ownerSerial <= 0) continue;
+                if (seen.insert(seg.ownerSerial).second) {
+                    out.push_back(seg.ownerSerial);
+                }
+            }
+        }
+
+        return out;
+    }
+
+    std::vector<int> getPracticeSerialsMatchingCurrentStartPos_AllSessions(int xTol) const {
+        const PracticeSession* cur = m_path.selectedSession();
+        if (!cur) cur = m_path.activeSession();
+        if (!cur) return {};
+
+        if (cur->segments.empty()) return {};
+
+        const float targetX = sessionStartX_(*cur);
+        if (!std::isfinite(targetX)) return {};
+
+        return getPracticeSerialsMatchingStartX_AllSessions(targetX, xTol);
+    }
         
     const PracticePath& getPath() const { return m_path; }
     PracticePath& getPath() { return m_path; }
@@ -241,52 +308,6 @@ public:
         if (!session) return {};
 
         return session->allAttemptSerials;
-    }
-
-    std::vector<int> getPracticeSerialsMatchingCurrentStartPos_AllSessions(int xTol) const {
-        const PracticeSession* cur = m_path.selectedSession();
-        if (!cur) cur = m_path.activeSession();
-        if (!cur) return {};
-
-        if (cur->segments.empty()) return {};
-
-        const float targetX = sessionStartX_(*cur);
-        if (!std::isfinite(targetX)) return {};
-
-        // Collect sessions whose derived startX is within tolerance of the current session's startX
-        std::vector<PracticeSession const*> matches;
-        matches.reserve(m_path.sessions.size());
-
-        for (auto const& s : m_path.sessions) {
-            if (s.segments.empty()) continue;
-
-            const float sx = sessionStartX_(s);
-            if (!std::isfinite(sx)) continue;
-
-            if (std::fabs(sx - targetX) <= (float)xTol) {
-                matches.push_back(&s);
-            }
-        }
-
-        // Rank by most recent end time
-        std::sort(matches.begin(), matches.end(),
-            [&](PracticeSession const* a, PracticeSession const* b) {
-                return sessionAbsEnd_(*a) > sessionAbsEnd_(*b);
-            });
-
-        // Merge serials in ranked session order, de-dupe while preserving order
-        std::unordered_set<int> seen;
-        std::vector<int> out;
-        out.reserve(512);
-
-        for (auto const* s : matches) {
-            for (int serial : s->allAttemptSerials) {
-                if (serial <= 0) continue;
-                if (seen.insert(serial).second) out.push_back(serial);
-            }
-        }
-
-        return out;
     }
     
     void freezeForReplay() {

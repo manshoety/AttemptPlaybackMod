@@ -73,6 +73,21 @@
 // Massively optimize Attempts class to be way smaller (lot of uneeded bools from the early versions of this mod)
 // Camera pans when teleporting large y (sort of partially fixed by speeding up the camera when teleporting, but still buggy)
 
+// Fix:
+// glow color incorrect on ghosts
+// wave trail color when reverse color selected
+// wave trail of dual when entering still buggy (single wave going in and out of dual)
+// Player frame when dual has separate icons and colors
+// If wave trail larger maybe set the ghost trail larger, but be careful of weird values that aren't reflecting the actual wave trail people see on screen
+// Check if the game updates position or rotation first and mimic that with the player update
+// Ensure click is occuring on correct frame (for 240 and for 60 fps)
+// Change the bool for wave sliding in recording that I don't use anymore into a bool for "set wave point this frame" (hook the function)
+// Wave trail sometimes vanishes for some reason on real player, so ensure that is visible (player 2 teleported which stopped and started p2 wave trail, then p2 teleported and had no wave trail)
+// Ensure this doesn't conflict with the wave trail draw fix mod on Geode
+// Player rotation is set by the game after I set it, so slightly wrong (ensure overriding this doesn't break follow player rotation objects)
+// On every ghost death it turns on and off auto-deafen
+// 
+
 using namespace geode::prelude;
 
 #if defined(_MSC_VER)
@@ -262,6 +277,9 @@ public:
     void setP2LHold(bool h) { p2LHold = h; }
     void setP1RHold(bool h) { p1RHold = h; }
     void setP2RHold(bool h) { p2RHold = h; }
+    void markWavePointThisFrameP1() { p1WavePointThisFrame = true; }
+    void markWavePointThisFrameP2() { p2WavePointThisFrame = true; }
+
 
     int m_levelIDOnAttach = 0;
 
@@ -788,6 +806,9 @@ public:
 
         m_attemptCountsDirty = true;
         rebuildAttemptCountsIfNeeded();
+        if (botActive && practiceRouteOwnerHidingEnabled_()) {
+            rebuildRouteOwnerCache_();
+        }
 
         const auto wantPractice = practiceFilterEvenWhenBotNotOn();
 
@@ -827,7 +848,12 @@ public:
     }
 
     void prioritizeInitialAttemptsInPreloadOrder_(int targetCount) {
-        if (m_initialAttemptsToSet.empty() || m_preloadOrder.empty()) return;
+        if (m_preloadOrder.empty()) return;
+
+        std::unordered_set<uint32_t> validCandidates(
+            m_preloadOrder.begin(),
+            m_preloadOrder.end()
+        );
 
         std::unordered_set<uint32_t> initialSet(
             m_initialAttemptsToSet.begin(),
@@ -836,36 +862,36 @@ public:
 
         std::unordered_set<uint32_t> added;
         std::vector<uint32_t> reordered;
-        reordered.reserve(m_preloadOrder.size()+1);
+        reordered.reserve(m_preloadOrder.size() + 1);
 
-        if (targetCount>1) {
-
-            // Force the first one to be the real player
-            int firstSerialToLoad = m_preloadOrder[0];
-            if (m_activeOwnerSerial > -1) firstSerialToLoad = m_activeOwnerSerial;
-            else if (m_replayOwnerSerial > -1) firstSerialToLoad = m_replayOwnerSerial;
-
-            reordered.push_back(firstSerialToLoad);
-            added.insert(firstSerialToLoad);
-
-            // First: force the initial list to the front, in its own order.
-            for (int idx : m_initialAttemptsToSet) {
-                if (added.insert(idx).second) {
-                    reordered.push_back(idx);
-                }
+        auto pushIfValid = [&](uint32_t serial) {
+            if (validCandidates.find(serial) == validCandidates.end()) return;
+            if (added.insert(serial).second) {
+                reordered.push_back(serial);
             }
+        };
 
-            // Then: append the rest of the preload order, skipping anything already added.
-            for (int idx : m_preloadOrder) {
-                if (added.insert(idx).second) {
-                    reordered.push_back(idx);
-                }
+        // Force route owner if it is actually part of this preload candidate set
+        if (targetCount > 1) {
+            if (m_activeOwnerSerial > 0) {
+                pushIfValid(static_cast<uint32_t>(m_activeOwnerSerial));
+            } else if (m_replayOwnerSerial > 0) {
+                pushIfValid(static_cast<uint32_t>(m_replayOwnerSerial));
             }
-
-            m_preloadOrder = std::move(reordered);
         }
-        else {
-            m_preloadOrder.clear();
+
+        // Force initially assigned PlayerObject attempts
+        for (uint32_t serial : m_initialAttemptsToSet) {
+            pushIfValid(serial);
+        }
+
+        // Append the rest
+        for (uint32_t serial : m_preloadOrder) {
+            pushIfValid(serial);
+        }
+
+        if (!reordered.empty()) {
+            m_preloadOrder = std::move(reordered);
         }
     }
 
@@ -1070,6 +1096,17 @@ public:
         m_primedSet.clear();
         m_wantToPrimeIndices.clear();
         m_wantToPrimeSet.clear();
+        m_practiceSerialSet.clear();
+
+        const bool keepRouteOwnerCache =
+            ignoreStopPlayback &&
+            botActive &&
+            practiceRouteOwnerHidingEnabled_();
+
+        if (!keepRouteOwnerCache) {
+            m_routeOwnerSerials.clear();
+            m_currentlyHiddenSerials.clear();
+        }
 
         if (!ignoreStopPlayback) {
             stopReplay();
@@ -1328,7 +1365,7 @@ public:
         }
     }
 
-    bool rewriteWholeFileToV6_(std::filesystem::path const& path) {
+    bool rewriteWholeFileToCurrent_(std::filesystem::path const& path) {
         const size_t validAttempts = countAttemptsWithData_(attempts);
 
         if (validAttempts == 0) {
@@ -1449,7 +1486,7 @@ public:
         int written = 0;
 
         if (m_needsMigrationRewrite) {
-            if (!rewriteWholeFileToV6_(path)) {
+            if (!rewriteWholeFileToCurrent_(path)) {
                 m_isSaving = false;
                 return 0;
             }
@@ -1520,7 +1557,11 @@ public:
         }
 
         const bool headerIsLegacy = (h.version < kAPXVersion);
-        if (headerIsLegacy) {
+        const bool oldWavePointBitMeaning = h.version < kAPXVersion_WavePointThisFrame;
+
+        const bool forceFullMigrationLoad = headerIsLegacy || oldWavePointBitMeaning;
+
+        if (forceFullMigrationLoad) {
             m_needsMigrationRewrite = true;
         }
 
@@ -1542,6 +1583,10 @@ public:
                     break;
                 }
 
+                if (oldWavePointBitMeaning) {
+                    clearAPXWavePointThisFrameBits(a);
+                }
+
                 if (m_loadedSerials.count(a.serial)) {
                     continue;
                 }
@@ -1551,11 +1596,13 @@ public:
                 const bool isPractice = a.practiceAttempt;
                 bool loadThis = true;
 
-                if (flt.practice.has_value() && flt.practice.value() != isPractice) loadThis = false;
-                if (flt.minPct.has_value() && a.startPercent < flt.minPct.value()) loadThis = false;
-                if (flt.maxPct.has_value() && a.startPercent > flt.maxPct.value()) loadThis = false;
-                if (loadThis && !isPractice && flt.maxNonPractice > 0
-                    && nonPracticeLoaded >= flt.maxNonPractice) loadThis = false;
+                if (!(forceFullMigrationLoad)) {
+                    if (flt.practice.has_value() && flt.practice.value() != isPractice) loadThis = false;
+                    if (flt.minPct.has_value() && a.startPercent < flt.minPct.value()) loadThis = false;
+                    if (flt.maxPct.has_value() && a.startPercent > flt.maxPct.value()) loadThis = false;
+                    if (loadThis && !isPractice && flt.maxNonPractice > 0
+                        && nonPracticeLoaded >= flt.maxNonPractice) loadThis = false;
+                }
 
                 if (!loadThis) {
                     continue;
@@ -1590,11 +1637,13 @@ public:
                 const bool isPractice = (m.flags & 1u) != 0;
                 bool loadThis = true;
 
-                if (flt.practice.has_value() && flt.practice.value() != isPractice) loadThis = false;
-                if (flt.minPct.has_value() && m.startPercent < flt.minPct.value()) loadThis = false;
-                if (flt.maxPct.has_value() && m.startPercent > flt.maxPct.value()) loadThis = false;
-                if (loadThis && !isPractice && flt.maxNonPractice > 0
-                    && nonPracticeLoaded >= flt.maxNonPractice) loadThis = false;
+                if (!forceFullMigrationLoad) {
+                    if (flt.practice.has_value() && flt.practice.value() != isPractice) loadThis = false;
+                    if (flt.minPct.has_value() && m.startPercent < flt.minPct.value()) loadThis = false;
+                    if (flt.maxPct.has_value() && m.startPercent > flt.maxPct.value()) loadThis = false;
+                    if (loadThis && !isPractice && flt.maxNonPractice > 0
+                        && nonPracticeLoaded >= flt.maxNonPractice) loadThis = false;
+                }
 
                 auto skipToEndOfChunk = [&]() {
                     auto now = in.tellg();
@@ -1642,6 +1691,10 @@ public:
 
                 readFrames(a.p1, m.p1Count);
                 readFrames(a.p2, m.p2Count);
+
+                if (oldWavePointBitMeaning) {
+                    clearAPXWavePointThisFrameBits(a);
+                }
 
                 if (!a.p1.empty()) {
                     a.startX = static_cast<float>(a.p1.front().x);
@@ -1703,6 +1756,32 @@ public:
             "[APX load] migration={}",
             m_needsMigrationRewrite ? "yes" : "no"
         );
+
+        in.close();
+
+        if (m_needsMigrationRewrite) {
+            if (oldWavePointBitMeaning) {
+                log::info(
+                    "[APX migration] clearing old wavePointThisFrame/sliding bit and rewriting {} to APX v{}",
+                    geode::utils::string::pathToString(path),
+                    kAPXVersion
+                );
+            } else {
+                log::info(
+                    "[APX migration] rewriting {} to APX v{}",
+                    geode::utils::string::pathToString(path),
+                    kAPXVersion
+                );
+            }
+
+            if (!rewriteWholeFileToCurrent_(path)) {
+                log::warn(
+                    "[APX migration] failed to rewrite migration file: {}",
+                    geode::utils::string::pathToString(path)
+                );
+            }
+        }
+
         return static_cast<int>(loaded);
     }
 
@@ -2077,6 +2156,8 @@ public:
         m_frameCounter = 0;
         m_currentAttemptStart = 0;
         m_playbackStartTick = 0;
+        p1WavePointThisFrame = false;
+        p2WavePointThisFrame = false;
 
         m_prevPractice = (m_pl && m_pl->m_isPracticeMode);
         m_pendingRearm = false;
@@ -2151,6 +2232,7 @@ public:
                 m_replayOwnerSerial = serial;
             }
             m_replayAttempt = nullptr;
+            rebuildRouteOwnerCache_();
         }
 
         if (!owner || owner->p1.empty()) {
@@ -2234,6 +2316,7 @@ public:
         forceSetPosP1.y = 105.f;
         forceSetPosP2.x = 0.f;
         forceSetPosP2.y = 105.f;
+        prevHold = false;
 
         // log::info("onReset");
 
@@ -2319,13 +2402,13 @@ public:
             m_playbackArmed = playback;
         }
 
-        if (m_useCheckpointsRoute && m_replayKind == ReplayKind::PracticeComposite && routeIsComposite_()) {
-            if (botActive || showWhilePlaying) {
-                //buildCompositePracticePath();
-                rebuildRouteOwnerCache_();
-            }
-            if (botActive) tagCompositeOwnersHidden_(true);
-        }
+        //if (m_useCheckpointsRoute && m_replayKind == ReplayKind::PracticeComposite && routeIsComposite_()) {
+        //    if (botActive || showWhilePlaying) {
+        //        //buildCompositePracticePath();
+        //        rebuildRouteOwnerCache_();
+        //    }
+        //    if (botActive) tagCompositeOwnersHidden_(true);
+        //}
 
         if (botActive) {
             m_playerPrevTeleported = false;
@@ -2349,6 +2432,8 @@ public:
             invalidatePrimedPlayerObjectRefs();
             InitialGamemodeSet();
         }
+
+        m_movementDirection = MovementDirection::Flat;
 
         // log::info("inUseCount: {}, activeAttempts: {}, currentlyHiddenSerials: {}", m_playerObjectPool.inUseCount(), m_playerObjectPool.getActiveAttempts().size(), m_currentlyHiddenSerials.size());
     }
@@ -2433,6 +2518,7 @@ public:
         botActive = false;
         playback = false;
         recording = false;
+        m_hasWavePointData = false;
         m_filterByStartPosition = false;
         applyBotSafety_(false);
 
@@ -2489,6 +2575,8 @@ public:
         p1Hold = p2Hold = false;
         p1LHold = p2LHold = false;
         p1RHold = p2RHold = false;
+        p1WavePointThisFrame = false;
+        p2WavePointThisFrame = false;
         m_lastWinSerial = -1;
         m_filterByStartPosition = false;
         m_currentReplayStartPos.x = 0.f;
@@ -2755,7 +2843,7 @@ public:
 
     void syncInputsToCurrentIndexP1_() {
         if (m_pl->m_player1 && !m_currentOwner->p1.empty() && m_replayIdx1 < m_currentOwner->p1.size()) {
-            const Frame& F = m_currentOwner->p1[m_replayIdx1];
+            const Frame& F = m_currentOwner->p1[std::min(m_currentOwner->p1.size()-1, m_replayIdx1+2)];
             if (F.hold  != botPrevHold1) {
                 // best method but might not work due to Click Between Frames
                 m_pl->handleButton(F.hold, /*btn=*/1, /*isP1=*/true);
@@ -2795,7 +2883,7 @@ public:
     void syncInputsToCurrentIndexP2_() {
 
         if (m_pl->m_player2 && m_currentOwner->hadDual && !m_currentOwner->p2.empty() && m_replayIdx2  < m_currentOwner->p2.size()) {
-            const Frame& F2 = m_currentOwner->p2[m_replayIdx2];
+            const Frame& F2 = m_currentOwner->p2[std::min(m_currentOwner->p2.size()-1, m_replayIdx2+2)];
             if (F2.hold  != botPrevHold2) {
                 // best method but might not work due to Click Between Frames
                 m_pl->handleButton(F2.hold, /*btn=*/1, /*isP1=*/false);
@@ -2831,9 +2919,10 @@ public:
         m_lastEmitIdx2 = m_replayIdx2;
     }
 
-    void startReplayPractice() {
+    bool startReplayPractice() {
         m_freezePlayerXAtEnd = false;
         m_chainAuthoritative = true;
+        m_hasWavePointData = false;
         invalidateAttemptCounts();
 
         m_filterByStartPosition = true;
@@ -2842,7 +2931,8 @@ public:
             log::warn("[Bot] startReplayPractice aborted: pl={}, p1={}",
                 (bool)m_pl, m_pl && m_pl->m_player1);
             m_filterByStartPosition = false;
-            return;
+            stopReplay();
+            return false;
         }
 
         if (isPracticeMode()) togglePracticeMode(false);
@@ -2854,22 +2944,37 @@ public:
         m_currentReplayStartPos.x = m_pl->m_player1->m_positionX;
         m_currentReplayStartPos.y = m_pl->m_player1->m_positionY;
 
-        m_checkpointMgr.selectBestSessionForStartX_RankByTime(
+        const int selectedSession = m_checkpointMgr.selectBestSessionForStartX_RankByTime(
             m_currentReplayStartPos.x,
             kReplayStartTolerance
         );
+
+        if (selectedSession <= 0 || m_checkpointMgr.noValidSessionForStartX()) {
+            log::warn(
+                "[Bot] startReplayPractice: no valid session for startX={}",
+                m_currentReplayStartPos.x
+            );
+            m_filterByStartPosition = false;
+            stopReplay();
+            return false;
+        }
 
         m_replayKind = ReplayKind::PracticeComposite;
 
         //buildCompositePracticePath(std::optional<bool>(true));
 
+        m_replayOwnerSerial = m_checkpointMgr.findOwnerSerialForTime(0.0);
+        m_activeOwnerSerial = m_replayOwnerSerial > 0 ? m_replayOwnerSerial : -1;
+
+        rebuildRouteOwnerCache_();
         rebuildRouteOwnerCache_();
         
-         std::vector<PracticeSegment> replaySegs = m_checkpointMgr.getReplaySequence();
+        std::vector<PracticeSegment> replaySegs = m_checkpointMgr.getReplaySequence();
         if (replaySegs.empty()) {
             log::warn("[Bot] startReplayPractice: no replay segments");
             m_filterByStartPosition = false;
-            return;
+            stopReplay();
+            return false;
         }
         
         //if (!firstOwner || firstOwner->p1.empty()) {
@@ -2907,15 +3012,6 @@ public:
         //    if (m_pl->m_player2) m_pl->m_player2->setPositionX(m_currentReplayStartPos.x);
         //    m_didInitialWarp = true;
         //}
-
-        
-
-        // first attempt in sequence
-        int m_replayOwnerSerial = m_checkpointMgr.findOwnerSerialForTime(0.f);
-        // log::info("m_replayOwnerSerial: {}", m_replayOwnerSerial);
-        if (m_replayOwnerSerial > -1) {
-            m_activeOwnerSerial = m_replayOwnerSerial;
-        }
 
         m_replayEndTime = m_checkpointMgr.replayEndTime();
         
@@ -2968,18 +3064,21 @@ public:
         }
         
         restartLevel();
+        return true;
     }
 
 
-    void startReplayBest() {
+    bool startReplayBest() {
         m_freezePlayerXAtEnd = false;
         m_freezePlayerX = 0.f;
         m_freezePlayerY = 0.f;
+        m_hasWavePointData = false;
 
         if (!m_pl || !m_pl->m_player1) {
             log::warn("[Bot] startReplayBest aborted: pl={}, p1={}",
                     (bool)m_pl, m_pl && m_pl->m_player1);
-            return;
+            stopReplay();
+            return false;
         }
 
         if (isPracticeMode()) togglePracticeMode(false);
@@ -3007,7 +3106,8 @@ public:
             m_replayOwnerIndex = -1;
             m_currentOwner = nullptr;
             playback = false;
-            return;
+            stopReplay();
+            return false;
         }
 
         if (!scanAttemptCatalogForLevel_(m_levelIDOnAttach)) {
@@ -3016,7 +3116,8 @@ public:
             m_replayOwnerIndex = -1;
             m_currentOwner = nullptr;
             playback = false;
-            return;
+            stopReplay();
+            return false;
         }
 
         const int serial = pickWinningOrBestSerialFromPosition_(
@@ -3032,7 +3133,8 @@ public:
             m_replayOwnerIndex = -1;
             m_currentOwner = nullptr;
             playback = false;
-            return;
+            stopReplay();
+            return false;
         }
 
         Attempt* chosen = ensureAttemptLoadedBySerial_(serial, false);
@@ -3042,7 +3144,8 @@ public:
             m_replayOwnerIndex = -1;
             m_currentOwner = nullptr;
             playback = false;
-            return;
+            stopReplay();
+            return false;
         }
 
         const size_t idx = findLoadedAttemptIndexBySerial_(serial);
@@ -3052,7 +3155,8 @@ public:
             m_replayOwnerIndex = -1;
             m_currentOwner = nullptr;
             playback = false;
-            return;
+            stopReplay();
+            return false;
         }
 
         m_replayOwnerSerial = serial;
@@ -3066,7 +3170,8 @@ public:
             m_replayOwnerIndex = -1;
             m_currentOwner = nullptr;
             playback = false;
-            return;
+            stopReplay();
+            return false;
         }
 
         tagCompositeOwnersHidden_(true);
@@ -3094,6 +3199,7 @@ public:
         //log::info("[Bot] startReplayBest: calling final resetLevel()");
         restartLevel();
         //log::info("[Bot] startReplayBest: complete, botActive={}", botActive);
+        return true;
     }
 
     void stopReplay() {
@@ -3131,8 +3237,10 @@ public:
     bool isReplaying() const { return playback; }
     bool isResetting() const { return resetting; }
     void setResetting(bool on) { resetting = on; }
-    bool isdisablePlayerMove() const { return disablePlayerMove; }
+    bool isdisablePlayerMove() const { return disablePlayerMove && m_setRealPlayerPosition; }
     void setdisablePlayerMove(bool on) { disablePlayerMove = on; }
+    bool shouldDisableHardStreakAddPoint() const { return !m_allowWavePointAdding && botActive && m_hasWavePointData; }
+    void setAllowWavePointAdding(bool on ) { m_allowWavePointAdding = on; }
 
     double getLastCheckpointTime() {
         if (m_pl && m_pl->getLastCheckpoint()) {
@@ -3303,7 +3411,8 @@ public:
         const float p2pos = m_pl->m_player2->getPositionX();
         const bool hasP2Now = (p2pos != 0.f);
         m_px2 = hasP2Now ? p2pos : m_px;
-        m_p2JustSpawned = (hasP2Now && !m_prevHadP2);
+        if (hasP2Now && !m_prevHadP2) m_p2JustSpawned = true;
+        // m_p2JustSpawned = (hasP2Now && !m_prevHadP2); Now set this in applyFrameToPlayer_Only_
         m_prevHadP2 = hasP2Now;
     }
 
@@ -3496,15 +3605,15 @@ public:
             }
             
             // Use the maintained index instead of recalculating
-            size_t idx1 = m_replayIdx1;
+            size_t idx1 = m_replayIdx1 + 2;
             if (idx1 >= m_currentOwner->p1.size()) idx1 = m_currentOwner->p1.size() - 1;
             
-            if (isPlayer1) applyFrameToPlayer_Only_(m_pl->m_player1, m_currentOwner->p1, idx1, m_lastAttemptTime, false, true);
+            if (isPlayer1) applyFrameToPlayer_Only_(m_pl->m_player1, m_currentOwner->p1, idx1, m_lastAttemptTime, true);
             else {
-                if (m_currentOwner->hadDual && m_pl->m_player2 && !m_currentOwner->p2.empty() && m_pl->m_player2->getPositionX() != 0.f) {
-                    size_t idx2 = m_replayIdx2;
+                if (m_currentOwner->hadDual && m_pl->m_player2 && !m_currentOwner->p2.empty()) {
+                    size_t idx2 = m_replayIdx2 + 2;
                     if (idx2 >= m_currentOwner->p2.size()) idx2 = m_currentOwner->p2.size() - 1;
-                    applyFrameToPlayer_Only_(m_pl->m_player2, m_currentOwner->p2, idx2, m_lastAttemptTime, m_p2JustSpawned, false);
+                    applyFrameToPlayer_Only_(m_pl->m_player2, m_currentOwner->p2, idx2, m_lastAttemptTime, false);
                 }
             }
             checkIfPlayerIsDonePlaybackThingMaybePerhapsYeah();
@@ -3531,15 +3640,15 @@ public:
         }
 
         // Use maintained indices for PracticeComposite as well
-        size_t idx1 = m_replayIdx1;
+        size_t idx1 = m_replayIdx1 + 2;
         if (idx1 >= m_currentOwner->p1.size()) idx1 = m_currentOwner->p1.size() - 1;
         
-        if (isPlayer1) applyFrameToPlayer_Only_(m_pl->m_player1, m_currentOwner->p1, idx1, px, false, true);
+        if (isPlayer1) applyFrameToPlayer_Only_(m_pl->m_player1, m_currentOwner->p1, idx1, px, true);
         else {
             if (m_currentOwner->hadDual && m_pl->m_player2 && !m_currentOwner->p2.empty()) {
-                size_t idx2 = m_replayIdx2;
+                size_t idx2 = m_replayIdx2 + 2;
                 if (idx2 >= m_currentOwner->p2.size()) idx2 = m_currentOwner->p2.size() - 1;
-                applyFrameToPlayer_Only_(m_pl->m_player2, m_currentOwner->p2, idx2, px2, m_p2JustSpawned, false);
+                applyFrameToPlayer_Only_(m_pl->m_player2, m_currentOwner->p2, idx2, px2, false);
             }
         }
 
@@ -3567,6 +3676,7 @@ public:
 
         return true;
     }
+    
 
     void recordCurrentFrame_(bool isPlayer1) {
         if (m_justDied) return;
@@ -3588,6 +3698,7 @@ public:
             f.upsideDown = p1->m_isUpsideDown;
             f.isDashing = p1->m_isDashing;
             f.isVisible = p1->isVisible();
+            f.wavePointThisFrame = p1WavePointThisFrame;
 
             // Moved to runtime to reduce recording delay
             //if (!m_current.p1.empty()) {
@@ -3606,6 +3717,7 @@ public:
             m_lastRecordedX = static_cast<float>(f.x);
             const float currentPercent = m_pl->getCurrentPercent();
             if (currentPercent > m_current.endPercent) m_current.endPercent = currentPercent;
+            p1WavePointThisFrame = false;
         }
         
         if (m_pl->m_player2 && m_prevHadP2 && !isPlayer1) {
@@ -3623,6 +3735,7 @@ public:
             f.upsideDown = p2->m_isUpsideDown;
             f.isDashing = p2->m_isDashing;
             f.isVisible = p2->isVisible();
+            f.wavePointThisFrame = p2WavePointThisFrame;
 
             // Moved to runtime to reduce recording delay
             //if (!m_current.p2.empty()) {
@@ -3637,6 +3750,7 @@ public:
             f.holdL = p2LHold;
             f.holdR = p2RHold;
             m_current.p2.push_back(f);
+            p2WavePointThisFrame = false;
         }
     }
     
@@ -4022,6 +4136,10 @@ private:
     double m_prevSessionTime = 0.0;
     double m_offsetUnitsPerSecond = 311.f;
     bool m_1PreloadedSoDontShowGhosts = false;
+    bool m_hasWavePointData = false;
+    bool m_allowWavePointAdding = false;
+    MovementDirection m_movementDirection = MovementDirection::Flat;
+    bool prevHold = false;
 
     double finalTime = 0.f;
 
@@ -4041,6 +4159,7 @@ private:
 
     size_t m_lastGhostTickFrame = 0;
     size_t m_speedUpCameraAnimationAfterTeleportForNFrames = 0;
+    size_t m_fixWaveTrailAfterSpawnP2ForNFrames = 0;
 
     std::vector<Attempt> attempts;
     Attempt m_current;
@@ -4050,6 +4169,7 @@ private:
     bool resetting = false;
     bool disablePlayerMove = false;
     bool m_didInitialWarp = false;
+    bool m_setRealPlayerPosition = true;
     bool botPrevHold1 = false;
     bool botPrevHold2 = false;
     bool botPrevHoldL1 = false;
@@ -4089,6 +4209,8 @@ private:
     bool p2LHold = false;
     bool p1RHold = false;
     bool p2RHold = false;
+    bool p1WavePointThisFrame = false;
+    bool p2WavePointThisFrame = false;
 
     size_t m_frameCounter = 0;
     size_t m_currentAttemptStart = 0;
@@ -4590,19 +4712,20 @@ private:
     }
 
     FORCE_INLINE bool isOwnerAnywhereInRoute_(Attempt const& a) const {
-        if (!botActive) return false;
         if (a.ignorePlayback) return true;
+
+        if (!botActive) return false;
 
         if (!practiceRouteOwnerHidingEnabled_())
             return false;
 
-        if (a.serial > 0 && m_routeOwnerSerials.count(a.serial) != 0)
+        if (a.serial <= 0)
+            return false;
+
+        if (a.serial == m_activeOwnerSerial)
             return true;
 
-        if (a.serial > 0 && a.serial == m_activeOwnerSerial)
-            return true;
-
-        return false;
+        return m_routeOwnerSerials.find(a.serial) != m_routeOwnerSerials.end();
     }
 
     FORCE_INLINE bool isCurrentOwner_(size_t ai, const Attempt& a) const {
@@ -4825,6 +4948,8 @@ private:
 
         int normal = 0;
         int practice = 0;
+        m_cachedNormalAttempts = 0;
+        m_cachedPracticeAttempts = 0;
 
         m_preloadableIndexesInAttemptsList.clear();
         m_preloadableSerials.clear();
@@ -4840,18 +4965,18 @@ private:
         }
 
         if (m_replayKind == ReplayKind::PracticeComposite) {
-            const auto practiceSerials =
-                m_checkpointMgr.getPracticeSerialsMatchingCurrentStartPos_AllSessions(kReplayStartTolerance);
-
-            m_practiceSerialSet.clear();
-            m_practiceSerialSet.reserve(practiceSerials.size());
-            for (int s : practiceSerials) {
-                m_practiceSerialSet.insert(s);
+            if (!rebuildPracticePreloadSerialSetForCurrentStart_()) {
+                m_cachedPracticeAttempts = 0;
+                m_cachedNormalAttempts = 0;
+                m_attemptCountsDirty = false;
+                return;
             }
 
             for (size_t i = 0; i < attempts.size(); ++i) {
                 Attempt& a = attempts[i];
-                if (!isAttemptInCurrentPracticeSession_(a)) continue;
+
+                if (!a.practiceAttempt) continue;
+                if (m_practiceSerialSet.find(a.serial) == m_practiceSerialSet.end()) continue;
 
                 const bool hasSpawnableData = !a.p1.empty() || (a.hadDual && !a.p2.empty());
                 if (!hasSpawnableData) continue;
@@ -4863,6 +4988,8 @@ private:
 
             for (const auto& entry : m_attemptCatalog) {
                 if (loadedSeen.find(entry.serial) != loadedSeen.end()) continue;
+
+                if (!entry.practiceAttempt) continue;
                 if (m_practiceSerialSet.find(entry.serial) == m_practiceSerialSet.end()) continue;
                 if (entry.p1Count <= 0) continue;
 
@@ -4871,6 +4998,7 @@ private:
             }
 
             m_cachedPracticeAttempts = practice;
+            m_cachedNormalAttempts = 0;
         }
         else {
             auto loadedMatchesNormalReplayFilter = [&](const Attempt& a) -> bool {
@@ -4922,6 +5050,69 @@ private:
         }
 
         m_attemptCountsDirty = false;
+    }
+
+    float practicePreloadTargetStartX_() const {
+        if (m_filterByStartPosition && std::isfinite(m_currentReplayStartPos.x)) {
+            return m_currentReplayStartPos.x;
+        }
+
+        if (m_pl && m_pl->m_player1) {
+            return m_pl->m_player1->m_positionX;
+        }
+
+        if (auto const* s = m_checkpointMgr.getPath().selectedSession()) {
+            const float sx = CheckpointManager::sessionStartX_(*s);
+            if (std::isfinite(sx)) return sx;
+        }
+
+        if (auto const* s = m_checkpointMgr.getPath().activeSession()) {
+            const float sx = CheckpointManager::sessionStartX_(*s);
+            if (std::isfinite(sx)) return sx;
+        }
+
+        return NAN;
+    }
+
+    bool rebuildPracticePreloadSerialSetForCurrentStart_() {
+        m_practiceSerialSet.clear();
+
+        const float targetX = practicePreloadTargetStartX_();
+        if (!std::isfinite(targetX)) {
+            log::warn("[Practice preload] no finite target start X");
+            return false;
+        }
+
+        const int selectedSession =
+            m_checkpointMgr.selectBestSessionForStartX_RankByTime(
+                targetX,
+                kReplayStartTolerance
+            );
+
+        if (selectedSession <= 0 || m_checkpointMgr.noValidSessionForStartX()) {
+            log::warn(
+                "[Practice preload] no valid session for targetX={} xTol={}",
+                targetX,
+                kReplayStartTolerance
+            );
+            return false;
+        }
+
+        const auto serials =
+            m_checkpointMgr.getPracticeSerialsMatchingStartX_AllSessions(
+                targetX,
+                static_cast<int>(kReplayStartTolerance)
+            );
+
+        m_practiceSerialSet.reserve(serials.size());
+
+        for (int serial : serials) {
+            if (serial > 0) {
+                m_practiceSerialSet.insert(serial);
+            }
+        }
+
+        return !m_practiceSerialSet.empty();
     }
 
     void applyBotSafety_(bool on) {
@@ -5588,6 +5779,7 @@ private:
             bool& prevHolding,
             bool& prevDartSlide,
             bool& prevTeleported,
+            bool& hasWavePointData,
             bool isP2,
             float playerX
         ) {
@@ -5608,6 +5800,7 @@ private:
                 } else {
                     frameIdx = idxForTimeBounded_(frames, accTime, ghostTime);
                 }
+                frameIdx = std::min(frameIdx+2, frames.size()-1);
                 drawIdx = std::min(frameIdx, lastIdx);
 
                 const bool atLastFrame = (drawIdx >= lastIdx);
@@ -5950,26 +6143,32 @@ private:
 
                     if (trailActive && trail) {
                         const bool isMovingUp = (iy > lasty);
+                        bool addedWavePoint = false;
                         // Add points on hold/slide state changes
-                        if (fNext.hold != prevHolding) {
-                            prevHolding = fNext.hold;
+                        if (f.wavePointThisFrame) {
+                            hasWavePointData = true;
                             trail->addPoint({ix, iy});
                         }
-                        else if (fNext.vehicleSize != f.vehicleSize) {
-                            trail->addPoint({ix, iy});
-                        }
-                        else if (pc.wasMovingUp != isMovingUp) {    
-                            trail->addPoint({ix, iy});
-                        }
-                        else {
-                            const bool stateDartSlide = (std::fabs(fNext.y - f.y) <= kYEqualEps);
-                            if (stateDartSlide != prevDartSlide) {
-                                prevDartSlide = stateDartSlide;
+                        if (!hasWavePointData) {
+                            if (f.hold != prevHolding) {
                                 trail->addPoint({ix, iy});
+                            }
+                            else if (fNext.vehicleSize != f.vehicleSize) {
+                                trail->addPoint({ix, iy});
+                            }
+                            else if (pc.wasMovingUp != isMovingUp) {    
+                                trail->addPoint({ix, iy});
+                            }
+                            else {
+                                const bool stateDartSlide = (std::fabs(fNext.y - f.y) <= kYEqualEps);
+                                if (stateDartSlide != prevDartSlide) {
+                                    prevDartSlide = stateDartSlide;
+                                    trail->addPoint({ix, iy});
+                                }
                             }
                         }
                         
-
+                        prevHolding = f.hold;
                         pc.wasMovingUp = isMovingUp;
                         
                         // Teleport visual wacky stuff
@@ -6015,7 +6214,7 @@ private:
             processPlayer(
                 a.p1, a.acc1Time, a.g1, a.last1, a.g1CurMode,
                 a.i1, a.d1, a.primedP1, a.eolFrozenP1,
-                a.trailactive1, a.previouslyHolding1, a.prevStateDartSlide1, a.prevTeleported1,
+                a.trailactive1, a.previouslyHolding1, a.prevStateDartSlide1, a.prevTeleported1, a.hasWavePointData,
                 false, px
             );
         }
@@ -6027,7 +6226,7 @@ private:
             processPlayer(
                 a.p2, a.acc2Time, a.g2, a.last2, a.g2CurMode,
                 a.i2, a.d2, a.primedP2, a.eolFrozenP2,
-                a.trailactive2, a.previouslyHolding2, a.prevStateDartSlide2, a.prevTeleported2,
+                a.trailactive2, a.previouslyHolding2, a.prevStateDartSlide2, a.prevTeleported2, a.hasWavePointData,
                 true, px2 + a.ghostOffsetPx
             );
         }
@@ -6526,14 +6725,45 @@ private:
         //p1RHold = p2RHold = false;
     }
 
+    void setP2PosOnly(
+        PlayerObject* p,
+        const std::vector<Frame>& v,
+        size_t baseIdx,
+        double sessionTime
+    ) {
+        if (!m_setRealPlayerPosition) return;
+        if (!p || v.empty()) return;
+        if (m_freezePlayerXAtEnd) return;
+
+        const double firstT = v.front().t;
+        const double lastT  = v.back().t;
+        const bool inside  = (sessionTime >= firstT && sessionTime <= lastT);
+
+        size_t i = baseIdx;
+        if (i >= v.size()) i = v.size() - 1;
+
+        const Frame& a = v[i];
+        const float ix = a.x;
+        const float iy = a.y;
+
+        p->setPosition({ ix, iy });
+    }
+
+    void waveTrailAddPointToPlayer(HardStreak* m_waveTrail, cocos2d::CCPoint point, bool isP1) {
+        m_allowWavePointAdding = true;
+        m_waveTrail->addPoint(point);
+        m_allowWavePointAdding = false;
+        // if (!isP1) log::info("px: {}, py: {}", point.x, point);
+    }
+
     void applyFrameToPlayer_Only_(
         PlayerObject* p,
         const std::vector<Frame>& v,
         size_t baseIdx,
         double sessionTime,
-        bool p2JustSpawned = false,
         bool isP1 = true
     ) {
+        if (!m_setRealPlayerPosition) return;
         if (!p || v.empty()) return;
         if (m_freezePlayerXAtEnd) return;
 
@@ -6575,9 +6805,6 @@ private:
             hasData = true;
         }
 
-        p->setVisible(true);
-        p->setOpacity(255);
-
         if (p->m_isDashing != finterp.isDashing) {
             if (finterp.isDashing) p->startDashing(attemptplayback::p0d());
             else p->stopDashing();
@@ -6593,6 +6820,39 @@ private:
         const bool isWave = (currentMode(p, m_pl->m_isPlatformer) == IconType::Wave);
         const float ix = a.x;
         const float iy = a.y;
+        float prevY = p->getPositionY();
+        float prevX = p->getPositionX();
+
+        bool addedWavePoint = false;
+        if (isWave && a.wavePointThisFrame && p->m_waveTrail) {
+            m_hasWavePointData = true;
+            waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1);
+            addedWavePoint = true;
+        }
+        else if (isWave && !addedWavePoint && prevHold != a.hold) {
+            waveTrailAddPointToPlayer(p->m_waveTrail, {prevX, prevY}, isP1);
+            addedWavePoint = true;
+        }
+        prevHold = a.hold;
+
+        
+
+        //MovementDirection currentMovementDirection = MovementDirection::Flat;
+
+        //if (prevY > iy) currentMovementDirection = MovementDirection::Down;
+        //else if (prevY < iy) currentMovementDirection = MovementDirection::Up;
+
+        //if (isWave && p->m_waveTrail && currentMovementDirection != m_movementDirection && !addedWavePoint) {
+        //    waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy});
+        //    addedWavePoint = true;
+        //}
+        //m_movementDirection = currentMovementDirection;
+
+        if (isWave && p->m_waveTrail) {
+            p->m_waveTrail->setVisible(true);
+            p->m_waveTrail->setOpacity(255);
+            p->m_waveTrail->resumeStroke();
+        }
 
         // Wave teleport goop
         if (m_playerPrevTeleported) {
@@ -6600,7 +6860,10 @@ private:
             if (isWave && p->m_waveTrail) {
                 p->m_waveTrail->reset();
                 p->m_waveTrail->resumeStroke();
-                p->m_waveTrail->addPoint({ix, iy});
+                if (!addedWavePoint) {
+                    waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1);
+                    addedWavePoint = true;
+                }
             }
             auto gl = GJBaseGameLayer::get();
             //gl->updateCamera(20.0f);
@@ -6617,8 +6880,9 @@ private:
 
         // if (!isP1) log::info("P2 spawned: {}, p2x: {}", m_p2JustSpawned, p->getPositionX());
 
-        const bool P2HasSpawnedNoWay = (p2JustSpawned || p->getPositionX() == 0.f);
-
+        p->setVisible(true);
+        p->setOpacity(255);
+        
         //if (m_playerPrevTeleported) {
         //    auto bl = GJBaseGameLayer::get();
         //    bool prevState = disablePlayerMove;
@@ -6632,9 +6896,6 @@ private:
         //auto bl = GJBaseGameLayer::get();
         //bool prevState = disablePlayerMove;
         //m_teleport_helper.snapTeleport(bl, p, {finterp.x, finterp.y});
-
-        float prevY = p->getPositionY();
-        float prevX = p->getPositionX();
 
         p->setPosition({ finterp.x, finterp.y });
 
@@ -6683,17 +6944,36 @@ private:
 
         if (isWave) {
             p->setRotation(a.rot);
-            
-            // Fix player 2 wave trail visual bug when spawning in
-            if (P2HasSpawnedNoWay && !isP1 && p->m_waveTrail) {
+
+            if (m_fixWaveTrailAfterSpawnP2ForNFrames > 0) {
                 p->m_waveTrail->stopStroke();
                 p->m_waveTrail->reset();
                 p->m_waveTrail->resumeStroke();
-                p->m_waveTrail->addPoint({ix, iy});
+                if (!addedWavePoint) {
+                    waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1);
+                    addedWavePoint = true;
+                }
+                m_fixWaveTrailAfterSpawnP2ForNFrames--;
+            }
+            
+            // Fix player 2 wave trail visual bug when spawning in
+            if (m_p2JustSpawned && p->m_waveTrail) {
+                m_fixWaveTrailAfterSpawnP2ForNFrames = 2;
+                p->m_waveTrail->reset();
+                p->m_waveTrail->resumeStroke();
+                if (!addedWavePoint) {
+                    waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1);
+                    addedWavePoint = true;
+                }
+                p->m_waveTrail->setVisible(true);
+                p->m_waveTrail->setOpacity(255);
+                m_p2JustSpawned = false;
             }
             
         }
         else p->setRotation(finterp.rot);
+        
+        // m_allowWavePointAdding = !addedWavePoint;
     }
 
     static void emitTransitionsOverRange_(const std::vector<Frame>& v,

@@ -509,6 +509,38 @@ static inline void finalizeLoadedAttempt_(Attempt& a) {
     a.recordedThisSession = false;
 }
 
+void clearAPXWavePointThisFrameBits(Attempt& attempt) {
+    for (auto& f : attempt.p1) {
+        f.wavePointThisFrame = false;
+    }
+
+    for (auto& f : attempt.p2) {
+        f.wavePointThisFrame = false;
+    }
+}
+
+void clearAPXWavePointThisFrameBits(std::vector<Attempt>& attempts) {
+    for (auto& attempt : attempts) {
+        clearAPXWavePointThisFrameBits(attempt);
+    }
+}
+
+static inline void clearWavePointThisFrameBits_(Attempt& a) {
+    for (auto& f : a.p1) {
+        f.wavePointThisFrame = false;
+    }
+
+    for (auto& f : a.p2) {
+        f.wavePointThisFrame = false;
+    }
+}
+
+static inline void clearWavePointThisFrameBits_(std::vector<Attempt>& attempts) {
+    for (auto& a : attempts) {
+        clearWavePointThisFrameBits_(a);
+    }
+}
+
 bool writeAPXPracticePath(std::ostream& out, const PracticePath& path) {
     if (!out.good()) return false;
 
@@ -941,6 +973,10 @@ bool loadAPXFileWithMigration(
     }
 
     bool loadedLegacy = false;
+
+    const bool oldWavePointBitMeaning =
+        hdr.version < kAPXVersion_WavePointThisFrame;
+
     if (hdr.version < kAPXVersion) {
         loadedLegacy = true;
     } else if (hdr.version > kAPXVersion) {
@@ -1029,6 +1065,11 @@ bool loadAPXFileWithMigration(
 
     if (!sawPathChunk) {
         practicePathOut.clear();
+    }
+
+    if (oldWavePointBitMeaning) {
+        clearWavePointThisFrameBits_(attemptsOut);
+        loadedLegacy = true;
     }
 
     if (loadedLegacy) {

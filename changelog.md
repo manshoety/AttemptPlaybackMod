@@ -1,3 +1,6 @@
+# 1.4.48
+- FIX: Frame click alignment fix
+- FIX: Bunch of wave trail fixes
 # 1.4.47
 - FIX: Wave trail sliding issue on gravity switch
 - FIX: Ghost visibility bug in practice playback

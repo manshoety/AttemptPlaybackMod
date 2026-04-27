@@ -141,14 +141,14 @@ struct Frame {
 
     union {
         struct {
-            uint8_t upsideDown     : 1;
-            uint8_t hold           : 1;
-            uint8_t holdL          : 1;
-            uint8_t holdR          : 1;
-            uint8_t isDashing      : 1;
-            uint8_t isVisible      : 1;
-            uint8_t stateDartSlide : 1;
-            uint8_t _unused        : 1;
+            uint8_t upsideDown         : 1;
+            uint8_t hold               : 1;
+            uint8_t holdL              : 1;
+            uint8_t holdR              : 1;
+            uint8_t isDashing          : 1;
+            uint8_t isVisible          : 1;
+            uint8_t wavePointThisFrame : 1;
+            uint8_t _unused            : 1;
         };
         uint8_t flags;
     };
@@ -290,6 +290,12 @@ enum class PreloadSortMode : uint8_t {
     Best = 0,
     Recent = 1,
     Random = 2,
+};
+
+enum class MovementDirection : uint8_t {
+    Up = 0,
+    Flat = 1,
+    Down = 2,
 };
 
 constexpr char const* kPreloadSortModeKey = "preload-sort-mode";
@@ -793,6 +799,7 @@ struct Attempt {
     bool prevStateDartSlide2 = false;
     bool prevTeleported1 = false;
     bool prevTeleported2 = false;
+    bool hasWavePointData = false;
     IconType g1CurMode = IconType::Cube;
     IconType g2CurMode = IconType::Cube;
     cocos2d::ccColor3B c1{255,255,255};

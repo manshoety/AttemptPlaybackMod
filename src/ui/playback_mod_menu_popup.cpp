@@ -335,7 +335,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.47", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.48", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
@@ -903,20 +903,18 @@ bool PreloadAttemptsPopup::init(float width, float height) {
 
     if (m_isReplayBest ) {
         G.setUseCheckpointsRoute(false);
-        G.startReplayBest();
+        m_replayOn = G.startReplayBest();
     }
     else {
         G.setUseCheckpointsRoute(true);
-        G.startReplayPractice();
+        m_replayOn = G.startReplayPractice();
     }
-
-    m_replayOn = true;
 
     m_mainLayer->setLayout(AnchorLayout::create());
 
     m_totalAttempts = Ghosts::I().getTotalAttemptsCount();
 
-    if (m_totalAttempts <= 0) {
+    if (!m_replayOn || m_totalAttempts <= 0) {
         Ghosts::I().cancelPreloadAttempts(false);
         Ghosts::I().stopReplay();
         Ghosts::I().setActiveGhostsInvisible();
