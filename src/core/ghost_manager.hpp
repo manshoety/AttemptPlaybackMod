@@ -2427,7 +2427,8 @@ public:
             InitialGamemodeSet();
         }
 
-        m_movementDirection = MovementDirection::Flat;
+        m_movementDirectionP1 = MovementDirection::Flat;
+        m_movementDirectionP2 = MovementDirection::Flat;
 
         // log::info("inUseCount: {}, activeAttempts: {}, currentlyHiddenSerials: {}", m_playerObjectPool.inUseCount(), m_playerObjectPool.getActiveAttempts().size(), m_currentlyHiddenSerials.size());
     }
@@ -3715,6 +3716,7 @@ public:
         if (m_justDied) return;
         
         const double absoluteTime = m_pl->m_attemptTime + m_current.baseTimeOffset;
+        // log::info("p1Hold: {}", p1Hold);
         
         if (m_pl->m_player1 && isPlayer1) {
             if (!removeReverseOrDuplicateFrames(m_current.p1, absoluteTime)) return;
@@ -4172,7 +4174,8 @@ private:
     bool m_hasWavePointData = false;
     bool m_allowWavePointAdding = false;
     bool m_skipHardStreakCheck = false;
-    MovementDirection m_movementDirection = MovementDirection::Flat;
+    MovementDirection m_movementDirectionP1 = MovementDirection::Flat;
+    MovementDirection m_movementDirectionP2 = MovementDirection::Flat;
 
     double finalTime = 0.f;
 
@@ -6780,7 +6783,7 @@ private:
         //p1RHold = p2RHold = false;
     }
 
-    bool waveTrailAddPointToPlayer(HardStreak* m_waveTrail, cocos2d::CCPoint point, bool isP1, bool m_skip) {
+    inline bool waveTrailAddPointToPlayer(HardStreak* m_waveTrail, cocos2d::CCPoint point, bool isP1, bool m_skip) {
         if (m_skip) return false;
         if (!m_waveTrail || !m_waveTrail->m_pointArray) return false;
 
@@ -6808,8 +6811,14 @@ private:
         m_waveTrail->addPoint(point);
         m_allowWavePointAdding = false;
 
-        // log::info("p1: {} px: {}, py: {}", isP1, point.x, point.y);
+        //log::info("p1: {} px: {}, py: {}", isP1, point.x, point.y);
         return true;
+    }
+
+    inline void setMovementDirection(float previousY, float currentY, MovementDirection& movementDirectionVar) {
+        if (previousY < currentY) movementDirectionVar = MovementDirection::Up;
+        else if (previousY > currentY) movementDirectionVar = MovementDirection::Down;
+        else movementDirectionVar = MovementDirection::Flat;
     }
 
     void applyFrameToPlayerOverRange(
@@ -6840,7 +6849,9 @@ private:
             startIdx = lastApplyIdx + 1;
         }
 
-        // log::info("p1: {} from {} to {}", isP1, startIdx, endIdx);
+        if (baseIdx == 2) startIdx = 0;
+
+        //log::info("p1: {} from {} to {}", isP1, startIdx, endIdx);
 
         for (size_t i = startIdx; i <= endIdx; ++i) {
             if (i >= v.size()) i = v.size() - 1;
@@ -6849,6 +6860,16 @@ private:
             const Frame* b = haveNext ? &v[i + 1] : nullptr;
             const bool havePrevious = (i>0);
             const Frame* prev = havePrevious ? &v[i - 1] : nullptr;
+
+            const bool isWave = (currentMode(p, m_pl->m_isPlatformer) == IconType::Wave);
+            const float ix = a.x;
+            const float iy = a.y;
+            float prevY = p->getPositionY();
+            float prevX = p->getPositionX();
+            MovementDirection movementDir = MovementDirection::Flat;
+            if (prev) setMovementDirection(static_cast<float>(prev->y), iy, movementDir);
+
+            // log::info("movementDir: {}, p1: {}", (int)movementDir, (int)m_movementDirectionP1);
 
             if (p->m_isDashing != a.isDashing) {
                 if (a.isDashing) p->startDashing(attemptplayback::p0d());
@@ -6862,20 +6883,34 @@ private:
                 forceMode(p, a.mode, /*isRealPlayer*/ true);
             }
 
-            const bool isWave = (currentMode(p, m_pl->m_isPlatformer) == IconType::Wave);
-            const float ix = a.x;
-            const float iy = a.y;
-            float prevY = p->getPositionY();
-            float prevX = p->getPositionX();
-
             bool addedWavePoint = false;
+            // log::info("a.wavePointThisFrame: {}", a.wavePointThisFrame);
+            // log::info("click difference: {}", prev && prev->hold != a.hold);
             if (isWave && a.wavePointThisFrame && p->m_waveTrail) {
                 m_hasWavePointData = true;
-                addedWavePoint = waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, m_p2JustSpawned);
+                //log::info("b");
+                if (!addedWavePoint) addedWavePoint = waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, m_p2JustSpawned);
             }
-            else if (isWave && !addedWavePoint && prev && prev->hold != a.hold) {
-                addedWavePoint = waveTrailAddPointToPlayer(p->m_waveTrail, {static_cast<float>(prev->x), static_cast<float>(prev->y)}, isP1, m_p2JustSpawned);
+            if (isWave && (!b || (b && !b->wavePointThisFrame))) {
+                if (isP1) {
+                    if (movementDir != m_movementDirectionP1) {
+                        //log::info("a");
+                        addedWavePoint = waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, m_p2JustSpawned);
+                    }
+                }
+                else if (movementDir != m_movementDirectionP2) {
+                    //log::info("a");
+                    addedWavePoint = waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, m_p2JustSpawned);
+                }
             }
+            if (b) {
+                if (isP1) setMovementDirection(iy, static_cast<float>(b->y), m_movementDirectionP1);
+                else setMovementDirection(iy, static_cast<float>(b->y), m_movementDirectionP2);
+            }
+            //if (isWave && !addedWavePoint && prev && prev->hold != a.hold) {
+            //    log::info("c");
+            //    addedWavePoint = waveTrailAddPointToPlayer(p->m_waveTrail, {static_cast<float>(prev->x), static_cast<float>(prev->y)}, isP1, m_p2JustSpawned);
+            //}
 
             if (isWave && p->m_waveTrail) {
                 p->m_waveTrail->setVisible(true);

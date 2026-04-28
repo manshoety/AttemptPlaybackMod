@@ -16,6 +16,8 @@ Please do not switch start position while recording in practice mode as that wil
 
 The "Don't record noclip attempts" setting ONLY impacts normal mode. Noclip practice attempts WILL still be recorded (otherwise it would break the practice recording sequence)
 
+Recording with Click Between Frames will make playback wave trails look buggy and flat (due to them not being on steps, which I use to render wave trails). Note that CBF should fully work otherwise, just wave trails may look a little weird.
+
 # Limitations
 
 This mod is still early in developement so expect some bugs. Please report any bugs on [discord](https://discord.gg/9MmXKBwvnA) in the bug reports channel
