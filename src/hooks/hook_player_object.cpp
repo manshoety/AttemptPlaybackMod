@@ -89,13 +89,14 @@ class $modify(MyPlayerObject, PlayerObject) {
                     return;
                 }
                 if (isP2) {
-                    PlayerObject::setPosition(ghosts.forceSetPosP2);
+                    if (ghosts.forceSetPosP2.x == 0.f) PlayerObject::setPosition(position);
+                    else PlayerObject::setPosition(ghosts.forceSetPosP2);
                     return;
                 }
             } else {
                 //log::info("Not disabled update");
                 if (isP1) ghosts.forceSetPosP1 = position;
-                else if (isP2) ghosts.forceSetPosP2 = position;
+                else if (isP2 && position.x) ghosts.forceSetPosP2 = position;
             }
         }
 
@@ -112,12 +113,14 @@ class $modify(MyPlayerObject, PlayerObject) {
                     if (this == pl->m_player1) {
                         //log::info("update");
                         Ghosts::I().setdisablePlayerMove(false);
+
+                        Ghosts::I().preUpdate();
                         
                         Ghosts::I().applySegmentBasedReplay_(/*isPlayer1*/true);
                         
                         Ghosts::I().beginPostUpdateTick_();
 
-                        Ghosts::I().preUpdate();
+                        
                         Ghosts::I().recordUpdate(/*isPlayer1*/true);
 
                         Ghosts::I().endPostUpdateTick_();
@@ -133,12 +136,14 @@ class $modify(MyPlayerObject, PlayerObject) {
                     }
                     else if (this == pl->m_player2) {
                         Ghosts::I().setdisablePlayerMove(false);
+
+                        Ghosts::I().preUpdateP2();
                         
                         Ghosts::I().applySegmentBasedReplay_(/*isPlayer1*/false);
                         
                         Ghosts::I().beginPostUpdateTick_();
 
-                        Ghosts::I().preUpdateP2();
+                        
                         Ghosts::I().recordUpdate(/*isPlayer1*/false);
                         
                         Ghosts::I().endPostUpdateTick_();

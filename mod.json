@@ -8,7 +8,7 @@
   },
   "id": "manshoety.attemptplayback",
   "name": "Attempt Playback",
-  "version": "v1.4.52",
+  "version": "v1.4.53",
   "developer": "manshoety",
   "description": "Allows you to see all past attempts as ghosts",
   "dependencies": {
@@ -48,6 +48,18 @@
       "type": "bool",
       "default": true
     },
+    "wave-trail-ghost": {
+      "name": "Wave trail ghost",
+      "description": "Draw a simple trail for ghosts when in Wave mode",
+      "type": "bool",
+      "default": true
+    },
+    "cbf-wave-fix": {
+      "name": "CBF wave fix",
+      "description": "NOT CURRENTLY ENABLED (this done nothing for now). Attempts to fix the buggy wave trail during playback of CBF recordings",
+      "type": "bool",
+      "default": false
+    },
     "autosave-enabled": {
       "name": "Autosave attempts",
       "description": "Append new attempts to disk every N minutes and on exit",
@@ -61,12 +73,6 @@
       "default": 5,
       "min": 1,
       "max": 120
-    },
-    "wave-trail-ghost": {
-      "name": "Wave trail ghost",
-      "description": "Draw a simple trail for ghosts when in Wave mode",
-      "type": "bool",
-      "default": true
     },
     "allow-platformer": {
       "name": "Allow recording on Platformer levels",

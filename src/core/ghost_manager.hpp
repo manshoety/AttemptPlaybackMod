@@ -81,6 +81,10 @@
 // Ensure this doesn't conflict with the wave trail draw fix mod on Geode
 // Player rotation is set by the game after I set it, so slightly wrong (ensure overriding this doesn't break follow player rotation objects)
 // On every ghost death it turns on and off auto-deafen
+// Ensure after an owner has been used, we release it so it can be a ghost
+// Robot while dashing shouldn't be walking animation?
+// For some reason replay of the player on second time becoming dual doesn't replay the dual?
+
 
 using namespace geode::prelude;
 
@@ -2106,6 +2110,8 @@ public:
 
         m_allow_platformer = getSettingBoolOrDefault_(mod, "allow-platformer", true);
 
+        //m_CBFwaveFixEnabled = getSettingBoolOrDefault_(mod, "cbf-wave-fix", false);
+
         
         // Icon colors:
         if (!mod->hasSavedValue(kGhostRandomColorsMaskKey)) mod->setSavedValue(kGhostRandomColorsMaskKey, std::string(kDefaultRandomColorMask));
@@ -2310,6 +2316,8 @@ public:
         forceSetPosP2.x = 0.f;
         forceSetPosP2.y = 105.f;
         m_noP2Check = false;
+        m_haveLastSnappedWavePointP1 = false;
+        m_haveLastSnappedWavePointP2 = false;
 
         // log::info("onReset");
 
@@ -2483,7 +2491,9 @@ public:
         m_primedSet.clear();
         m_wantToPrimeIndices.clear();
         m_wantToPrimeSet.clear();
-        m_currentlyHiddenSerials.clear();
+        if (!routeOwnersActive_()) {
+            m_currentlyHiddenSerials.clear();
+        }
     }
 
     void setActiveGhostsInvisible() {
@@ -2980,7 +2990,6 @@ public:
         }
 
         rebuildRouteOwnerCache_();
-        rebuildRouteOwnerCache_();
         
         std::vector<PracticeSegment> replaySegs = m_checkpointMgr.getReplaySequence();
         if (replaySegs.empty()) {
@@ -3436,16 +3445,38 @@ public:
 
     }
 
+    void setFirstNonzeroPosP2() {
+        if (!m_setRealPlayerPosition) return;
+        if (!botActive || !m_p2JustSpawned || !m_currentOwner || !m_pl || !m_pl->m_player2)
+            return;
+
+        const auto& p2 = m_currentOwner->p2;
+        if (p2.size() <= 1)
+            return;
+
+        for (size_t i = 1; i < p2.size(); ++i) {
+            const float x = p2[i].x;
+            const float y = p2[i].y;
+
+            if (x != 0.f) {
+                m_pl->m_player2->setPosition({x, y});
+                log::info("setpos: {} {}", x, y);
+                return;
+            }
+        }
+    }
+
     void preUpdateP2() {
         // if (!m_allowWorkThisTick || m_is_quitting || !m_pl) return;
         if (m_is_quitting || !m_pl || !m_pl->m_player2) return;
         m_prevpx2 = m_px2;
         const float p2pos = m_pl->m_player2->getPositionX();
-        const bool hasP2Now = (p2pos != 0.f);
-        m_px2 = hasP2Now ? p2pos : m_px;
-        if (hasP2Now && !m_prevHadP2) m_p2JustSpawned = true;
+        m_px2 = (p2pos != 0.f) ? p2pos : m_px;
+        if (!m_prevHadP2) m_p2JustSpawned = true;
+        setFirstNonzeroPosP2();
         // m_p2JustSpawned = (hasP2Now && !m_prevHadP2); Now set this in applyFrameToPlayer_Only_
-        m_prevHadP2 = hasP2Now;
+        // log::info("m_p2JustSpawned: {} p2pos: {}, newpos: {}", m_p2JustSpawned, p2pos, m_pl->m_player2->getPositionX());
+        m_prevHadP2 = true;
         m_noP2Check = false;
     }
 
@@ -3498,6 +3529,12 @@ public:
             
             if (previousOwnerSerial > 0) {
                 m_currentlyHiddenSerials.erase(previousOwnerSerial);
+                if (Attempt* oldOwner = findAttemptBySerial_(previousOwnerSerial)) {
+                    oldOwner->primedP1 = false;
+                    oldOwner->primedP2 = false;
+                    oldOwner->setP1Visible(false, true);
+                    oldOwner->setP2Visible(false, true);
+                }
             }
             m_currentlyHiddenSerials.insert(newOwnerSerial);
             
@@ -4747,6 +4784,14 @@ private:
         }
     }
 
+    FORCE_INLINE bool isRouteOwnerForOffset_(Attempt const& a) const {
+        if (!botActive) return false;
+        if (!practiceRouteOwnerHidingEnabled_()) return false;
+        if (a.serial <= 0) return false;
+
+        return m_routeOwnerSerials.find(a.serial) != m_routeOwnerSerials.end();
+    }
+
     FORCE_INLINE bool isOwnerAnywhereInRoute_(Attempt const& a) const {
         if (a.ignorePlayback) return true;
 
@@ -4758,10 +4803,7 @@ private:
         if (a.serial <= 0)
             return false;
 
-        if (a.serial == m_activeOwnerSerial)
-            return true;
-
-        return m_routeOwnerSerials.find(a.serial) != m_routeOwnerSerials.end();
+        return m_currentlyHiddenSerials.find(a.serial) != m_currentlyHiddenSerials.end();
     }
 
     FORCE_INLINE bool isCurrentOwner_(size_t ai, const Attempt& a) const {
@@ -5265,7 +5307,7 @@ private:
 
     void applyRandomOffsetsAll_() {
         for (auto& a : attempts) {
-            applyRandomOffsetSingle(a, isOwnerAnywhereInRoute_(a));
+            applyRandomOffsetSingle(a, isRouteOwnerForOffset_(a));
         }
     }
     
@@ -6095,7 +6137,7 @@ private:
 
             ghost->setZOrder(0);
 
-            if (m_animateSpider && f.mode == IconType::Spider) { // Tween for smoother transitions
+            if (m_animateSpider && !f.isDashing && f.mode == IconType::Spider) { // Tween for smoother transitions
                 if (fNext.x == f.x) {
                     if (pc.spiderState != IconAnimationState::Idle) {
                         ghost->m_spiderSprite->runAnimation("idle01");
@@ -6140,7 +6182,7 @@ private:
                 }
             }
 
-            if (m_animateRobot && f.mode == IconType::Robot) { //  Tween for smoother transitions between states (but extra compute)
+            if (m_animateRobot && !f.isDashing && f.mode == IconType::Robot) { //  Tween for smoother transitions between states (but extra compute)
                 if (fNext.x == f.x) {
                     //if (pc.robotState != RobotState::Idle) 
                     // ghost->m_robotSprite->tweenToAnimation("idle01", 0.1f);
@@ -6815,6 +6857,96 @@ private:
         return true;
     }
 
+    cocos2d::CCPoint m_lastSnappedWavePointP1;
+    cocos2d::CCPoint m_lastSnappedWavePointP2;
+
+    bool m_haveLastSnappedWavePointP1 = false;
+    bool m_haveLastSnappedWavePointP2 = false;
+
+    bool m_lastSnappedWaveMiniP1 = false;
+    bool m_lastSnappedWaveMiniP2 = false;
+    bool m_lastSnappedWaveDirP1 = false;
+    bool m_lastSnappedWaveDirP2 = false;
+    bool m_CBFwaveFixEnabled = false;
+
+    // CBF is evil and requires me to go through pain and suffering to "fix" wave trails without recording extra data
+    std::optional<cocos2d::CCPoint> snapWavePointSimple_(
+        cocos2d::CCPoint raw,
+        bool isMini,
+        bool isP1
+    ) {
+        if (!m_CBFwaveFixEnabled) return raw;
+        auto& have = isP1 ? m_haveLastSnappedWavePointP1 : m_haveLastSnappedWavePointP2;
+        auto& last = isP1 ? m_lastSnappedWavePointP1 : m_lastSnappedWavePointP2;
+        auto& lastMini = isP1 ? m_lastSnappedWaveMiniP1 : m_lastSnappedWaveMiniP2;
+        auto& lastDir = isP1 ? m_lastSnappedWaveDirP1 : m_lastSnappedWaveDirP2;
+
+        if (!std::isfinite(raw.x) || !std::isfinite(raw.y))
+            return std::nullopt;
+
+        const float slope = isMini ? 2.0f : 1.0f;
+
+        if (!have || lastMini != isMini) {
+            have = true;
+            last = raw;
+            lastMini = isMini;
+            lastDir = 0;
+            return raw;
+        }
+
+        const float dx = raw.x - last.x;
+
+        if (dx < 0.25f)
+            return std::nullopt;
+
+        if (std::fabs(raw.y - last.y) > kWaveTeleportedTolerance) {
+            last = raw;
+            lastMini = isMini;
+            lastDir = 0;
+            return raw;
+        }
+
+        const float upY   = last.y + slope * dx;
+        const float flatY = last.y;
+        const float downY = last.y - slope * dx;
+
+        float bestY = flatY;
+        int bestDir = 0;
+        float bestErr = std::fabs(raw.y - flatY);
+
+        const float upErr = std::fabs(raw.y - upY);
+        if (upErr < bestErr) {
+            bestErr = upErr;
+            bestY = upY;
+            bestDir = 1;
+        }
+
+        const float downErr = std::fabs(raw.y - downY);
+        if (downErr < bestErr) {
+            bestErr = downErr;
+            bestY = downY;
+            bestDir = -1;
+        }
+
+        // If it is close to flat, force flat
+        constexpr float kFlatSnapTolerancePx = 2.0f;
+        if (std::fabs(raw.y - flatY) <= kFlatSnapTolerancePx) {
+            bestY = flatY;
+            bestDir = 0;
+        }
+
+        cocos2d::CCPoint snapped = cocos2d::CCPoint(raw.x, bestY);
+
+        if (!std::isfinite(snapped.x) || !std::isfinite(snapped.y))
+            return std::nullopt;
+
+        last = snapped;
+        lastMini = isMini;
+        lastDir = bestDir;
+
+        return snapped;
+    }
+
     inline void setMovementDirection(float previousY, float currentY, MovementDirection& movementDirectionVar) {
         if (previousY < currentY) movementDirectionVar = MovementDirection::Up;
         else if (previousY > currentY) movementDirectionVar = MovementDirection::Down;
@@ -6862,12 +6994,21 @@ private:
             const Frame* prev = havePrevious ? &v[i - 1] : nullptr;
 
             const bool isWave = (currentMode(p, m_pl->m_isPlatformer) == IconType::Wave);
+            const bool isMini = (static_cast<float>(a.vehicleSize) < 0.9f);
             const float ix = a.x;
             const float iy = a.y;
-            float prevY = p->getPositionY();
-            float prevX = p->getPositionX();
+            float prevY;
+            float prevX;
+            if (prev) {
+                prevY = prev->y;
+                prevX = prev->x;
+            }
+            else {
+                prevY = p->getPositionY();
+                prevX = p->getPositionX();
+            }
             MovementDirection movementDir = MovementDirection::Flat;
-            if (prev) setMovementDirection(static_cast<float>(prev->y), iy, movementDir);
+            setMovementDirection(prevY, iy, movementDir);
 
             // log::info("movementDir: {}, p1: {}", (int)movementDir, (int)m_movementDirectionP1);
 
@@ -6888,19 +7029,46 @@ private:
             // log::info("click difference: {}", prev && prev->hold != a.hold);
             if (isWave && a.wavePointThisFrame && p->m_waveTrail) {
                 m_hasWavePointData = true;
-                //log::info("b");
-                if (!addedWavePoint) addedWavePoint = waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, m_p2JustSpawned);
+
+                cocos2d::CCPoint raw = cocos2d::CCPoint(ix, iy);
+
+                if (auto snapped = snapWavePointSimple_(raw, isMini, isP1)) {
+                    addedWavePoint = waveTrailAddPointToPlayer(
+                        p->m_waveTrail,
+                        *snapped,
+                        isP1,
+                        m_p2JustSpawned
+                    );
+                }
             }
             if (isWave && (!b || (b && !b->wavePointThisFrame))) {
                 if (isP1) {
                     if (movementDir != m_movementDirectionP1) {
                         //log::info("a");
-                        addedWavePoint = waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, m_p2JustSpawned);
+                        cocos2d::CCPoint raw = cocos2d::CCPoint(ix, iy);
+
+                        if (auto snapped = snapWavePointSimple_(raw, isMini, isP1)) {
+                            addedWavePoint = waveTrailAddPointToPlayer(
+                                p->m_waveTrail,
+                                *snapped,
+                                isP1,
+                                m_p2JustSpawned
+                            );
+                        }
                     }
                 }
                 else if (movementDir != m_movementDirectionP2) {
                     //log::info("a");
-                    addedWavePoint = waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, m_p2JustSpawned);
+                    cocos2d::CCPoint raw = cocos2d::CCPoint(ix, iy);
+
+                    if (auto snapped = snapWavePointSimple_(raw, isMini, isP1)) {
+                        addedWavePoint = waveTrailAddPointToPlayer(
+                            p->m_waveTrail,
+                            *snapped,
+                            isP1,
+                            m_p2JustSpawned
+                        );
+                    }
                 }
             }
             if (b) {
@@ -6936,8 +7104,16 @@ private:
                 m_playerPrevTeleported = true;
             }
 
-            p->setVisible(true);
-            p->setOpacity(255);
+            if (!isWave) {
+                if (isP1) {
+                    m_haveLastSnappedWavePointP1 = false;
+                } else {
+                    m_haveLastSnappedWavePointP2 = false;
+                }
+            }
+
+            p->setVisible(a.isVisible);
+            if (a.isVisible) p->setOpacity(255);
 
             p->setPosition({ a.x, a.y });
 
@@ -6964,6 +7140,7 @@ private:
                 //}
                 
                 // Fix player 2 wave trail visual bug when spawning in
+                /*
                 if (m_p2JustSpawned && p->m_waveTrail) {
                     //m_fixWaveTrailAfterSpawnP2ForNFrames = 2;
                     p->m_waveTrail->reset();
@@ -6974,9 +7151,10 @@ private:
                     p->m_waveTrail->setVisible(true);
                     p->m_waveTrail->setOpacity(255);
                     m_p2JustSpawned = false;
-                }
+                }*/
             }
             else p->setRotation(a.rot);
+            if (m_p2JustSpawned) m_p2JustSpawned = false;
         }
     }
 

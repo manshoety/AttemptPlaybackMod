@@ -1,3 +1,6 @@
+# 1.4.53
+- FIX: Dual vanishing issue maybe fixed
+- FIX: Shows all practice deaths (including ones used for the replay sequence)
 # 1.4.52
 - FIX: The wave trail has been given 200 hours community service for how hard it's been to get working correctly (still some issues but oh well)
 # 1.4.51
