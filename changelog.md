@@ -1,3 +1,5 @@
+# 1.4.54
+- Player spawn flicker is annoying for player visibiloty so I'm disabling it when the mod is enabled
 # 1.4.53
 - FIX: Dual vanishing issue maybe fixed
 - FIX: Shows all practice deaths (including ones used for the replay sequence)

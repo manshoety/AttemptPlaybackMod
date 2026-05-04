@@ -103,6 +103,9 @@ class $modify(MyPlayerObject, PlayerObject) {
         PlayerObject::setPosition(position);
     }
 
+    void playSpawnEffect() {
+        if (!Ghosts::I().isModEnabled()) PlayerObject::playSpawnEffect();
+    }
 
     void update(float p0) { //  is p0 the frac of real GJ update?
         // start time here
