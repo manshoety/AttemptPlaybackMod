@@ -1,5 +1,6 @@
 # 1.4.54
 - Player spawn flicker is annoying for player visibiloty so I'm disabling it when the mod is enabled
+- When completing a level with the playback, now the player goes to the end and the endscreen shows up like normal (still doesn't count as completion to GD or Death Tracker)
 # 1.4.53
 - FIX: Dual vanishing issue maybe fixed
 - FIX: Shows all practice deaths (including ones used for the replay sequence)

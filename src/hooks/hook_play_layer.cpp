@@ -62,10 +62,10 @@ class $modify(PLHook, PlayLayer) {
         auto _ = self.setHookPriority("PlayLayer::levelComplete", -1000000);
     }
     $override void levelComplete() {
-        //log::info("[PlayLayer] levelComplete");
+        // log::info("[PlayLayer] levelComplete");
         if (Ghosts::I().isModEnabled()) {
             if (Ghosts::I().safeMode_enabled) {
-                onQuit();
+                PlayLayer::showCompleteText();
                 return;
             }
             Ghosts::I().onComplete();
@@ -89,6 +89,7 @@ class $modify(PLHook, PlayLayer) {
         else PlayLayer::destroyPlayer(p0, p1);
     }
     $override void showNewBest(bool newReward, int orbs, int diamonds, bool demonKey, bool noRetry, bool noTitle) {
+        // log::info("[PlayLayer] showNewBest");
         if (!Ghosts::I().isModEnabled() || !Ghosts::I().safeMode_enabled) {
             PlayLayer::showNewBest(newReward, orbs, diamonds, demonKey, noRetry, noTitle);
         }
@@ -96,6 +97,11 @@ class $modify(PLHook, PlayLayer) {
     $override void updateAttempts() {
         if (Ghosts::I().isModEnabled() && Ghosts::I().isUpdateAttemptCountBlocked()) return;
         PlayLayer::updateAttempts();
+    }
+
+    $override void playEndAnimationToPos(CCPoint position) {
+        if (Ghosts::I().isModEnabled()) Ghosts::I().hasReachedEndOfLevel();
+        PlayLayer::playEndAnimationToPos(position);
     }
     //$override void activateEndTrigger(int targetID, bool reverse, bool lockPlayerY) { // can't hook
     //    log::info("[PlayLayer] activateEndTrigger targetID {}, reverse {}, lockPlayerY {}", targetID, reverse, lockPlayerY);

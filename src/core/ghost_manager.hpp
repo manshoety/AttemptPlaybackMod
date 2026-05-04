@@ -3272,7 +3272,7 @@ public:
     bool isReplaying() const { return playback; }
     bool isResetting() const { return resetting; }
     void setResetting(bool on) { resetting = on; }
-    bool isdisablePlayerMove() const { return disablePlayerMove && m_setRealPlayerPosition; }
+    bool isdisablePlayerMove() const { return disablePlayerMove && m_setRealPlayerPosition && !m_freezePlayerXAtEnd; }
     void setdisablePlayerMove(bool on) { disablePlayerMove = on; }
     bool shouldDisableHardStreakAddPoint() const { return !m_allowWavePointAdding && botActive && m_hasWavePointData; }
     void setAllowWavePointAdding(bool on ) { m_allowWavePointAdding = on; }
@@ -3460,7 +3460,7 @@ public:
 
             if (x != 0.f) {
                 m_pl->m_player2->setPosition({x, y});
-                log::info("setpos: {} {}", x, y);
+                // log::info("setpos: {} {}", x, y);
                 return;
             }
         }
@@ -3480,11 +3480,17 @@ public:
         m_noP2Check = false;
     }
 
+    void hasReachedEndOfLevel() {
+        m_freezePlayerXAtEnd = true;
+    }
+
     void preUpdate() {
         //log::info("Preupdate");
         // log::info("didAttemptUseNoclip: {}", didAttemptUseNoclip());
         // if (!m_allowWorkThisTick || m_is_quitting || !m_pl) return;
         if (m_is_quitting || !m_pl || !m_pl->m_player1) return;
+
+        // log::info("m_freezePlayerXAtEnd: {}, {}", m_freezePlayerXAtEnd, m_pl->m_hasCompletedLevel);
 
         m_px = m_pl->m_player1->getPositionX();
         m_currentSessionTime = m_baseTime + m_pl->m_attemptTime;
