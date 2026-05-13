@@ -306,6 +306,47 @@ public:
 
         return std::prev(it)->ownerSerial;
     }
+
+    int findOwnerSerialForTimeWithBridge(double t, double tick) const {
+        const PracticeSession* session = m_path.selectedSession();
+        if (!session || session->segments.empty()) return -1;
+
+        const auto& segs = session->segments;
+
+        if (t < segs.front().absStart()) {
+            return segs.front().ownerSerial;
+        }
+
+        for (size_t i = 1; i < segs.size(); ++i) {
+            const auto& prev = segs[i - 1];
+            const auto& cur  = segs[i];
+
+            const double curStart = cur.absStart();
+
+            // For the first tick at/after a segment boundary, keep previous owner
+            // Wacky gap I had between checkpoints in replay
+            if (t >= curStart && t < curStart + tick) {
+                return prev.ownerSerial;
+            }
+        }
+
+        auto it = std::lower_bound(
+            segs.begin(), segs.end(), t,
+            [](const PracticeSegment& seg, double value) {
+                return seg.absEnd() <= value;
+            }
+        );
+
+        if (it != segs.end() && t >= it->absStart() && t < it->absEnd()) {
+            return it->ownerSerial;
+        }
+
+        if (it == segs.begin()) {
+            return segs.front().ownerSerial;
+        }
+
+        return std::prev(it)->ownerSerial;
+    }
     
     double replayEndTime() const {
         const PracticeSession* session = m_path.selectedSession();

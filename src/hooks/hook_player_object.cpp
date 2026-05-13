@@ -123,15 +123,15 @@ class $modify(MyPlayerObject, PlayerObject) {
                         
                         Ghosts::I().beginPostUpdateTick_();
 
-                        
                         Ghosts::I().recordUpdate(/*isPlayer1*/true);
 
                         Ghosts::I().endPostUpdateTick_();
 
+                        // if (!Ghosts::I().isBotActive()) 
                         PlayerObject::update(p0);
 
                         //log::info("update done");
-                        Ghosts::I().updateClickState(/*isPlayer1*/true);
+                        //Ghosts::I().updateClickState(/*isPlayer1*/true);
 
                         Ghosts::I().setdisablePlayerMove(true);
 
@@ -152,9 +152,10 @@ class $modify(MyPlayerObject, PlayerObject) {
                         Ghosts::I().endPostUpdateTick_();
 
                         
+                        // if (!Ghosts::I().isBotActive())
                         PlayerObject::update(p0);
 
-                        Ghosts::I().updateClickState(/*isPlayer1*/false);
+                        //Ghosts::I().updateClickState(/*isPlayer1*/false);
                         Ghosts::I().setdisablePlayerMove(true);
 
                         return;

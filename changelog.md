@@ -1,3 +1,5 @@
+# 1.4.55
+- FIX: Overhaul of the click, position, and wave trail logic (hopefully the wave trail stops being a menace).
 # 1.4.54
 - Player spawn flicker is annoying for player visibiloty so I'm disabling it when the mod is enabled
 - When completing a level with the playback, now the player goes to the end and the endscreen shows up like normal (still doesn't count as completion to GD or Death Tracker)
