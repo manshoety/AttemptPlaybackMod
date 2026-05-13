@@ -298,6 +298,12 @@ enum class MovementDirection : uint8_t {
     Down = 2,
 };
 
+enum class GhostTextPreset : uint8_t {
+    DeadAttempts = 0,
+    AliveAttempts = 1,
+    Custom = 2,
+};
+
 constexpr char const* kPreloadSortModeKey = "preload-sort-mode";
 
 static PreloadSortMode preloadSortModeFromSaved() {

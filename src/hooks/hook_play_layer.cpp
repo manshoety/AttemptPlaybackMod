@@ -8,6 +8,27 @@
 using namespace geode::prelude;
 
 class $modify(PLHook, PlayLayer) {
+    struct Fields {
+        cocos2d::CCLabelBMFont* m_ghostTextLabel = nullptr;
+    };
+    void createGhostTextLabel_() {
+        if (m_fields->m_ghostTextLabel) return;
+
+        auto* label = cocos2d::CCLabelBMFont::create("", "bigFont.fnt");
+        if (!label) return;
+
+        label->setAnchorPoint({ 0.f, 1.f });
+        label->setPosition({ 20.f, 280.f });
+        label->setScale(0.45f);
+        label->setOpacity(180);
+        label->setVisible(false);
+        label->setColor({ 255, 255, 255 });
+
+        this->addChild(label, 9999);
+
+        m_fields->m_ghostTextLabel = label;
+        Ghosts::I().setPlayLayerGhostTextLabel(label);
+    }
     $override bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
         Ghosts::I().updateModEnabled();
@@ -15,6 +36,7 @@ class $modify(PLHook, PlayLayer) {
             // log::info("Attaching to level");
             Ghosts::I().prepareLevelPersistence(level->m_levelID, this);
             Ghosts::I().attach(this);
+            createGhostTextLabel_();
 
             int lvlId = level ? level->m_levelID : 0;
             Ghosts::I().m_levelIDOnAttach = lvlId;
@@ -49,10 +71,12 @@ class $modify(PLHook, PlayLayer) {
     $override void onQuit() {
         //log::info("[PlayLayer] onQuit");
         if (Ghosts::I().isModEnabled()) {
+            Ghosts::I().clearPlayLayerGhostTextLabel();
             Ghosts::I().saveNewAttemptsForCurrentLevel();
             Ghosts::I().onQuit();
             Ghosts::I().stopReplay();
         } else {
+            Ghosts::I().clearPlayLayerGhostTextLabel();
             Ghosts::I().onQuit();
             Ghosts::I().stopReplay();
         }

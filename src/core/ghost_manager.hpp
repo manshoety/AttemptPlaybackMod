@@ -285,6 +285,124 @@ public:
     void markWavePointThisFrameP1() { p1WavePointThisFrame = true; }
     void markWavePointThisFrameP2() { p2WavePointThisFrame = true; }
 
+    cocos2d::CCLabelBMFont* m_playLayerGhostTextLabel = nullptr;
+
+    bool m_showPlayLayerGhostText = true;
+    std::string m_playLayerGhostText = "";
+    cocos2d::CCPoint m_playLayerGhostTextPos = { 140.f, 280.f };
+    float m_playLayerGhostTextScale = 0.45f;
+    uint8_t m_playLayerGhostTextOpacity = 180;
+    size_t m_numDeadGhosts = 0;
+    size_t m_numAliveGhosts = 0;
+    int m_ghostTextFlashActionTag = 812345;
+    GhostTextPreset m_ghostTextMode = GhostTextPreset::AliveAttempts;
+
+    std::string m_lastAppliedPlayLayerGhostText = "";
+    bool m_lastAppliedPlayLayerGhostTextVisible = false;
+
+    void setPlayLayerGhostTextLabel(cocos2d::CCLabelBMFont* label) {
+        m_playLayerGhostTextLabel = label;
+        m_lastAppliedPlayLayerGhostText.clear();
+        m_lastAppliedPlayLayerGhostTextVisible = false;
+    }
+
+    void clearPlayLayerGhostTextLabel() {
+        m_playLayerGhostTextLabel = nullptr;
+        m_lastAppliedPlayLayerGhostText.clear();
+        m_lastAppliedPlayLayerGhostTextVisible = false;
+    }
+
+    void setPlayLayerGhostTextEnabled(bool enabled) {
+        m_showPlayLayerGhostText = enabled;
+    }
+
+    void setPlayLayerGhostText(std::string text) {
+        m_playLayerGhostText = std::move(text);
+    }
+
+    void setPlayLayerGhostTextPos(cocos2d::CCPoint pos) {
+        m_playLayerGhostTextPos = pos;
+    }
+
+    void setPlayLayerGhostTextScale(float scale) {
+        m_playLayerGhostTextScale = scale;
+    }
+
+    void updatePlayLayerGhostTextLabel_() {
+        auto* label = m_playLayerGhostTextLabel;
+        if (!label) return;
+
+        const bool show = isModEnabled() && m_showPlayLayerGhostText && botActive;
+
+        if (show != m_lastAppliedPlayLayerGhostTextVisible) {
+            label->setVisible(show);
+            m_lastAppliedPlayLayerGhostTextVisible = show;
+        }
+
+        if (!show) return;
+
+        if (m_playLayerGhostText != m_lastAppliedPlayLayerGhostText) {
+            label->setString(m_playLayerGhostText.c_str());
+            m_lastAppliedPlayLayerGhostText = m_playLayerGhostText;
+        }
+
+        label->setPosition(m_playLayerGhostTextPos);
+        label->setScale(m_playLayerGhostTextScale);
+        label->setOpacity(m_playLayerGhostTextOpacity);
+    }
+
+    void forceHidePlayLayerGhostTextLabelOnly() {
+        if (m_playLayerGhostTextLabel) {
+            m_playLayerGhostTextLabel->setVisible(false);
+        }
+
+        m_lastAppliedPlayLayerGhostTextVisible = false;
+    }
+
+    void updateGhostTextOnDeath(bool reset = false) {
+        switch (m_ghostTextMode) {
+            case GhostTextPreset::DeadAttempts: updateDeadAttemptsText(reset);
+            case GhostTextPreset::AliveAttempts: updateAliveAttemptsText(reset);
+            default: return;
+        }
+    }
+
+    void updateDeadAttemptsText(bool reset = false) {
+        if (reset) m_numDeadGhosts = 0;
+        else {
+            m_numDeadGhosts++;
+            flashPlayLayerGhostTextRed(0.2);
+        }
+        if (m_showPlayLayerGhostText) {
+            m_playLayerGhostText = fmt::format("Dead Attempts: {}", m_numDeadGhosts);
+        }
+    }
+
+    void updateAliveAttemptsText(bool reset = false) {
+        if (reset) m_numAliveGhosts = m_preloadOrder.size();
+        else {
+            m_numAliveGhosts--;
+            flashPlayLayerGhostTextRed(0.2);
+        }
+        if (m_showPlayLayerGhostText) {
+            m_playLayerGhostText = fmt::format("Alive Attempts: {}", m_numAliveGhosts);
+        }
+    }
+
+    void flashPlayLayerGhostTextRed(double fadeSeconds = 0.2) {
+        auto* label = m_playLayerGhostTextLabel;
+        if (!label) return;
+
+        label->stopActionByTag(m_ghostTextFlashActionTag);
+
+        label->setColor({ 255, 0, 0 });
+
+        auto* fadeToWhite = cocos2d::CCTintTo::create(
+            static_cast<float>(std::max(0.0, fadeSeconds)), 255, 255, 255);
+
+        fadeToWhite->setTag(m_ghostTextFlashActionTag);
+        label->runAction(fadeToWhite);
+    }
 
     int m_levelIDOnAttach = 0;
 
@@ -946,6 +1064,7 @@ public:
             m_preloadActive = false;
             rebuildGridPreloadedSet_();
             rebuildGridThreasholdSet_();
+            updateGhostTextOnDeath(true);
         }
     }
 
@@ -2206,6 +2325,7 @@ public:
         buildGhostThatPassedPercentSerialList();
         getPreloadSortMode();
         setPreloadSortMode(m_preloadSortMode);
+        forceHidePlayLayerGhostTextLabelOnly();
     }
 
     void initBotAfterReset_() {
@@ -2437,6 +2557,7 @@ public:
                 m_replayOwnerSerial = -1;
                 initBotAfterReset_();
             }
+            updateGhostTextOnDeath(true);
         }
 
         if (botActive || showWhilePlaying) {
@@ -3267,6 +3388,7 @@ public:
         m_initialAttemptsToSet.clear();
         m_preloadOrder.clear();
         m_1PreloadedSoDontShowGhosts = false;
+        forceHidePlayLayerGhostTextLabelOnly();
     }
 
     void restartLevel() { 
@@ -4144,6 +4266,7 @@ public:
                         GhostsVisibleThisFrame ++;
                         currentPreloaded++;
                     }
+                    else updateGhostTextOnDeath();
                     it = m_wantToPrimeIndices.erase(it);
 
                 }
@@ -4242,6 +4365,7 @@ public:
                             if (primeGhostToPX_(a, ai, px, px2)) {
                                 if (m_primedSet.insert(ai).second) m_primedIndices.push_back(ai);
                             }
+                            else updateGhostTextOnDeath();
                         }
                         else {
                             if (m_wantToPrimeSet.insert(ai).second) {
@@ -4305,6 +4429,9 @@ public:
                 saveNewAttemptsForCurrentLevel();
             }
         }
+
+        // text goop
+        updatePlayLayerGhostTextLabel_();
     }
 
     void setGhostUpdateFPS(int fps) {
@@ -6177,6 +6304,7 @@ private:
                     //ghost->m_robotSprite->stopAnimations();
                     // Need another name for these?
                     eolFrozen = true;
+                    updateGhostTextOnDeath();
                 }
 
                 // Make P2 invisible when there's a P2 data gap (not in dual mode)
