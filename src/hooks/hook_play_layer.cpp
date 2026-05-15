@@ -69,17 +69,14 @@ class $modify(PLHook, PlayLayer) {
     //    PlayLayer::onExit();
     //}
     $override void onQuit() {
-        //log::info("[PlayLayer] onQuit");
-        if (Ghosts::I().isModEnabled()) {
-            Ghosts::I().clearPlayLayerGhostTextLabel();
-            Ghosts::I().saveNewAttemptsForCurrentLevel();
-            Ghosts::I().onQuit();
-            Ghosts::I().stopReplay();
-        } else {
-            Ghosts::I().clearPlayLayerGhostTextLabel();
-            Ghosts::I().onQuit();
-            Ghosts::I().stopReplay();
+        auto& G = Ghosts::I();
+
+        if (G.isAttachedPlayLayer(this)) {
+            G.clearPlayLayerGhostTextLabel();
+            G.saveNewAttemptsForCurrentLevel();
+            G.onQuit();
         }
+
         PlayLayer::onQuit();
     }
     static void onModify(auto& self) {

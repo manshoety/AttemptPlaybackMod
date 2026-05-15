@@ -76,7 +76,7 @@ class $modify(MyPlayerObject, PlayerObject) {
         //log::info("x: {}, y: {}", position.x, position.y);
         //log::info("Position is valid");
 
-        if (ghosts.isModEnabled() && ghosts.isBotActive()) {
+        if (pl && ghosts.shouldHandlePlayLayer(pl) && ghosts.isBotActive()) {
             if (ghosts.isResetting()) {
                 PlayerObject::setPosition(position);
                 return;
@@ -104,28 +104,32 @@ class $modify(MyPlayerObject, PlayerObject) {
     }
 
     void playSpawnEffect() {
-        if (!Ghosts::I().isModEnabled()) PlayerObject::playSpawnEffect();
+        auto* pl = typeinfo_cast<PlayLayer*>(this->m_gameLayer);
+        if (!Ghosts::I().shouldHandlePlayLayer(pl)) {
+            PlayerObject::playSpawnEffect();
+        }
     }
 
     void update(float p0) { //  is p0 the frac of real GJ update?
         // start time here
-        if (Ghosts::I().isModEnabled()) {
+        auto& G = Ghosts::I();
+        if (G.isModEnabled()) {
             if (auto* pl = typeinfo_cast<PlayLayer*>(this->m_gameLayer)) {
-                if (pl) {
+                if (G.shouldHandlePlayLayer(pl)) {
                     // log::info("p1: {}, p2: {}", this == pl->m_player1, this == pl->m_player2);
                     if (this == pl->m_player1) {
                         //log::info("update");
-                        Ghosts::I().setdisablePlayerMove(false);
+                        G.setdisablePlayerMove(false);
 
-                        Ghosts::I().preUpdate();
+                        G.preUpdate();
                         
-                        Ghosts::I().applySegmentBasedReplay_(/*isPlayer1*/true);
+                        G.applySegmentBasedReplay_(/*isPlayer1*/true);
                         
-                        Ghosts::I().beginPostUpdateTick_();
+                        G.beginPostUpdateTick_();
 
-                        Ghosts::I().recordUpdate(/*isPlayer1*/true);
+                        G.recordUpdate(/*isPlayer1*/true);
 
-                        Ghosts::I().endPostUpdateTick_();
+                        G.endPostUpdateTick_();
 
                         // if (!Ghosts::I().isBotActive()) 
                         PlayerObject::update(p0);
@@ -133,30 +137,30 @@ class $modify(MyPlayerObject, PlayerObject) {
                         //log::info("update done");
                         //Ghosts::I().updateClickState(/*isPlayer1*/true);
 
-                        Ghosts::I().setdisablePlayerMove(true);
+                        G.setdisablePlayerMove(true);
 
                         return;
                     }
                     else if (this == pl->m_player2) {
-                        Ghosts::I().setdisablePlayerMove(false);
+                        G.setdisablePlayerMove(false);
 
-                        Ghosts::I().preUpdateP2();
+                        G.preUpdateP2();
                         
-                        Ghosts::I().applySegmentBasedReplay_(/*isPlayer1*/false);
+                        G.applySegmentBasedReplay_(/*isPlayer1*/false);
                         
-                        Ghosts::I().beginPostUpdateTick_();
+                        G.beginPostUpdateTick_();
 
                         
-                        Ghosts::I().recordUpdate(/*isPlayer1*/false);
+                        G.recordUpdate(/*isPlayer1*/false);
                         
-                        Ghosts::I().endPostUpdateTick_();
+                        G.endPostUpdateTick_();
 
                         
                         // if (!Ghosts::I().isBotActive())
                         PlayerObject::update(p0);
 
                         //Ghosts::I().updateClickState(/*isPlayer1*/false);
-                        Ghosts::I().setdisablePlayerMove(true);
+                        G.setdisablePlayerMove(true);
 
                         return;
                     }
@@ -169,13 +173,17 @@ class $modify(MyPlayerObject, PlayerObject) {
     }
 
     void releaseAllButtons() {
-        //log::info("[PlayerObject] releaseAllButtons()");
-        Ghosts::I().setP1Hold(false);
-        Ghosts::I().setP1LHold(false);
-        Ghosts::I().setP1RHold(false);
-        Ghosts::I().setP2Hold(false);
-        Ghosts::I().setP2LHold(false);
-        Ghosts::I().setP2RHold(false);
+        auto* pl = typeinfo_cast<PlayLayer*>(this->m_gameLayer);
+        auto& G = Ghosts::I();
+
+        if (G.shouldHandlePlayLayer(pl)) {
+            G.setP1Hold(false);
+            G.setP1LHold(false);
+            G.setP1RHold(false);
+            G.setP2Hold(false);
+            G.setP2LHold(false);
+            G.setP2RHold(false);
+        }
 
         PlayerObject::releaseAllButtons();
     }

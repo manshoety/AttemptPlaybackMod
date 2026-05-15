@@ -9,9 +9,13 @@ using namespace geode::prelude;
 class $modify(MyLevelEditorLayer, LevelEditorLayer) {
     bool init(GJGameLevel* level, bool noUI) {
         if (!LevelEditorLayer::init(level, noUI)) return false;
-        if (Ghosts::I().isModEnabled()) {
-            Ghosts::I().saveNewAttemptsForCurrentLevel();
-            Ghosts::I().onQuit();
+        auto& G = Ghosts::I();
+        G.updateModEnabled();
+
+        if (G.hasModAttachedToLevel()) {
+            G.clearPlayLayerGhostTextLabel();
+            G.saveNewAttemptsForCurrentLevel();
+            G.onQuit();
         }
         return true;
     }

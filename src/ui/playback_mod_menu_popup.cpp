@@ -1269,16 +1269,16 @@ void PreloadAttemptsPopup::beginLoading_(int clampedN) {
 }
 
 void PreloadAttemptsPopup::tickLoading_() {
-    const int realPO = getSettingIntOrDefault_(Mod::get(), "real-player-objects", 1000);
-
+    int loaded = 0;
+    int realPO = getSettingIntOrDefault_(Mod::get(), "real-player-objects", 1000);
     if (Ghosts::I().isPreloadingAttempts()) {
-        const int loadedBefore = Ghosts::I().getPreloadLoadedCount();
         // Load 64 per frame for the first ones with real player objects (slow), then speed up a ton for the rest since they're fast
-        const int step = loadedBefore < realPO ? 64 : 512;
-        Ghosts::I().preloadStep(step);
+        if (loaded < realPO) Ghosts::I().preloadStep(64);
+        else Ghosts::I().preloadStep(1000);
+        loaded = Ghosts::I().getPreloadLoadedCount();
     }
 
-    const int loaded = Ghosts::I().getPreloadLoadedCount();
+    loaded = Ghosts::I().getPreloadLoadedCount();
     const int target = Ghosts::I().getPreloadTargetCount();
 
     if (m_numAttemptsLoadingLabel) {

@@ -20,7 +20,12 @@ class $modify(GJBaseGameLayerHook, GJBaseGameLayer) {
         Ghosts::I().setdisablePlayerMove(false);
         // log::info("[postUpdate]");
         //const auto t0 = std::chrono::steady_clock::now();
-        if (Ghosts::I().isModEnabled()) Ghosts::I().postUpdate();
+        auto& G = Ghosts::I();
+        if (auto* pl = typeinfo_cast<PlayLayer*>(this)) {
+            if (G.shouldHandlePlayLayer(pl)) {
+                G.postUpdate();
+            }
+        }
         //log::info("took {:.3f} ms", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
     }
 

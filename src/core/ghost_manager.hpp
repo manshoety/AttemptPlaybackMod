@@ -92,6 +92,8 @@
 // Miniwave has weird point setting when going up and it like places two and one is behind the line it was drawing or something? Idk. Wave wacky. (might be weird practice mode thing)
 // Add cheat detection thing where it like changes the end screen by some ratio or something like xbot did
 
+// Why does the player become invisible at the end of the level (during end animation?) or maybe it teleported somewhere?
+
 
 using namespace geode::prelude;
 
@@ -287,7 +289,7 @@ public:
 
     cocos2d::CCLabelBMFont* m_playLayerGhostTextLabel = nullptr;
 
-    bool m_showPlayLayerGhostText = true;
+    bool m_showPlayLayerGhostText = false;
     std::string m_playLayerGhostText = "";
     cocos2d::CCPoint m_playLayerGhostTextPos = { 140.f, 280.f };
     float m_playLayerGhostTextScale = 0.45f;
@@ -299,6 +301,8 @@ public:
 
     std::string m_lastAppliedPlayLayerGhostText = "";
     bool m_lastAppliedPlayLayerGhostTextVisible = false;
+
+    std::unordered_set<int> m_ghostTextCountedDeadSerials;
 
     void setPlayLayerGhostTextLabel(cocos2d::CCLabelBMFont* label) {
         m_playLayerGhostTextLabel = label;
@@ -359,11 +363,32 @@ public:
         m_lastAppliedPlayLayerGhostTextVisible = false;
     }
 
+    bool countGhostTextDeathOnceBySerial_(int serial) {
+        if (serial <= 0) return false;
+
+        if (!m_ghostTextCountedDeadSerials.insert(serial).second) return false;
+
+        updateGhostTextOnDeath(false);
+        return true;
+    }
+
+    bool countGhostTextDeathOnce_(Attempt& a) {
+        return countGhostTextDeathOnceBySerial_(a.serial);
+    }
+
     void updateGhostTextOnDeath(bool reset = false) {
+        if (reset) m_ghostTextCountedDeadSerials.clear();
+
         switch (m_ghostTextMode) {
-            case GhostTextPreset::DeadAttempts: updateDeadAttemptsText(reset);
-            case GhostTextPreset::AliveAttempts: updateAliveAttemptsText(reset);
-            default: return;
+            case GhostTextPreset::DeadAttempts: {
+                updateDeadAttemptsText(reset);
+                break;
+            }
+            case GhostTextPreset::AliveAttempts: {
+                updateAliveAttemptsText(reset);
+                break;
+            }
+            default: break;
         }
     }
 
@@ -379,11 +404,14 @@ public:
     }
 
     void updateAliveAttemptsText(bool reset = false) {
-        if (reset) m_numAliveGhosts = m_preloadOrder.size();
+        if (reset) {
+            m_numAliveGhosts = m_preloadOrder.size();
+        }
         else {
-            m_numAliveGhosts--;
+            if (m_numAliveGhosts > 0) m_numAliveGhosts--;
             flashPlayLayerGhostTextRed(0.2);
         }
+
         if (m_showPlayLayerGhostText) {
             m_playLayerGhostText = fmt::format("Alive Attempts: {}", m_numAliveGhosts);
         }
@@ -403,6 +431,12 @@ public:
         fadeToWhite->setTag(m_ghostTextFlashActionTag);
         label->runAction(fadeToWhite);
     }
+
+    // Updates to this label:
+    // Allow the font to be the default white one or use the gold font
+    // Allow change of the flash color
+    // Allow custom text like "{Alive}/{Total}", more stuff: {Dead}
+    // Allow user to set the position x and y and scale
 
     int m_levelIDOnAttach = 0;
 
@@ -1285,8 +1319,6 @@ public:
         );
     }
 
-    bool hasModAttachedToLevel() { return m_pl != nullptr; }
-
     void flushPendingSaves_() {
         if (m_levelIDOnAttach != 0) {
             //saveCurrentAttemptNow();
@@ -1329,11 +1361,36 @@ public:
         }
         updateGhostVisibility();
     }
+    bool isModEnabledForPlayLayer(PlayLayer* pl) const {
+        if (!modEnabled) return false;
+
+        const bool isPlatformer = pl && pl->m_isPlatformer;
+        return !isPlatformer || m_allow_platformer;
+    }
+
     bool isModEnabled() const {
-        bool isPlatformer = false;
-        if (m_pl) isPlatformer = m_pl->m_isPlatformer;
-        if (isPlatformer && m_allow_platformer) return modEnabled;
-        return modEnabled && !isPlatformer; 
+        auto* base = GJBaseGameLayer::get();
+        auto* pl = base ? typeinfo_cast<PlayLayer*>(base) : nullptr;
+
+        return isModEnabledForPlayLayer(pl);
+    }
+
+    bool hasModAttachedToLevel() const {
+        return m_pl != nullptr;
+    }
+
+    bool isAttachedPlayLayer(PlayLayer* pl) const {
+        return pl && m_pl == pl;
+    }
+
+    bool shouldHandlePlayLayer(PlayLayer* pl) const {
+        return isAttachedPlayLayer(pl) && isModEnabledForPlayLayer(pl);
+    }
+
+    bool shouldHandleActivePlayLayer() const {
+        auto* base = GJBaseGameLayer::get();
+        auto* pl = base ? typeinfo_cast<PlayLayer*>(base) : nullptr;
+        return shouldHandlePlayLayer(pl);
     }
 
     bool isUpdateAttemptCountBlocked() const { return m_blockAttemptCount; }
@@ -1569,7 +1626,7 @@ public:
     }
 
     int saveNewAttemptsForLevel_(int levelID) {
-        if (!m_pl) return 0;
+        if (levelID == 0) return 0;
         if (m_isSaving) return 0;
         m_isSaving = true;
 
@@ -1914,7 +1971,7 @@ public:
     }
 
     int saveNewAttemptsForCurrentLevel() {
-        if (!m_pl || !m_pl->m_level) return 0;
+        if (m_levelIDOnAttach == 0) return 0;
         return saveNewAttemptsForLevel_(m_levelIDOnAttach);
     }
 
@@ -3667,6 +3724,7 @@ public:
             if (previousOwnerSerial > 0) {
                 m_currentlyHiddenSerials.erase(previousOwnerSerial);
                 if (Attempt* oldOwner = findAttemptBySerial_(previousOwnerSerial)) {
+                    countGhostTextDeathOnce_(*oldOwner);
                     oldOwner->primedP1 = false;
                     oldOwner->primedP2 = false;
                     oldOwner->setP1Visible(false, true);
@@ -4266,7 +4324,7 @@ public:
                         GhostsVisibleThisFrame ++;
                         currentPreloaded++;
                     }
-                    else updateGhostTextOnDeath();
+                    else countGhostTextDeathOnce_(a);
                     it = m_wantToPrimeIndices.erase(it);
 
                 }
@@ -4365,7 +4423,7 @@ public:
                             if (primeGhostToPX_(a, ai, px, px2)) {
                                 if (m_primedSet.insert(ai).second) m_primedIndices.push_back(ai);
                             }
-                            else updateGhostTextOnDeath();
+                            else countGhostTextDeathOnce_(a);
                         }
                         else {
                             if (m_wantToPrimeSet.insert(ai).second) {
@@ -6304,7 +6362,7 @@ private:
                     //ghost->m_robotSprite->stopAnimations();
                     // Need another name for these?
                     eolFrozen = true;
-                    updateGhostTextOnDeath();
+                    countGhostTextDeathOnce_(a);
                 }
 
                 // Make P2 invisible when there's a P2 data gap (not in dual mode)
