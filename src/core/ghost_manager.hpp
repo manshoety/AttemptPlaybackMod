@@ -7399,8 +7399,6 @@ private:
         if (!p || v.empty()) return;
 
         size_t& lastPoseIdx = isP1 ? m_lastPoseIdx1 : m_lastPoseIdx2;
-
-        // Match old behavior: position replay used m_replayIdx + 2.
         const size_t endIdx = std::min(replayIdx + 2, v.size() - 1);
 
         size_t startIdx = endIdx;
