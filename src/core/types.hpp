@@ -659,6 +659,8 @@ struct XBatchGrid {
     mutable uint32_t curStamp = 1;
 
     uint32_t maxIdPlus1 = 0;
+    size_t insertedAttempts = 0;
+    size_t insertedBinRefs = 0;
 
     void clear() {
         bins.clear();
@@ -667,6 +669,8 @@ struct XBatchGrid {
         seenStamp.clear();
         curStamp = 1;
         maxIdPlus1 = 0;
+        insertedAttempts = 0;
+        insertedBinRefs = 0;
     }
 
     static inline int binOf(float x, float w) {
@@ -715,16 +719,17 @@ struct XBatchGrid {
         return true;
     }
 
-    void insert(size_t attemptIdx, float firstX, float lastX) {
-        if (!std::isfinite(firstX) || !std::isfinite(lastX)) return;
-        if (attemptIdx > UINT32_MAX) return;
+    bool insert(size_t attemptIdx, float firstX, float lastX) {
+        if (!std::isfinite(firstX) || !std::isfinite(lastX)) return false;
+        if (attemptIdx > UINT32_MAX) return false;
 
         if (lastX < firstX) std::swap(firstX, lastX);
 
         const int b0 = binOf(firstX, binW);
         const int b1 = binOf(lastX,  binW);
-        if ((int64_t)b1 - (int64_t)b0 > kMaxSpanBins) return;
-        if (!ensureRange(b0, b1)) return;
+
+        if ((int64_t)b1 - (int64_t)b0 > kMaxSpanBins) return false;
+        if (!ensureRange(b0, b1)) return false;
 
         const uint32_t id = (uint32_t)attemptIdx;
 
@@ -732,7 +737,11 @@ struct XBatchGrid {
 
         for (int b = b0; b <= b1; ++b) {
             bins[(size_t)(b - minBin)].push_back(id);
+            ++insertedBinRefs;
         }
+
+        ++insertedAttempts;
+        return true;
     }
 
     void candidates_u32(float L, float R, std::vector<uint32_t>& out) const {

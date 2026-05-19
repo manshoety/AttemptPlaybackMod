@@ -83,7 +83,7 @@
 // On every ghost death it turns on and off auto-deafen
 // Ensure after an owner has been used, we release it so it can be a ghost
 // Robot while dashing shouldn't be walking animation?
-// For some reason replay of the player on second time becoming dual doesn't replay the dual?\
+// For some reason replay of the player on second time becoming dual doesn't replay the dual?
 
 
 // Ensure the real spider and robot does the jump effect (teleport thing and junp fire)
@@ -91,8 +91,6 @@
 // Robot ghost sliding up slope doesn't play the walk animation (not really issue if I don't fix)
 // Miniwave has weird point setting when going up and it like places two and one is behind the line it was drawing or something? Idk. Wave wacky. (might be weird practice mode thing)
 // Add cheat detection thing where it like changes the end screen by some ratio or something like xbot did
-
-// Why does the player become invisible at the end of the level (during end animation?) or maybe it teleported somewhere?
 
 
 using namespace geode::prelude;
@@ -405,7 +403,7 @@ public:
 
     void updateAliveAttemptsText(bool reset = false) {
         if (reset) {
-            m_numAliveGhosts = m_preloadOrder.size();
+            m_numAliveGhosts = m_grid.insertedAttempts;
         }
         else {
             if (m_numAliveGhosts > 0) m_numAliveGhosts--;
@@ -575,6 +573,15 @@ public:
         if (m_lastWorkTickId == m_tickId) return false;
         m_lastWorkTickId = m_tickId;
         return true;
+    }
+
+    bool hasPersistenceTargetForLevel_(int levelID) const {
+        if (levelID != 0) return true;
+        return !m_customSaveId.empty();
+    }
+
+    bool hasCurrentPersistenceTarget_() const {
+        return hasPersistenceTargetForLevel_(m_levelIDOnAttach);
     }
 
     bool deleteCurrentLevelSaveFile() {
@@ -1300,7 +1307,7 @@ public:
         rebuildAttemptCountsIfNeeded();
         rebuildSerialCache_();
 
-        if (m_levelIDOnAttach != 0) {
+        if (hasCurrentPersistenceTarget_()) {
             scanAttemptCatalogForLevel_(m_levelIDOnAttach);
         }
 
@@ -1320,7 +1327,7 @@ public:
     }
 
     void flushPendingSaves_() {
-        if (m_levelIDOnAttach != 0) {
+        if (hasCurrentPersistenceTarget_()) {
             //saveCurrentAttemptNow();
             int n = saveNewAttemptsForLevel_(m_levelIDOnAttach);
             //log::info("[Ghosts] flushPendingSaves_: wrote {} attempt(s) for level {}", n, m_levelIDOnAttach);
@@ -1626,7 +1633,14 @@ public:
     }
 
     int saveNewAttemptsForLevel_(int levelID) {
-        if (levelID == 0) return 0;
+        if (!hasPersistenceTargetForLevel_(levelID)) {
+            log::warn(
+                "[APX save] no persistence target: levelID={}, customSaveId='{}'",
+                levelID,
+                m_customSaveId
+            );
+            return 0;
+        }
         if (m_isSaving) return 0;
         m_isSaving = true;
 
@@ -1712,6 +1726,7 @@ public:
     int loadFromDisk_(int levelID, LoadFilter const& flt) {
         if (m_loadedLevelID == levelID && !attempts.empty()) {
             scanAttemptCatalogForLevel_(levelID);
+            log::warn("[APX load] m_loadedLevelID == levelID && !attempts.empty()");
             return 0;
         }
 
@@ -1727,6 +1742,7 @@ public:
         auto path = fileForLevel_(levelID);
         std::ifstream in(path, std::ios::binary);
         if (!in) {
+            log::warn("[APX load] !in {}", geode::utils::string::pathToString(path));
             return 0;
         }
 
@@ -1971,9 +1987,17 @@ public:
     }
 
     int saveNewAttemptsForCurrentLevel() {
-        if (m_levelIDOnAttach == 0) return 0;
-        return saveNewAttemptsForLevel_(m_levelIDOnAttach);
+    if (!hasCurrentPersistenceTarget_()) {
+        log::warn(
+            "[APX save] no current persistence target: levelID={}, customSaveId='{}'",
+            m_levelIDOnAttach,
+            m_customSaveId
+        );
+        return 0;
     }
+
+    return saveNewAttemptsForLevel_(m_levelIDOnAttach);
+}
 
     void setOpacityVar(GLubyte o) { opacity = o; }
 
@@ -2208,6 +2232,7 @@ public:
         botPrevHoldL1 = botPrevHoldL2 = false;
         botPrevHoldR1 = botPrevHoldR2 = false;
         m_lastEmitIdx1 = m_lastEmitIdx2 = kNoEmitIdx;
+        m_lastPoseIdx1 = m_lastPoseIdx2 = kNoEmitIdx;
         m_lastGhostTickFrame = m_frameCounter;
 
         practiceAttemptReplayIndex.clear();
@@ -2390,6 +2415,7 @@ public:
 
         m_replayIdx1 = m_replayIdx2 = 0;
         m_lastEmitIdx1 = m_lastEmitIdx2 = kNoEmitIdx;
+        m_lastPoseIdx1 = m_lastPoseIdx2 = kNoEmitIdx;
 
         botPrevHold1 = botPrevHold2 = false;
         botPrevHoldL1 = botPrevHoldL2 = false;
@@ -2611,6 +2637,7 @@ public:
                 m_justStartedBot = true;
                 m_replayIdx1 = m_replayIdx2 = 0;
                 m_lastEmitIdx1 = m_lastEmitIdx2 = kNoEmitIdx;
+                m_lastPoseIdx1 = m_lastPoseIdx2 = kNoEmitIdx;
                 m_replayOwnerSerial = -1;
                 initBotAfterReset_();
             }
@@ -2791,6 +2818,7 @@ public:
         
         m_prevBotPx = 0.f;
         m_lastEmitIdx1 = m_lastEmitIdx2 = kNoEmitIdx;
+        m_lastPoseIdx1 = m_lastPoseIdx2 = kNoEmitIdx;
         m_lastGhostTickFrame = 0;
 
         m_ghostUpdateAccum = 0.f;
@@ -2984,6 +3012,7 @@ public:
         m_compOwnerIdx = idx;
         m_replayOwnerSerial = a.serial;
         m_lastEmitIdx1 = m_lastEmitIdx2 = kNoEmitIdx;
+        m_lastPoseIdx1 = m_lastPoseIdx2 = kNoEmitIdx;
         m_replayIdx1 = m_replayIdx2 = 0;
 
         if (botActive) {
@@ -3209,6 +3238,7 @@ public:
         m_didInitialWarp = false;
         m_replayIdx1 = m_replayIdx2 = 0;
         m_lastEmitIdx1 = m_lastEmitIdx2 = kNoEmitIdx;
+        m_lastPoseIdx1 = m_lastPoseIdx2 = kNoEmitIdx;
 
         m_prevBotPx = m_currentReplayStartPos.x;
 
@@ -3412,6 +3442,7 @@ public:
         m_replayIdx1 = m_replayIdx2 = 0;
         m_prevBotPx = 0.f;
         m_lastEmitIdx1 = m_lastEmitIdx2 = kNoEmitIdx;
+        m_lastPoseIdx1 = m_lastPoseIdx2 = kNoEmitIdx;
 
         forcePlayersVisible_();
 
@@ -3695,6 +3726,8 @@ public:
 
         if (!botActive) return;
         if (!m_prevHadP2) m_px2 = m_px;
+
+        // log::info("x: {}, y: {}", m_pl->m_player1->getPositionX(), m_pl->m_player1->getPositionY());
         
         bool timeWentBack = (m_currentSessionTime < m_prevSessionTime - 0.05);
         m_IHateMirrorPortalsSoRewind = timeWentBack;
@@ -3717,6 +3750,8 @@ public:
         }
 
         int newOwnerSerial = m_currentOwner->serial;
+
+        // log::info("newOwnerSerial: {}, p1: {}, p2: {}", newOwnerSerial, m_currentOwner->p1.size(), m_currentOwner->p2.size());
         
         if (newOwnerSerial > 0 && previousOwnerSerial != newOwnerSerial && 
             m_replayKind == ReplayKind::PracticeComposite) {
@@ -3752,13 +3787,9 @@ public:
         if (m_replayKind == ReplayKind::PracticeComposite) finalTime = m_replayEndTime;
         else finalTime = m_currentOwner->p1.back().t;
 
-        if (finalTime <= 0.1) {
-            return;
-        }
-
         if (!m_freezePlayerXAtEnd && m_currentSessionTime >= finalTime) {
-            m_freezePlayerXAtEnd = true;
             if (m_currentOwner->completed) return;
+            m_freezePlayerXAtEnd = true;
             m_pl->applyTimeWarp(0.000001f);
             m_pl->updateTimeWarp(0.000001f);
             m_pl->pauseAudio();
@@ -4160,7 +4191,7 @@ public:
 
         if (isPureRecordingMode_() || isPreloadingAttempts()) {
             ++m_frameCounter;
-            if (m_autosaveEnabled && m_levelIDOnAttach != 0) {
+            if (m_autosaveEnabled && hasCurrentPersistenceTarget_()) {
                 m_autosaveAccum += static_cast<float>(dt);
                 const float every = std::max(1, m_autosaveMinutes) * 60.0f;
                 if (m_autosaveAccum >= every) {
@@ -4479,7 +4510,7 @@ public:
         ++m_frameCounter;
 
         // Autosave check
-        if (m_autosaveEnabled && m_levelIDOnAttach != 0) {
+        if (m_autosaveEnabled && hasCurrentPersistenceTarget_()) {
             m_autosaveAccum += static_cast<float>(dt);
             const float every = std::max(1, m_autosaveMinutes) * 60.0f;
             if (m_autosaveAccum >= every) {
@@ -4576,6 +4607,8 @@ private:
 
     size_t m_lastEmitIdx1 = kNoEmitIdx;
     size_t m_lastEmitIdx2 = kNoEmitIdx;
+    size_t m_lastPoseIdx1 = kNoEmitIdx;
+    size_t m_lastPoseIdx2 = kNoEmitIdx;
     static constexpr size_t kNoEmitIdx = std::numeric_limits<size_t>::max();
     
     int m_bridgeOwnerSerial = -1;
@@ -4846,14 +4879,14 @@ private:
         // L bozo platformer mode this is being wacky for initial teleports in levels due to y offset
         
         float attemptStartX = a.p1.front().x;
-        float attemptStartY = a.startY;
+        // float attemptStartY = a.startY;
 
-        float dx = m_currentReplayStartPos.x - attemptStartX;
-        float dy = m_currentReplayStartPos.y - attemptStartY;
+        //float dx = m_currentReplayStartPos.x - attemptStartX;
+        //float dy = m_currentReplayStartPos.y - attemptStartY;
         
-        return ((dx * dx + dy * dy) < kTolSq);
+        //return ((dx * dx + dy * dy) < kTolSq);
 
-        // return std::fabs(attemptStartX - m_currentReplayStartPos.x) <= kReplayStartTolerance;
+        return std::fabs(attemptStartX - m_currentReplayStartPos.x) <= kReplayStartTolerance;
     }
 
     void clearAttemptCatalog_() {
@@ -5375,7 +5408,7 @@ private:
             loadedSeen.insert(a.serial);
         }
 
-        if (m_levelIDOnAttach != 0) {
+        if (hasCurrentPersistenceTarget_()) {
             scanAttemptCatalogForLevel_(m_levelIDOnAttach);
         }
 
@@ -5999,10 +6032,12 @@ private:
         // L bozo platformer mode this is being wacky for initial teleports in levels due to y offset
         auto matchesStart = [&](float attemptStartX, float attemptStartY) -> bool {
             const float dx = attemptStartX - startPosX;
-            const float dy = attemptStartY - startPosY;
+            //const float dy = attemptStartY - startPosY;
             //log::info("attemptStartX: {}, attemptStartY: {}", attemptStartX, attemptStartY);
             //log::info("startPosX: {}, startPosY: {}", startPosX, startPosY);
-            return (dx * dx + dy * dy) <= tolSq;
+
+            //return (dx * dx + dy * dy) <= tolSq;
+            return fabs(dx) <= tolerance;
         };
 
         //auto matchesStart = [&](float attemptStartX) -> bool {
@@ -7357,13 +7392,28 @@ private:
 
         // log::info("applyFrameAndClickToPlayerOverRange");
 
-        const size_t lastEmitIdx = isP1 ? m_lastEmitIdx1 : m_lastEmitIdx2;
         const size_t replayIdx = isP1 ? m_replayIdx1 : m_replayIdx2;
-        if (lastEmitIdx == replayIdx) return;
-        
+
         const std::vector<Frame>& v = isP1 ? m_currentOwner->p1 : m_currentOwner->p2;
         PlayerObject* p = isP1 ? m_pl->m_player1 : m_pl->m_player2;
         if (!p || v.empty()) return;
+
+        size_t& lastPoseIdx = isP1 ? m_lastPoseIdx1 : m_lastPoseIdx2;
+
+        // Match old behavior: position replay used m_replayIdx + 2.
+        const size_t endIdx = std::min(replayIdx + 2, v.size() - 1);
+
+        size_t startIdx = endIdx;
+
+        if (lastPoseIdx != kNoEmitIdx &&
+            lastPoseIdx < endIdx &&
+            lastPoseIdx < v.size()) {
+            startIdx = lastPoseIdx + 1;
+        }
+
+        if (endIdx == 2 || lastPoseIdx == kNoEmitIdx) {
+            startIdx = 0;
+        }
 
         bool& botPrevHold = isP1 ? botPrevHold1 : botPrevHold2;
         bool& botPrevHoldL = isP1 ? botPrevHoldL1 : botPrevHoldL2;
@@ -7371,10 +7421,9 @@ private:
 
         bool setClicks = (isP1 || (!isP1 && m_isTwoPlayer)) && m_allowSetPlayerClickState;
 
-        for (size_t ia = lastEmitIdx + 1; ia <= replayIdx; ++ia) {
+        for (size_t poseI = startIdx; poseI <= endIdx; ++poseI) {
             // Click state
-            const size_t clickI = std::min(v.size() - 1, ia);
-            const size_t poseI  = std::min(v.size() - 1, ia);
+            const size_t clickI = std::min(v.size() - 1, poseI);
 
             const Frame& F = v[clickI];
             const Frame& C = v[poseI];
@@ -7547,8 +7596,7 @@ private:
                     if (m_p2JustSpawned) m_p2JustSpawned = false;
                 }
         }
-        if (isP1) m_lastEmitIdx1 = m_replayIdx1;
-        else m_lastEmitIdx2 = m_replayIdx2;
+        lastPoseIdx = endIdx;
     }
 
     void forcePlayerHoldState_(PlayerObject* p, bool holdJump, bool holdL, bool holdR) {

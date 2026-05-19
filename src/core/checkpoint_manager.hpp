@@ -72,12 +72,15 @@ public:
         int bestId = -1;
         double bestEndT = -1.0;
 
+        // log::info("m_path.sessions.size(): {}", m_path.sessions.size());
+
         // Walk newest -> oldest so ties prefer the most recent session
         for (size_t i = m_path.sessions.size(); i-- > 0;) {
             auto const& s = m_path.sessions[i];
             if (s.segments.empty()) continue;
 
             const float sx = sessionStartX_(s);
+            // log::info("session {} start x: {}", i, sx);
             if (!std::isfinite(sx)) continue;
 
             if (std::fabs(sx - curX) > xTol) {

@@ -1,3 +1,6 @@
+# 1.4.56
+- FIX: Custom saved levels record and save correctly
+- FIX: Bunch of small stuff
 # 1.4.55
 - FIX: Overhaul of the click, position, and wave trail logic (hopefully the wave trail stops being a menace).
 # 1.4.54
