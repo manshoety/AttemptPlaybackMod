@@ -24,6 +24,7 @@
 #include <UIBuilder.hpp>
 #include "ghost_distance_popup.hpp"
 #include "color_selector_popup.hpp"
+#include "attempt_manager_popup.hpp"
 #include "../core/types.hpp"
 #include "../utils/ui_utils.hpp"
 
@@ -335,7 +336,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.56", "bigFont.fnt")
+            Build<CCLabelBMFont>::create("Beta 1.4.57", "bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
@@ -461,7 +462,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         
                     Build<CircleButtonSprite>::create(Build<CCSprite>::createSpriteName("edit_delBtn_001.png"), CircleBaseColor::Gray, CircleBaseSize::Small)
                         .scale(0.775f)
-                        .intoMenuItem(this, menu_selector(PlaybackModMenu::onDeleteSaveFile))
+                        .intoMenuItem(this, menu_selector(PlaybackModMenu::onOpenAttemptManager))
                         .ignoreAnchorPointForPos(false)
                         .anchorPoint(0.5f, 0.5f)
                         .scaleMult(kPopupButtonSizeMult)
@@ -471,7 +472,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                         )
                         .id("DeleteSaveFileButton"_spr)
                         .children(
-                            Build<CCLabelBMFont>::create("Delete Attempts", "bigFont.fnt")
+                            Build<CCLabelBMFont>::create("Manage Attempts", "bigFont.fnt")
                                 .alignment(kCCTextAlignmentCenter)
                                 .pos(35.f, 17.f)
                                 .anchorPoint(0.f, 0.5f)
@@ -608,71 +609,11 @@ void PlaybackModMenu::update(float dt) {
     }
 }
 
-void PlaybackModMenu::onDeleteSaveFile(CCObject*) {
-    auto& G = Ghosts::I();
-
-    if (!G.hasModAttachedToLevel()) {
-        FLAlertLayer::create(
-            "Error",
-            gd::string("Not currently in a level"),
-            "OK"
-        )->show();
-        return;
+void PlaybackModMenu::onOpenAttemptManager(CCObject*) {
+    if (auto* p = AttemptManagerPopup::create()) {
+        p->m_noElasticity = true;
+        p->show();
     }
-
-    std::string filename = G.getCurrentLevelSaveFileName();
-    if (filename.empty()) {
-        FLAlertLayer::create(
-            "Error",
-            gd::string("No save file found for this level"),
-            "OK"
-        )->show();
-        return;
-    }
-
-    std::ostringstream ss;
-    ss
-        << "Are you sure you want to delete all saved attempts for this level?\n\n"
-        << "<cy>File: " << filename << "</c>\n\n"
-        << "This action cannot be undone!";
-
-    gd::string msg(ss.str().c_str());
-
-    createQuickPopup(
-        "Confirm Delete",
-        msg,
-        "Cancel", "Delete",
-        [this](auto, bool btn2) {
-            if (!btn2) return;
-
-            auto& G = Ghosts::I();
-            G.restartLevel();
-            bool ok = G.deleteCurrentLevelSaveFile();
-
-            if (ok) {
-                FLAlertLayer::create(
-                    "Success",
-                    gd::string("All saved attempts for this level have been deleted.\n\n"
-                            "Recording has been restarted."),
-                    "OK"
-                )->show();
-
-                if (auto* scene = CCDirector::sharedDirector()->getRunningScene()) {
-                    if (auto* menu = typeinfo_cast<PlaybackModMenu*>(
-                            scene->getChildByIDRecursive("playbackModMenu-popup"_spr))) {
-                        menu->syncUIFromRuntime();
-                    }
-                }
-            } else {
-                FLAlertLayer::create(
-                    "Error",
-                    gd::string("Failed to delete the save file.\n"
-                            "Check the logs for more information."),
-                    "OK"
-                )->show();
-            }
-        }
-    );
 }
 
 void PlaybackModMenu::onToggleRecording(CCObject*) {
@@ -946,7 +887,7 @@ bool PreloadAttemptsPopup::init(float width, float height) {
 
     auto* bestToggler = m_sortRadio.createToggler(0, 0.8f);
     auto* recentToggler = m_sortRadio.createToggler(1, 0.8f);
-    auto* randomToggler = m_sortRadio.createToggler(2, 0.8f);
+    auto* spreadToggler = m_sortRadio.createToggler(2, 0.8f);
 
     auto addSortLabel = [](CCMenuItemToggler* toggler, char const* text) {
         auto* label = CCLabelBMFont::create(text, "bigFont.fnt");
@@ -958,7 +899,7 @@ bool PreloadAttemptsPopup::init(float width, float height) {
 
     addSortLabel(bestToggler, "Best");
     addSortLabel(recentToggler, "Recent");
-    addSortLabel(randomToggler, "Random");
+    addSortLabel(spreadToggler, "Spread");
 
     Build<CCNode>::create()
         .contentSize(0.f, 0.f)
@@ -1037,7 +978,7 @@ bool PreloadAttemptsPopup::init(float width, float height) {
                 .children(
                     Build<CCMenuItemToggler>(bestToggler).pos(-18.f, 0.f).ignoreAnchorPointForPos(true),
                     Build<CCMenuItemToggler>(recentToggler).pos(59.f, 0.f).ignoreAnchorPointForPos(true),
-                    Build<CCMenuItemToggler>(randomToggler).pos(151.f, 0.f).ignoreAnchorPointForPos(true)
+                    Build<CCMenuItemToggler>(spreadToggler).pos(151.f, 0.f).ignoreAnchorPointForPos(true)
                 ),
 
             createTextButton_(

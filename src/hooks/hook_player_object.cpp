@@ -188,6 +188,23 @@ class $modify(MyPlayerObject, PlayerObject) {
         PlayerObject::releaseAllButtons();
     }
 
+    void placeStreakPoint() {
+        auto& G = Ghosts::I();
+
+        if (G.isModEnabled() && G.shouldOwnWaveTrailDuringPlayback()) {
+            if (auto* base = GJBaseGameLayer::get()) {
+                if (auto* pl = typeinfo_cast<PlayLayer*>(base)) {
+                    const bool isRealP1 = pl->m_player1 == this;
+                    const bool isRealP2 = pl->m_player2 == this;
+
+                    if ((isRealP1 || isRealP2) && this->m_isDart) return;
+                }
+            }
+        }
+
+        PlayerObject::placeStreakPoint();
+    }
+
     
 
     //void flipGravity(bool p0, bool p1) {

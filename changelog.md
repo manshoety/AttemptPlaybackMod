@@ -1,3 +1,8 @@
+# 1.4.57
+- Added a whole new UI to delete specific attempts (exporting/importing coming soon)
+- Stuff to try fixing the mirror portal replay wackiness (still WIP)
+- Wave trail fix and mod compatibility stuff
+- When replaying "recent", the real player now reflects the furthest attempt out of the recent n you preload. Before it was the best for the level regardless.
 # 1.4.56
 - FIX: Custom saved levels record and save correctly
 - FIX: Bunch of small stuff

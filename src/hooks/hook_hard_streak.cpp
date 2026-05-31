@@ -8,21 +8,31 @@
 using namespace geode::prelude;
 
 class $modify(HardStreakHook, HardStreak) {
+    static void onModify(auto& self) {
+        if (!self.setHookPriorityPost("HardStreak::addPoint", Priority::First)) {
+            log::warn("Failed to set first addPoint priority");
+        }
+    }
+
     void addPoint(cocos2d::CCPoint point) {
         auto& G = Ghosts::I();
 
-        if (G.isModEnabled() && !G.skipHardStreakCheck()) {
+        bool isP1Trail = false;
+        bool isP2Trail = false;
+
+        if (G.isModEnabled()) {
             if (auto* base = GJBaseGameLayer::get()) {
                 if (auto* pl = typeinfo_cast<PlayLayer*>(base)) {
-                    if (pl->m_player1 && this == pl->m_player1->m_waveTrail) {
-                        if (G.shouldDisableHardStreakAddPoint()) return;
-                        G.markWavePointThisFrameP1();
-                    } else if (pl->m_player2 && this == pl->m_player2->m_waveTrail) {
-                        if (G.shouldDisableHardStreakAddPoint()) return;
-                        G.markWavePointThisFrameP2();
-                    }
+                    isP1Trail = pl->m_player1 && this == pl->m_player1->m_waveTrail;
+                    isP2Trail = pl->m_player2 && this == pl->m_player2->m_waveTrail;
                 }
             }
+        }
+        
+        // Need to let Wave Trail Drag Fix mod place points
+        if ((isP1Trail || isP2Trail) && !G.skipHardStreakCheck()) {
+            if (isP1Trail) G.markWavePointThisFrameP1();
+            else G.markWavePointThisFrameP2();
         }
 
         HardStreak::addPoint(point);

@@ -289,7 +289,7 @@ enum class IconAnimationState {
 enum class PreloadSortMode : uint8_t {
     Best = 0,
     Recent = 1,
-    Random = 2,
+    Spread = 2,
 };
 
 enum class MovementDirection : uint8_t {
@@ -309,7 +309,7 @@ constexpr char const* kPreloadSortModeKey = "preload-sort-mode";
 static PreloadSortMode preloadSortModeFromSaved() {
     auto const s = Mod::get()->getSavedValue<std::string>(kPreloadSortModeKey);
     if (s == "recent") return PreloadSortMode::Recent;
-    if (s == "random") return PreloadSortMode::Random;
+    if (s == "spread") return PreloadSortMode::Spread;
     return PreloadSortMode::Best;
 }
 
@@ -317,7 +317,7 @@ static char const* preloadSortModeToSavedString(PreloadSortMode mode) {
     switch (mode) {
         case PreloadSortMode::Best: return "best";
         case PreloadSortMode::Recent: return "recent";
-        case PreloadSortMode::Random: return "random";
+        case PreloadSortMode::Spread: return "spread";
     }
     return "best";
 }
@@ -333,7 +333,7 @@ static size_t preloadSortModeToIndex(PreloadSortMode mode) {
     switch (mode) {
         case PreloadSortMode::Best:   return 0;
         case PreloadSortMode::Recent: return 1;
-        case PreloadSortMode::Random: return 2;
+        case PreloadSortMode::Spread: return 2;
     }
     return 0;
 }
@@ -341,7 +341,7 @@ static size_t preloadSortModeToIndex(PreloadSortMode mode) {
 static PreloadSortMode preloadSortModeFromIndex(size_t index) {
     switch (index) {
         case 1: return PreloadSortMode::Recent;
-        case 2: return PreloadSortMode::Random;
+        case 2: return PreloadSortMode::Spread;
         case 0:
         default: return PreloadSortMode::Best;
     }

@@ -92,6 +92,9 @@
 // Miniwave has weird point setting when going up and it like places two and one is behind the line it was drawing or something? Idk. Wave wacky. (might be weird practice mode thing)
 // Add cheat detection thing where it like changes the end screen by some ratio or something like xbot did
 
+// Make it so that when we run out of player objects, we allow half of them to be reused and keep the rest dead, but ensure once reused, we don't just spam reuse those and cause none to stay dead
+// Is second dual still not visible sometimes? test with bloodbath full run
+
 
 using namespace geode::prelude;
 
@@ -261,6 +264,16 @@ public:
     void updateCurrentAttemptNoclipState() {
         if (!m_currentDidNoclip) m_currentDidNoclip = didAttemptUseNoclip();
     }
+    void armFreshRecordingAfterDeleteRestart_() {
+        m_forceFreshRecordingAfterDelete = true;
+
+        recording = true;
+        recordingBlocked = false;
+        block_attempt_push_on_recording_start = false;
+        m_justDied = false;
+
+        m_current = Attempt{};
+    }
 
     cocos2d::CCPoint forceSetPosP1{0.f, 0.f};
     cocos2d::CCPoint forceSetPosP2{0.f, 0.f};
@@ -284,6 +297,241 @@ public:
     void setP2RHold(bool h) { p2RHold = h; }
     void markWavePointThisFrameP1() { p1WavePointThisFrame = true; }
     void markWavePointThisFrameP2() { p2WavePointThisFrame = true; }
+
+    float getStartPosTolerance() const { return kReplayStartTolerance; }
+
+    const std::vector<APXAttemptDiskInfo>& getAttemptCatalog() {
+        if (m_levelIDOnAttach != 0) scanAttemptCatalogForLevel_(m_levelIDOnAttach);
+        return m_attemptCatalog;
+    }
+
+    const PracticePath& getPracticePathCatalog() {
+        if (m_levelIDOnAttach != 0) scanAttemptCatalogForLevel_(m_levelIDOnAttach);
+        return m_attemptCatalogPracticePath;
+    }
+
+    bool refreshAttemptCatalogForCurrentLevel(bool pushCurrentAttempt = true) {
+        return refreshAttemptCatalogForCurrentLevel_(true, pushCurrentAttempt);
+    }
+
+    bool deleteAttemptBySerial(int serial) {
+        if (serial <= 0) return false;
+        return deleteAttemptsBySerials({ serial });
+    }
+
+    bool deleteAttemptsBySerials(std::vector<int> const& serials) {
+        std::unordered_set<int> deleteSet;
+        deleteSet.reserve(serials.size());
+
+        for (int serial : serials) {
+            if (serial > 0) deleteSet.insert(serial);
+        }
+
+        return deleteAttemptsBySerialSet_(deleteSet);
+    }
+
+    bool deletePracticeAttemptsBySerials(std::vector<int> const& serials) {
+        std::unordered_set<int> deleteSet;
+        deleteSet.reserve(serials.size());
+
+        for (int serial : serials) {
+            if (serial > 0) deleteSet.insert(serial);
+        }
+
+        return deletePracticeAttemptsBySerialSet_(deleteSet, false);
+    }
+
+    bool deleteAttemptsByEndPercent(float minPercent, float maxPercent) {
+        if (minPercent > maxPercent) std::swap(minPercent, maxPercent);
+
+        minPercent = std::clamp(minPercent, 0.f, 100.f);
+        maxPercent = std::clamp(maxPercent, 0.f, 100.f);
+
+        if (!refreshAttemptCatalogForCurrentLevel_(true, true)) {
+            return false;
+        }
+
+        std::unordered_set<int> deleteSet;
+
+        for (auto const& entry : m_attemptCatalog) {
+            if (entry.practiceAttempt) continue;
+
+            if (entry.endPercent >= minPercent && entry.endPercent <= maxPercent) {
+                deleteSet.insert(entry.serial);
+            }
+        }
+
+        return deleteAttemptsBySerialSet_(deleteSet);
+    }
+
+    bool deletePracticeSessionById(int sessionId) {
+        if (sessionId <= 0) return false;
+        if (!hasCurrentPersistenceTarget_()) return false;
+
+        if (!refreshAttemptCatalogForCurrentLevel_(true, true)) {
+            return false;
+        }
+
+        const PracticeSession* targetSession = nullptr;
+        for (auto const& session : m_attemptCatalogPracticePath.sessions) {
+            if (session.sessionId == sessionId) {
+                targetSession = &session;
+                break;
+            }
+        }
+
+        if (!targetSession) return false;
+
+        std::unordered_set<int> deleteSet;
+        for (int serial : targetSession->allAttemptSerials) {
+            if (serial > 0) deleteSet.insert(serial);
+        }
+        for (auto const& seg : targetSession->segments) {
+            if (seg.ownerSerial > 0) deleteSet.insert(seg.ownerSerial);
+        }
+
+        if (deleteSet.empty()) {
+            PracticePath keptPath = m_attemptCatalogPracticePath;
+            keptPath.sessions.erase(
+                std::remove_if(
+                    keptPath.sessions.begin(),
+                    keptPath.sessions.end(),
+                    [&](PracticeSession const& session) {
+                        return session.sessionId == sessionId;
+                    }
+                ),
+                keptPath.sessions.end()
+            );
+            return rewriteAttemptsAndPracticePathAfterDeletion_(deleteSet, keptPath, "practice-session");
+        }
+
+        PracticePath keptPath = m_attemptCatalogPracticePath;
+        keptPath.sessions.erase(
+            std::remove_if(
+                keptPath.sessions.begin(),
+                keptPath.sessions.end(),
+                [&](PracticeSession const& session) {
+                    return session.sessionId == sessionId;
+                }
+            ),
+            keptPath.sessions.end()
+        );
+
+        return rewriteAttemptsAndPracticePathAfterDeletion_(deleteSet, keptPath, "practice-session");
+    }
+
+    bool rewriteAttemptsAndPracticePathAfterDeletion_(
+        std::unordered_set<int> const& deleteSet,
+        PracticePath const& keptPath,
+        char const* label
+    ) {
+        if (!hasCurrentPersistenceTarget_()) return false;
+        if (m_isSaving) return false;
+
+        m_isSaving = true;
+        struct SaveGuard {
+            bool& flag;
+            ~SaveGuard() { flag = false; }
+        } guard{ m_isSaving };
+
+        clearRuntimeReplayStateAfterAttemptDeletion_();
+
+        const auto path = fileForLevel_(m_levelIDOnAttach);
+
+        std::vector<Attempt> keptAttempts;
+        keptAttempts.reserve(m_attemptCatalog.size());
+
+        for (auto const& entry : m_attemptCatalog) {
+            if (deleteSet.count(entry.serial) != 0) {
+                continue;
+            }
+
+            Attempt loaded{};
+            bool usedLegacy = false;
+
+            if (!loadAPXAttemptByCatalogEntry(path, entry, loaded, &usedLegacy)) {
+                log::warn(
+                    "[APX delete] failed to lazy-load kept attempt serial={} from {}",
+                    entry.serial,
+                    geode::utils::string::pathToString(path)
+                );
+                return false;
+            }
+
+            loaded.persistedOnDisk = true;
+            loaded.recordedThisSession = false;
+            keptAttempts.push_back(std::move(loaded));
+        }
+
+        if (!saveAPXFileCurrent(path, keptAttempts, keptPath)) {
+            log::warn(
+                "[APX delete] failed to rewrite APX file after {} deletion: {}",
+                label ? label : "attempt",
+                geode::utils::string::pathToString(path)
+            );
+            return false;
+        }
+
+        m_checkpointMgr.restorePath(keptPath);
+        removeDeletedAttemptsFromRuntime_(deleteSet);
+        clearRuntimeReplayStateAfterAttemptDeletion_();
+        clearAttemptCatalog_();
+        scanAttemptCatalogForLevel_(m_levelIDOnAttach);
+
+        armFreshRecordingAfterDeleteRestart_();
+        restartLevel();
+
+        return true;
+    }
+
+    bool deletePracticeAttemptsBySerialSet_(
+        std::unordered_set<int> const& deleteSet,
+        bool allowReplayPathSerials
+    ) {
+        if (deleteSet.empty()) return false;
+        if (!hasCurrentPersistenceTarget_()) return false;
+
+        if (!refreshAttemptCatalogForCurrentLevel_(true, true)) {
+            return false;
+        }
+
+        bool foundAny = false;
+
+        for (auto const& entry : m_attemptCatalog) {
+            if (deleteSet.count(entry.serial) == 0) continue;
+
+            if (!entry.practiceAttempt) {
+                log::warn(
+                    "[APX delete] refusing practice-attempt delete because serial={} is normal",
+                    entry.serial
+                );
+                return false;
+            }
+
+            foundAny = true;
+        }
+
+        if (!foundAny) return false;
+
+        if (!allowReplayPathSerials) {
+            for (auto const& session : m_attemptCatalogPracticePath.sessions) {
+                for (auto const& seg : session.segments) {
+                    if (seg.ownerSerial > 0 && deleteSet.count(seg.ownerSerial) != 0) {
+                        log::warn(
+                            "[APX delete] refusing individual practice delete for replay-path serial={}",
+                            seg.ownerSerial
+                        );
+                        return false;
+                    }
+                }
+            }
+        }
+
+        PracticePath keptPath = m_attemptCatalogPracticePath;
+        prunePracticePathSerials_(keptPath, deleteSet);
+
+        return rewriteAttemptsAndPracticePathAfterDeletion_(deleteSet, keptPath, "practice-attempt");
+    }
 
     cocos2d::CCLabelBMFont* m_playLayerGhostTextLabel = nullptr;
 
@@ -585,69 +833,112 @@ public:
     }
 
     bool deleteCurrentLevelSaveFile() {
-
-        if (isPracticeMode()) togglePracticeMode(false);
-        
-        flushPendingSaves_();
-        
-        auto path = fileForLevel_(m_levelIDOnAttach);
-        std::error_code ec;
-        
-        if (!std::filesystem::exists(path, ec)) {
-            log::info("deleteCurrentLevelSaveFile: file does not exist at {}", geode::utils::string::pathToString(path));
+        if (!hasCurrentPersistenceTarget_()) {
+            log::warn(
+                "[APX delete-all] no current persistence target: levelID={}, customSaveId='{}'",
+                m_levelIDOnAttach,
+                m_customSaveId
+            );
             return false;
+        }
+
+        const auto path = fileForLevel_(m_levelIDOnAttach);
+
+        std::error_code ec;
+        const bool exists = std::filesystem::exists(path, ec);
+        if (ec) {
+            log::warn(
+                "[APX delete-all] exists failed for {}: {}",
+                geode::utils::string::pathToString(path),
+                ec.message()
+            );
+            return false;
+        }
+
+        if (exists) {
+            ec.clear();
+            std::filesystem::remove(path, ec);
+            if (ec) {
+                log::warn(
+                    "[APX delete-all] remove failed for {}: {}",
+                    geode::utils::string::pathToString(path),
+                    ec.message()
+                );
+                return false;
+            }
         }
 
         stopReplay();
         stopPlayback();
-        
-        bool success = std::filesystem::remove(path, ec);
-        
-        if (success) {
-            //log::info("Deleted save file: {}", geode::utils::string::pathToString(path));
-            
-            //log::info("[Delete] Clearing {} attempts from memory...", attempts.size());
-            
-            clearAllGhostNodes();
-            attempts.clear();
-            invalidateAttemptPointerCaches_();
-            attempts.shrink_to_fit();
-            
-            m_current = Attempt{};
-            m_currentDidNoclip = false;
-            m_loadedSerials.clear();
-            clearAttemptCatalog_();
-            m_loadedLevelID = 0;
-            m_nextAttemptSerial = 1;
-            m_spans.clear();
-            m_grid.clear();
-            m_gridThreshold.clear();
-            m_cachedCandidates.clear();
-            m_preloadedIndices.clear();
-            m_preloadedSet.clear();
-            m_primedIndices.clear();
-            m_wantToPrimeIndices.clear();
-            m_primedSet.clear();
-            m_wantToPrimeSet.clear();
-            m_serialCacheDirty = true;
-            
-            m_checkpointMgr = CheckpointManager();
-            invalidateAttemptCounts();
-            stopPlayback();
-            stopReplay();
-            
-            recording = false;
-            toggleRecording();
-            
-            restartLevel();
-            
-            //log::info("[Delete] After clear: attempts.size()={}", attempts.size());
-        } else {
-            log::warn("Failed to delete save file: {} (error: {})", 
-                    geode::utils::string::pathToString(path), ec.message());
-        }
-        
-        return success;
+
+        botActive = false;
+        playback = false;
+        m_playbackArmed = false;
+        m_pendingRearm = false;
+
+        clearHeldInputs_();
+        applyBotSafety_(false);
+        setdisablePlayerMove(false);
+        tagCompositeOwnersHidden_(false);
+        forceHidePlayLayerGhostTextLabelOnly();
+
+        clearAllGhostNodes();
+
+        attempts.clear();
+        m_current = Attempt{};
+
+        invalidateAttemptPointerCaches_();
+        invalidatePrimedPlayerObjectRefs();
+
+        m_currentOwner = nullptr;
+        m_replayAttempt = nullptr;
+        m_replayOwnerSerial = -1;
+        m_replayOwnerIndex = -1;
+        m_activeOwnerSerial = -1;
+        m_practiceCompositeOwnerSerial = -1;
+
+        m_loadedSerials.clear();
+        m_loadedLevelID = 0;
+        clearAttemptCatalog_();
+
+        m_preloadedIndices.clear();
+        m_preloadedSet.clear();
+        m_primedIndices.clear();
+        m_wantToPrimeIndices.clear();
+        m_primedSet.clear();
+        m_wantToPrimeSet.clear();
+        m_attemptsPreloadedTotal = 0;
+
+        m_replayIdx1 = 0;
+        m_replayIdx2 = 0;
+        m_lastEmitIdx1 = m_lastEmitIdx2 = kNoEmitIdx;
+        m_lastPoseIdx1 = m_lastPoseIdx2 = kNoEmitIdx;
+
+        m_grid.clear();
+        m_gridThreshold.clear();
+        m_spans.clear();
+        m_cachedCandidates.clear();
+        m_cachedBinL = INT_MAX;
+        m_cachedBinR = INT_MIN;
+        m_serialCacheDirty = true;
+
+        invalidateAttemptCounts();
+
+        m_checkpointMgr = CheckpointManager();
+        m_needsMigrationRewrite = false;
+        m_loadedFileWasLegacyAttempts = false;
+
+        m_justDied = false;
+        m_blockAttemptCount = false;
+        block_attempt_push_on_recording_start = false;
+        recordingBlocked = false;
+        recording = true;
+
+        armFreshRecordingAfterDeleteRestart_();
+
+        restartLevel();
+
+        return true;
     }
 
     std::string getCurrentLevelSaveFileName() const {
@@ -825,7 +1116,7 @@ public:
 
         PreloadSortMode sortMode = m_preloadSortMode;
         if (m_replayKind == ReplayKind::PracticeComposite) {
-            sortMode = PreloadSortMode::Random;
+            sortMode = PreloadSortMode::Spread;
         }
 
         switch (sortMode) {
@@ -865,7 +1156,7 @@ public:
                 break;
             }
 
-            case PreloadSortMode::Random:
+            case PreloadSortMode::Spread:
             default: {
                 // Sort candidates by endT first
                 std::sort(candidateSerials.begin(), candidateSerials.end(),
@@ -1076,7 +1367,6 @@ public:
             m_preloadCursor < m_preloadOrder.size())
         {
             const int serial = static_cast<int>(m_preloadOrder[m_preloadCursor]);
-
             Attempt* loaded = ensureAttemptLoadedBySerial_(serial, false);
             if (!loaded) {
                 ++m_preloadCursor;
@@ -1091,6 +1381,7 @@ public:
 
             Attempt& a = attempts[idx];
             preloadAttempt_(a, idx, true);
+            // log::info("m_preloadCursor: {}, idx: {}, p1: {}", m_preloadCursor, serial, a.p1.size());
             InitialGamemodeSetProcessAttemptIdx(idx);
 
             if (a.preloaded) {
@@ -1103,6 +1394,7 @@ public:
 
         if (m_preloadLoaded >= m_preloadTarget || m_preloadCursor >= m_preloadOrder.size()) {
             m_preloadActive = false;
+            if (m_replayKind == ReplayKind::BestSingle) replayBestSetOwner();
             rebuildGridPreloadedSet_();
             rebuildGridThreasholdSet_();
             updateGhostTextOnDeath(true);
@@ -1376,8 +1668,7 @@ public:
     }
 
     bool isModEnabled() const {
-        auto* base = GJBaseGameLayer::get();
-        auto* pl = base ? typeinfo_cast<PlayLayer*>(base) : nullptr;
+        auto* pl = m_gl ? typeinfo_cast<PlayLayer*>(m_gl) : nullptr;
 
         return isModEnabledForPlayLayer(pl);
     }
@@ -1395,8 +1686,7 @@ public:
     }
 
     bool shouldHandleActivePlayLayer() const {
-        auto* base = GJBaseGameLayer::get();
-        auto* pl = base ? typeinfo_cast<PlayLayer*>(base) : nullptr;
+        auto* pl = m_gl ? typeinfo_cast<PlayLayer*>(m_gl) : nullptr;
         return shouldHandlePlayLayer(pl);
     }
 
@@ -1679,12 +1969,15 @@ public:
 
 
         int written = 0;
+        bool rewroteWholeFile = false;
+        bool wrotePracticePath = false;
 
         if (m_needsMigrationRewrite) {
             if (!rewriteWholeFileToCurrent_(path)) {
                 m_isSaving = false;
                 return 0;
             }
+            rewroteWholeFile = true;
         } else {
             ensureHeader_(path);
         }
@@ -1711,12 +2004,17 @@ public:
         if (m_checkpointMgr.isDirty()) {
             if (writeAPXPracticePath(out, m_checkpointMgr.getPath())) {
                 m_checkpointMgr.clearDirty();
+                wrotePracticePath = true;
             } else {
                 log::warn("[APX save] PATH write failed (stream bad)");
             }
         }
 
         out.flush();
+
+        if (written > 0 || rewroteWholeFile || wrotePracticePath) {
+            clearAttemptCatalog_();
+        }
 
         m_isSaving = false;
         return written;
@@ -1987,17 +2285,17 @@ public:
     }
 
     int saveNewAttemptsForCurrentLevel() {
-    if (!hasCurrentPersistenceTarget_()) {
-        log::warn(
-            "[APX save] no current persistence target: levelID={}, customSaveId='{}'",
-            m_levelIDOnAttach,
-            m_customSaveId
-        );
-        return 0;
-    }
+        if (!hasCurrentPersistenceTarget_()) {
+            log::warn(
+                "[APX save] no current persistence target: levelID={}, customSaveId='{}'",
+                m_levelIDOnAttach,
+                m_customSaveId
+            );
+            return 0;
+        }
 
-    return saveNewAttemptsForLevel_(m_levelIDOnAttach);
-}
+        return saveNewAttemptsForLevel_(m_levelIDOnAttach);
+    }
 
     void setOpacityVar(GLubyte o) { opacity = o; }
 
@@ -2171,6 +2469,7 @@ public:
         m_1PreloadedSoDontShowGhosts = false;
 
         m_pl = pl;
+        m_gl = GJBaseGameLayer::get();
 
         m_isTwoPlayer = m_pl && m_pl->m_levelSettings && m_pl->m_levelSettings->m_twoPlayerMode;
         // log::info("is two player mode: {}", m_isTwoPlayer);
@@ -2191,6 +2490,7 @@ public:
 
         clearGhostBatches_();
         getOrCreateBatch_();
+        updateMirrorVisuals_();
 
         customLastWrite = {};
         m_lastCustomSfxRefreshTick = 0;
@@ -2513,14 +2813,24 @@ public:
             return;
         }
 
-        if (recording && !recordingBlocked && !m_current.p1.empty() && !block_attempt_push_on_recording_start) {
+        if (recording && !recordingBlocked && m_current.p1.size() > 1 && !block_attempt_push_on_recording_start) {
             pushAttempt(std::move(m_current));
         }
     }
 
     void onReset() {
         m_justDied = false;
-        if (block_attempt_push_on_recording_start) return;
+
+        if (m_forceFreshRecordingAfterDelete) {
+            m_forceFreshRecordingAfterDelete = false;
+
+            recording = true;
+            recordingBlocked = false;
+            block_attempt_push_on_recording_start = false;
+
+            m_current = Attempt{};
+        }
+        else if (block_attempt_push_on_recording_start) return;
         forceSetPosP1.x = 0.f;
         forceSetPosP1.y = 105.f;
         forceSetPosP2.x = 0.f;
@@ -2579,7 +2889,7 @@ public:
         }
         
         // Will still push on the attempt you switched start pos on
-        if (recording && !recordingBlocked && !m_current.p1.empty()) {
+        if (recording && !recordingBlocked && m_current.p1.size() > 1) {
             pushAttempt(std::move(m_current));
         }
 
@@ -2638,7 +2948,10 @@ public:
                 m_replayIdx1 = m_replayIdx2 = 0;
                 m_lastEmitIdx1 = m_lastEmitIdx2 = kNoEmitIdx;
                 m_lastPoseIdx1 = m_lastPoseIdx2 = kNoEmitIdx;
-                m_replayOwnerSerial = -1;
+                if (m_replayKind != ReplayKind::BestSingle) {
+                    m_replayOwnerSerial = -1;
+                }
+
                 initBotAfterReset_();
             }
             updateGhostTextOnDeath(true);
@@ -2648,6 +2961,15 @@ public:
             invalidatePrimedPlayerObjectRefs();
             InitialGamemodeSet();
         }
+        
+        if (m_ghostRoot) {
+            m_ghostRoot->setScaleX(1.f);
+            m_ghostRoot->setPositionX(0.f);
+        }
+
+        resetPlayerMirrorVisualOffsets_();
+        resetMirrorVisualState_();
+        updateMirrorVisuals_();
 
         m_movementDirectionP1 = MovementDirection::Flat;
         m_movementDirectionP2 = MovementDirection::Flat;
@@ -2766,8 +3088,12 @@ public:
 
         //log::info("Clearing ghost batches...");
         clearGhostBatches_();
+        resetPlayerMirrorVisualOffsets_();
+        resetMirrorVisualState_();
         
         if (m_ghostRoot) {
+            m_ghostRoot->setScaleX(1.f);
+            m_ghostRoot->setPositionX(0.f);
             //log::info("Removing ghost root from scene...");
             if (m_ghostRoot->getParent()) {
                 m_ghostRoot->removeFromParent();
@@ -2784,6 +3110,7 @@ public:
         m_freezePlayerX = 0.f;
         m_freezePlayerY = 0.f;
         m_pl = nullptr;
+        m_gl = nullptr;
         m_currentOwner = nullptr;
         recording = true;
         playback = false;
@@ -2924,9 +3251,7 @@ public:
 
         if (recording) {
             if (m_pl) {
-                block_attempt_push_on_recording_start = true;
                 restartLevel();
-                block_attempt_push_on_recording_start = false;
             }
         }
 
@@ -2948,6 +3273,8 @@ public:
     void stopPlayback() {
         playback = false;
         updateGhostVisibility();
+        resetPlayerMirrorVisualOffsets_();
+        resetMirrorVisualState_();
     }
 
     void clearGhosts() {
@@ -3161,11 +3488,17 @@ public:
             return false;
         }
 
+        if (hasCurrentPersistenceTarget_()) {
+            clearAttemptCatalog_();
+
+            if (scanAttemptCatalogForLevel_(m_levelIDOnAttach)) {
+                m_checkpointMgr.restorePath(m_attemptCatalogPracticePath);
+            }
+        }
+
         if (isPracticeMode()) togglePracticeMode(false);
 
-        block_attempt_push_on_recording_start = true;
         restartLevel();
-        block_attempt_push_on_recording_start = false;
 
         m_currentReplayStartPos.x = m_pl->m_player1->m_positionX;
         m_currentReplayStartPos.y = m_pl->m_player1->m_positionY;
@@ -3195,13 +3528,22 @@ public:
 
         m_replayOwnerSerial = m_checkpointMgr.findOwnerSerialForTime(m_baseTime);
         m_activeOwnerSerial = m_replayOwnerSerial > 0 ? m_replayOwnerSerial : -1;
+
         if (m_activeOwnerSerial > 0) {
-            Attempt* chosen = ensureAttemptLoadedBySerial_(m_activeOwnerSerial, false);
-            // Old start pos attempts will have timestep 0.f but new ones have the correct timestep, so offset them all (oopsies this might be slow)
-            if (m_baseTime != 0.f && chosen->baseTimeOffset == 0.f) {
-                chosen->baseTimeOffset = m_baseTime;
-                const uint32_t offsetQ = runtimeQuantTimeQ_(m_baseTime);
-                offsetAttemptTimesFast(*chosen, offsetQ);
+            Attempt* chosen = ensurePracticeReplayOwnerLoaded_(
+                m_activeOwnerSerial,
+                "active-owner"
+            );
+
+            if (!chosen) {
+                log::warn(
+                    "[Bot] startReplayPractice aborted: active owner serial={} could not be loaded",
+                    m_activeOwnerSerial
+                );
+
+                m_filterByStartPosition = false;
+                stopReplay();
+                return false;
             }
         }
 
@@ -3213,6 +3555,28 @@ public:
             m_filterByStartPosition = false;
             stopReplay();
             return false;
+        }
+
+        std::unordered_set<int> routeOwners;
+        routeOwners.reserve(replaySegs.size());
+
+        for (auto const& seg : replaySegs) {
+            if (seg.ownerSerial > 0) {
+                routeOwners.insert(seg.ownerSerial);
+            }
+        }
+
+        for (int serial : routeOwners) {
+            if (!ensurePracticeReplayOwnerLoaded_(serial, "route-owner")) {
+                log::warn(
+                    "[Bot] startReplayPractice aborted: replay path owner serial={} is missing",
+                    serial
+                );
+
+                m_filterByStartPosition = false;
+                stopReplay();
+                return false;
+            }
         }
         
         //if (!firstOwner || firstOwner->p1.empty()) {
@@ -3256,16 +3620,27 @@ public:
         
         if (m_replayEndTime > 0.1) {
             int tailSerial = m_checkpointMgr.findOwnerSerialForTime(m_replayEndTime);
-            
+
             if (tailSerial > 0) {
-                Attempt* tailOwner = findAttemptBySerial_(tailSerial);
-                // Old start pos attempts will have timestep 0.f but new ones have the correct timestep, so offset them all (oopsies this might be slow)
-                if (m_baseTime != 0.f && tailOwner->baseTimeOffset == 0.f) {
-                    tailOwner->baseTimeOffset = m_baseTime;
-                    const uint32_t offsetQ = runtimeQuantTimeQ_(m_baseTime);
-                    offsetAttemptTimesFast(*tailOwner, offsetQ);
+                Attempt* tailOwner = ensurePracticeReplayOwnerLoaded_(
+                    tailSerial,
+                    "tail-owner"
+                );
+
+                if (!tailOwner) {
+                    log::warn(
+                        "[Bot] startReplayPractice: missing tail owner serial={} for endTime={:.3f}",
+                        tailSerial,
+                        m_replayEndTime
+                    );
+
+                    m_freezePlayerX = 0.f;
+                    m_freezePlayerY = 0.f;
+                    m_freezePlayerXP2 = 0.f;
+                    m_freezePlayerYP2 = 0.f;
+                    m_freezePlayerRotationP2 = 0.f;
                 }
-                if (tailOwner && !tailOwner->p1.empty()) {
+                else {
                     // Find the frame closest to endTime
                     size_t endIdx = idxForTime(tailOwner->acc1Time, tailOwner->p1, m_replayEndTime);
                     if (endIdx < tailOwner->p1.size()) {
@@ -3332,7 +3707,6 @@ public:
 
         m_replayKind = ReplayKind::BestSingle;
 
-        block_attempt_push_on_recording_start = true;
         botActive = false;
         playback = false;
         
@@ -3342,8 +3716,7 @@ public:
         m_currentReplayStartPos.y = m_pl->m_player1->m_positionY;
 
         m_filterByStartPosition = true;
-        
-        block_attempt_push_on_recording_start = false;
+
         
         if (!scanAttemptCatalogForLevel_(m_levelIDOnAttach)) {
             log::warn("[Bot] startReplayBest: failed to scan attempt catalog");
@@ -3357,67 +3730,6 @@ public:
 
         if (!scanAttemptCatalogForLevel_(m_levelIDOnAttach)) {
             log::warn("[Bot] startReplayBest: failed to scan attempt catalog");
-            m_replayOwnerSerial = -1;
-            m_replayOwnerIndex = -1;
-            m_currentOwner = nullptr;
-            playback = false;
-            stopReplay();
-            return false;
-        }
-
-        const int serial = pickWinningOrBestSerialFromPosition_(
-            std::optional<bool>(false),
-            m_currentReplayStartPos.x,
-            m_currentReplayStartPos.y,
-            kReplayStartTolerance
-        );
-
-        if (serial <= 0) {
-            log::warn("[Bot] startReplayBest: no non-practice attempts to replay for current start pos");
-            m_replayOwnerSerial = -1;
-            m_replayOwnerIndex = -1;
-            m_currentOwner = nullptr;
-            playback = false;
-            stopReplay();
-            return false;
-        }
-
-        Attempt* chosen = ensureAttemptLoadedBySerial_(serial, false);
-        if (!chosen || chosen->p1.empty()) {
-            log::warn("[Bot] startReplayBest: failed to load chosen attempt serial={}", serial);
-            m_replayOwnerSerial = -1;
-            m_replayOwnerIndex = -1;
-            m_currentOwner = nullptr;
-            playback = false;
-            stopReplay();
-            return false;
-        }
-
-        // Old start pos attempts will have timestep 0.f but new ones have the correct timestep, so offset them all (oopsies this might be slow)
-        if (m_baseTime != 0.f && chosen->baseTimeOffset == 0.f) {
-            chosen->baseTimeOffset = m_baseTime;
-            const uint32_t offsetQ = runtimeQuantTimeQ_(m_baseTime);
-            offsetAttemptTimesFast(*chosen, offsetQ);
-        }
-
-        const size_t idx = findLoadedAttemptIndexBySerial_(serial);
-        if (idx == SIZE_MAX) {
-            log::warn("[Bot] startReplayBest: loaded serial {} but index lookup failed", serial);
-            m_replayOwnerSerial = -1;
-            m_replayOwnerIndex = -1;
-            m_currentOwner = nullptr;
-            playback = false;
-            stopReplay();
-            return false;
-        }
-
-        m_replayOwnerSerial = serial;
-        m_replayOwnerIndex = idx;
-
-        buildCompositeFromAttempt(idx);
-
-        if (m_compOwnerIdx >= attempts.size() || attempts[m_compOwnerIdx].p1.empty()) {
-            log::warn("[Bot] startReplayBest: no data (p1 empty) after filtering. m_compOwnerIdx={}", m_compOwnerIdx);
             m_replayOwnerSerial = -1;
             m_replayOwnerIndex = -1;
             m_currentOwner = nullptr;
@@ -3450,8 +3762,118 @@ public:
         m_justStartedBot = true;
 
         //log::info("[Bot] startReplayBest: calling final resetLevel()");
-        restartLevel();
+        m_replayOwnerSerial = -1;
         //log::info("[Bot] startReplayBest: complete, botActive={}", botActive);
+        return true;
+    }
+
+    int chooseReplayOwnerFromFinishedPreload_() {
+        int bestSerial = -1;
+        float bestX = -FLT_MAX;
+        double bestT = -1.0;
+
+        for (uint32_t rawSerial : m_preloadOrder) {
+            //log::info("rawSerial: {}", rawSerial);
+            const int serial = static_cast<int>(rawSerial);
+
+            const size_t idx = findLoadedAttemptIndexBySerial_(serial);
+
+            if (idx == SIZE_MAX || idx >= attempts.size()) {
+                log::info("bad index");
+                continue;
+            }
+
+            const Attempt& a = attempts[idx];
+
+            if (!a.preloaded) { 
+                log::info("not preloaded");
+                continue;
+            }
+            if (a.practiceAttempt) {
+                log::info("practice attempt");
+                continue;
+            }
+            if (a.p1.empty()) { 
+                log::info("attempt frames empty");
+                continue;
+            }
+
+            const float endX = static_cast<float>(a.p1.back().x);
+            const double endT = static_cast<double>(a.p1.back().t);
+
+            if (
+                endX > bestX ||
+                (endX == bestX && endT > bestT) ||
+                (endX == bestX && endT == bestT && serial > bestSerial)
+            ) {
+                bestX = endX;
+                bestT = endT;
+                bestSerial = serial;
+            }
+        }
+
+        //log::info("bestSerial: {}", bestSerial);
+
+        return bestSerial;
+    }
+
+    bool replayBestSetOwner() {
+        const int serial = chooseReplayOwnerFromFinishedPreload_();
+
+        if (serial <= 0) {
+            log::warn("[Bot] startReplayBest: no non-practice attempts to replay for current start pos");
+            m_replayOwnerSerial = -1;
+            m_replayOwnerIndex = -1;
+            m_currentOwner = nullptr;
+            playback = false;
+            stopReplay();
+            return false;
+        }
+
+        Attempt* chosen = ensureAttemptLoadedBySerial_(serial, false);
+        if (!chosen || chosen->p1.empty()) {
+            log::warn("[Bot] startReplayBest: failed to load chosen attempt serial={}", serial);
+            m_replayOwnerSerial = -1;
+            m_replayOwnerIndex = -1;
+            m_currentOwner = nullptr;
+            playback = false;
+            stopReplay();
+            return false;
+        }
+
+        if (m_baseTime != 0.f && chosen->baseTimeOffset == 0.f) {
+            chosen->baseTimeOffset = m_baseTime;
+            const uint32_t offsetQ = runtimeQuantTimeQ_(m_baseTime);
+            offsetAttemptTimesFast(*chosen, offsetQ);
+        }
+
+        const size_t idx = findLoadedAttemptIndexBySerial_(serial);
+        if (idx == SIZE_MAX) {
+            log::warn("[Bot] startReplayBest: loaded serial {} but index lookup failed", serial);
+            m_replayOwnerSerial = -1;
+            m_replayOwnerIndex = -1;
+            m_currentOwner = nullptr;
+            playback = false;
+            stopReplay();
+            return false;
+        }
+
+        m_replayOwnerSerial = serial;
+        m_replayOwnerIndex = idx;
+
+        buildCompositeFromAttempt(idx);
+
+        if (m_compOwnerIdx >= attempts.size() || attempts[m_compOwnerIdx].p1.empty()) {
+            log::warn("[Bot] startReplayBest: no data after filtering. m_compOwnerIdx={}", m_compOwnerIdx);
+            m_replayOwnerSerial = -1;
+            m_replayOwnerIndex = -1;
+            m_currentOwner = nullptr;
+            playback = false;
+            stopReplay();
+            return false;
+        }
+
+        restartLevel();
         return true;
     }
 
@@ -3477,13 +3899,17 @@ public:
         m_preloadOrder.clear();
         m_1PreloadedSoDontShowGhosts = false;
         forceHidePlayLayerGhostTextLabelOnly();
+        resetPlayerMirrorVisualOffsets_();
+        resetMirrorVisualState_();
     }
 
     void restartLevel() { 
         if (m_pl) {
+            block_attempt_push_on_recording_start = true;
             m_blockAttemptCount = true;
             m_pl->resetLevel(); 
             m_blockAttemptCount = false;
+            block_attempt_push_on_recording_start = false;
         }
     }
 
@@ -3493,17 +3919,17 @@ public:
     void setResetting(bool on) { resetting = on; }
     bool isdisablePlayerMove() const { return disablePlayerMove && m_setRealPlayerPosition && !m_freezePlayerXAtEnd; }
     void setdisablePlayerMove(bool on) { disablePlayerMove = on; }
-    bool shouldDisableHardStreakAddPoint() const { return !m_allowWavePointAdding && botActive && m_hasWavePointData; }
     void setAllowWavePointAdding(bool on ) { m_allowWavePointAdding = on; }
+    bool isAllowingWavePointAdding() const { return m_allowWavePointAdding; }
     bool skipHardStreakCheck() const { return m_skipHardStreakCheck; }
+    bool shouldOwnWaveTrailDuringPlayback() const { return botActive && m_hasWavePointData; }
 
     double getStartTime() {
         if (isPracticeMode() && m_pl->getLastCheckpoint()) {
             return m_pl->getLastCheckpoint()->m_gameState.m_levelTime;
         }
         else {
-            auto gl = GJBaseGameLayer::get();
-            if (gl) return gl->m_gameState.m_levelTime;
+            if (m_gl) return m_gl->m_gameState.m_levelTime;
         }
         return 0.f;
     }
@@ -3723,6 +4149,7 @@ public:
         m_noP2Check = true;
 
         // log::info("m_prevHadP2: {}", m_prevHadP2);
+        // log::info("m_levelFlipping: {}", m_gl->m_gameState.m_levelFlipping);
 
         if (!botActive) return;
         if (!m_prevHadP2) m_px2 = m_px;
@@ -4182,6 +4609,8 @@ public:
             return; 
         }
 
+        updateMirrorVisuals_();
+
         //double tStart = getTimeMs();
 
         //log::error("[postUpdate] playerx: {}", m_pl->m_player1->m_positionX);
@@ -4363,6 +4792,7 @@ public:
                 // Main candidate processing loop
                 for (size_t cidx = 0; cidx < candidateCount; ++cidx) {
                     const size_t ai = m_cachedCandidates[cidx];
+                    //log::info("cidx: {}", cidx);
                     //log::info("ai: {}", ai);
                     if (UNLIKELY(ai >= attempts.size())) continue;
 
@@ -4571,6 +5001,7 @@ private:
     bool m_useCustomExplodeSounds = false;
 
     PlayLayer* m_pl = nullptr;
+    GJBaseGameLayer* m_gl = nullptr;
 
     bool m_justDied = false;
     const Attempt* m_currentOwner = nullptr;
@@ -4625,6 +5056,7 @@ private:
     bool playback = false;
     bool m_playbackArmed = false;
     bool block_attempt_push_on_recording_start = false;
+    bool m_forceFreshRecordingAfterDelete = false;
 
     bool m_useInterpolation = true;
     bool m_animateRobot = true;
@@ -4798,6 +5230,8 @@ private:
     GhostContainer* m_trailContainer = nullptr;
     PlayerObjectPool m_playerObjectPool;
 
+    PracticePath m_attemptCatalogPracticePath;
+
     bool m_allowWorkThisTick = false;
     bool m_allowSetPlayerPos = false;
     bool m_allowSetPlayerClickState = false;
@@ -4805,6 +5239,374 @@ private:
     size_t minKeepDead = 50;
     uint64_t m_tickId = 0;
     uint64_t m_lastWorkTickId = 0;
+
+    cocos2d::CCPoint m_playerMirrorVisualOffsetP1 = {0.f, 0.f};
+    cocos2d::CCPoint m_playerMirrorVisualOffsetP2 = {0.f, 0.f};
+
+    float m_lastMirrorFlipT = 0.f;
+    int m_mirrorAnchorSide = 0; // 0: normal, 1: mirror
+    bool m_haveMirrorFlipSample = false;
+    bool m_haveMirrorAnchorSide = false;
+
+    int m_mirrorEndpointHoldFrames = 0;
+    int m_pendingMirrorAnchorSide = -1;
+    float m_lastMirrorVisualT = 0.f;
+
+    int m_playerMirrorAnchorSide = 0; // 0: normal, 1: mirror
+    float m_lastPlayerMirrorFlipT = 0.f;
+    bool m_havePlayerMirrorFlipSample = false;
+    bool m_havePlayerMirrorAnchorSide = false;
+
+    float mirrorFlipT_() const {
+        if (!m_gl) return 0.f;
+
+        float t = static_cast<float>(m_gl->m_gameState.m_levelFlipping);
+        if (!std::isfinite(t)) return 0.f;
+
+        return std::clamp(t, 0.f, 1.f);
+    }
+
+    void updatePlayerMirrorAnchorSide_(float t) {
+
+        if (t == 0.f) {
+            m_playerMirrorAnchorSide = 0;
+            m_havePlayerMirrorAnchorSide = true;
+        }
+        else if (t == 1.f) {
+            m_playerMirrorAnchorSide = 1;
+            m_havePlayerMirrorAnchorSide = true;
+        }
+        else if (!m_havePlayerMirrorAnchorSide) {
+            if (m_havePlayerMirrorFlipSample) {
+                if (t > m_lastPlayerMirrorFlipT) {
+                    m_playerMirrorAnchorSide = 0;
+                    m_havePlayerMirrorAnchorSide = true;
+                }
+                else if (t < m_lastPlayerMirrorFlipT) {
+                    m_playerMirrorAnchorSide = 1;
+                    m_havePlayerMirrorAnchorSide = true;
+                }
+            }
+
+            if (!m_havePlayerMirrorAnchorSide) {
+                m_playerMirrorAnchorSide = t < 0.5f ? 0 : 1;
+                m_havePlayerMirrorAnchorSide = true;
+            }
+        }
+
+        m_lastPlayerMirrorFlipT = t;
+        m_havePlayerMirrorFlipSample = true;
+    }
+
+    float playerMirrorProgress_(float rawT) const {
+        return m_playerMirrorAnchorSide == 0
+            ? rawT
+            : 1.f - rawT;
+    }
+
+    void updateMirrorAnchorSide_(float t) {
+        if (!m_haveMirrorAnchorSide) {
+            if (t == 0.f) {
+                m_mirrorAnchorSide = 0;
+                m_haveMirrorAnchorSide = true;
+            }
+            else if (t == 1.f) {
+                m_mirrorAnchorSide = 1;
+                m_haveMirrorAnchorSide = true;
+            }
+            else if (m_haveMirrorFlipSample) {
+                if (t > m_lastMirrorFlipT) {
+                    m_mirrorAnchorSide = 0;
+                    m_haveMirrorAnchorSide = true;
+                }
+                else if (t < m_lastMirrorFlipT) {
+                    m_mirrorAnchorSide = 1;
+                    m_haveMirrorAnchorSide = true;
+                }
+            }
+
+            if (!m_haveMirrorAnchorSide) {
+                m_mirrorAnchorSide = t < 0.5f ? 0 : 1;
+                m_haveMirrorAnchorSide = true;
+            }
+        }
+
+        m_lastMirrorFlipT = t;
+        m_haveMirrorFlipSample = true;
+    }
+
+    bool mirrorEndpointVisualHold_(float rawT, float& visualTOut) {
+        const bool atNormalEnd = rawT == 0.f;
+        const bool atMirrorEnd = rawT == 1.f;
+
+        if (!atNormalEnd && !atMirrorEnd) {
+            m_mirrorEndpointHoldFrames = 0;
+            m_pendingMirrorAnchorSide = -1;
+            return false;
+        }
+
+        const int endpointSide = atMirrorEnd ? 1 : 0;
+
+        if (m_pendingMirrorAnchorSide != endpointSide) {
+            m_pendingMirrorAnchorSide = endpointSide;
+            m_mirrorEndpointHoldFrames = 1;
+
+            visualTOut = m_mirrorAnchorSide == 0
+                ? static_cast<float>(endpointSide)
+                : 1.f - static_cast<float>(endpointSide);
+
+            m_lastMirrorVisualT = visualTOut;
+            return true;
+        }
+
+        if (m_mirrorEndpointHoldFrames > 0) {
+            --m_mirrorEndpointHoldFrames;
+
+            visualTOut = m_lastMirrorVisualT;
+            return true;
+        }
+
+        m_mirrorAnchorSide = endpointSide;
+        m_haveMirrorAnchorSide = true;
+        m_pendingMirrorAnchorSide = -1;
+
+        visualTOut = 0.f;
+        m_lastMirrorVisualT = 0.f;
+        return true;
+    }
+
+    float mirrorVisualT_(float rawT) const {
+        return m_mirrorAnchorSide == 0
+            ? rawT
+            : 1.f - rawT;
+    }
+
+    float screenCenterXInNode_(cocos2d::CCNode* node) const {
+        if (!node) return 0.f;
+
+        auto* director = cocos2d::CCDirector::sharedDirector();
+        if (!director) return 0.f;
+
+        const float screenCX = (director->m_fScreenLeft + director->m_fScreenRight) * 0.5f;
+        const float screenCY = (director->m_fScreenTop + director->m_fScreenBottom) * 0.5f;
+
+        return node->convertToNodeSpace({screenCX, screenCY}).x;
+    }
+
+    cocos2d::CCPoint mirrorDisplayPointInParentAtT_(
+        cocos2d::CCPoint p,
+        cocos2d::CCNode* parent,
+        float t
+    ) const {
+        if (!parent) return p;
+
+        t = std::clamp(t, 0.f, 1.f);
+
+        const float pivotX = screenCenterXInNode_(parent);
+
+        p.x = p.x * (1.f - 2.f * t) + 2.f * pivotX * t;
+        return p;
+    }
+
+    cocos2d::CCPoint parentVectorToPlayerLocal_(
+        PlayerObject* player,
+        cocos2d::CCPoint deltaParent
+    ) const {
+        if (!player) return {0.f, 0.f};
+
+        auto inv = cocos2d::CCAffineTransformInvert(player->nodeToParentTransform());
+
+        auto zero = cocos2d::CCPointApplyAffineTransform({0.f, 0.f}, inv);
+        auto moved = cocos2d::CCPointApplyAffineTransform(deltaParent, inv);
+
+        return {
+            moved.x - zero.x,
+            moved.y - zero.y
+        };
+    }
+
+    void applyMirrorVisualTransformToNode_(cocos2d::CCNode* node) {
+        if (!node) return;
+
+        auto* parent = node->getParent();
+        if (!parent) return;
+
+        const float rawT = mirrorFlipT_();
+        updateMirrorAnchorSide_(rawT);
+
+        float t = 0.f;
+
+        if (mirrorEndpointVisualHold_(rawT, t)) {
+            if (t == 0.f) {
+                node->setScaleX(1.f);
+                node->setPositionX(0.f);
+                return;
+            }
+        }
+        else {
+            t = mirrorVisualT_(rawT);
+            m_lastMirrorVisualT = t;
+        }
+
+        const float pivotX = screenCenterXInNode_(parent);
+        const float sx = 1.f - 2.f * t;
+
+        node->setScaleX(sx);
+        node->setPositionX(2.f * pivotX * t);
+    }
+
+    void resetMirrorVisualState_() {
+        m_lastMirrorFlipT = mirrorFlipT_();
+        m_mirrorAnchorSide = m_lastMirrorFlipT >= 0.5f ? 1 : 0;
+        m_haveMirrorFlipSample = true;
+        m_haveMirrorAnchorSide = true;
+
+        m_mirrorEndpointHoldFrames = 0;
+        m_pendingMirrorAnchorSide = -1;
+        m_lastMirrorVisualT = 0.f;
+
+        m_lastPlayerMirrorFlipT = m_lastMirrorFlipT;
+        m_playerMirrorAnchorSide = m_lastPlayerMirrorFlipT >= 0.5f ? 1 : 0;
+        m_havePlayerMirrorFlipSample = true;
+        m_havePlayerMirrorAnchorSide = true;
+
+        if (m_ghostRoot) {
+            m_ghostRoot->setScaleX(1.f);
+            m_ghostRoot->setPositionX(0.f);
+        }
+
+        resetPlayerMirrorVisualOffsets_();
+    }
+
+    void updateMirrorVisuals_() {
+        applyMirrorVisualTransformToNode_(m_ghostRoot);
+        updatePlayerMirrorVisuals_();
+    }
+
+    void applyPlayerVisualChildOffset_(
+        PlayerObject* player,
+        cocos2d::CCPoint wantedOffset
+    ) {
+        if (!player) return;
+
+        cocos2d::CCPoint* prevOffset = nullptr;
+
+        if (m_pl && player == m_pl->m_player1) {
+            prevOffset = &m_playerMirrorVisualOffsetP1;
+        }
+        else if (m_pl && player == m_pl->m_player2) {
+            prevOffset = &m_playerMirrorVisualOffsetP2;
+        }
+        else {
+            return;
+        }
+
+        const cocos2d::CCPoint delta = {
+            wantedOffset.x - prevOffset->x,
+            wantedOffset.y - prevOffset->y
+        };
+
+        if (std::abs(delta.x) <= 0.0001f && std::abs(delta.y) <= 0.0001f) {
+            return;
+        }
+
+        for (auto* child : player->getChildrenExt()) {
+            if (!child) continue;
+
+            if (player->m_waveTrail && child == player->m_waveTrail) {
+                continue;
+            }
+
+            const auto pos = child->getPosition();
+            child->setPosition({
+                pos.x + delta.x,
+                pos.y + delta.y
+            });
+        }
+
+        *prevOffset = wantedOffset;
+    }
+
+    cocos2d::CCPoint playerMirrorVisualOffsetLocal_(PlayerObject* player) {
+        if (!player) return {0.f, 0.f};
+
+        auto* parent = player->getParent();
+        if (!parent) return {0.f, 0.f};
+
+        const float rawT = mirrorFlipT_();
+        updatePlayerMirrorAnchorSide_(rawT);
+
+        if (rawT == 0.f || rawT == 1.f) {
+            return {0.f, 0.f};
+        }
+
+        float p = playerMirrorProgress_(rawT);
+        p = std::clamp(p, 0.f, 1.f);
+
+        if (p == 0.f) {
+            return {0.f, 0.f};
+        }
+
+        const auto rawParentPos = player->getPosition();
+
+        const auto targetParentPos = mirrorDisplayPointInParentAtT_(
+            rawParentPos,
+            parent,
+            p
+        );
+
+        const cocos2d::CCPoint deltaParent = {
+            targetParentPos.x - rawParentPos.x,
+            targetParentPos.y - rawParentPos.y
+        };
+
+        cocos2d::CCPoint offset = parentVectorToPlayerLocal_(
+            player,
+            deltaParent
+        );
+
+        if (p > 0.5f) {
+            offset.x = -offset.x;
+        }
+
+        return offset;
+    }
+
+    void updatePlayerMirrorVisuals_() {
+        if (!m_pl) return;
+
+        applyPlayerVisualChildOffset_(
+            m_pl->m_player1,
+            playerMirrorVisualOffsetLocal_(m_pl->m_player1)
+        );
+
+        if (m_pl->m_player2) {
+            applyPlayerVisualChildOffset_(
+                m_pl->m_player2,
+                playerMirrorVisualOffsetLocal_(m_pl->m_player2)
+            );
+        }
+    }
+
+    void resetPlayerMirrorVisualOffsets_() {
+        if (m_pl) {
+            applyPlayerVisualChildOffset_(m_pl->m_player1, {0.f, 0.f});
+
+            if (m_pl->m_player2) {
+                applyPlayerVisualChildOffset_(m_pl->m_player2, {0.f, 0.f});
+            }
+        }
+
+        m_playerMirrorVisualOffsetP1.x = 0.f;
+        m_playerMirrorVisualOffsetP1.y = 0.f;
+        m_playerMirrorVisualOffsetP2.x = 0.f;
+        m_playerMirrorVisualOffsetP2.y = 0.f;
+
+        m_lastPlayerMirrorFlipT = mirrorFlipT_();
+        m_playerMirrorAnchorSide = m_lastPlayerMirrorFlipT >= 0.5f ? 1 : 0;
+        m_havePlayerMirrorFlipSample = true;
+        m_havePlayerMirrorAnchorSide = true;
+    }
 
     // Cache the directory scan (updates when folder changes)
     std::vector<std::string> customSfx;
@@ -4889,8 +5691,284 @@ private:
         return std::fabs(attemptStartX - m_currentReplayStartPos.x) <= kReplayStartTolerance;
     }
 
+    bool refreshAttemptCatalogForCurrentLevel_(bool forceRescan, bool pushCurrentAttempt) {
+        if (!hasCurrentPersistenceTarget_()) {
+            clearAttemptCatalog_();
+            return false;
+        }
+
+        // write already-pushed recordedThisSession attempts so the catalog can see them from disk
+        flushPendingSaves_();
+
+        if (forceRescan) {
+            clearAttemptCatalog_();
+        }
+
+        return scanAttemptCatalogForLevel_(m_levelIDOnAttach);
+    }
+
+    static void prunePracticePathSerials_(
+        PracticePath& path,
+        std::unordered_set<int> const& deleteSet
+    ) {
+        if (deleteSet.empty()) return;
+
+        for (auto& session : path.sessions) {
+            session.allAttemptSerials.erase(
+                std::remove_if(
+                    session.allAttemptSerials.begin(),
+                    session.allAttemptSerials.end(),
+                    [&](int serial) {
+                        return deleteSet.count(serial) != 0;
+                    }
+                ),
+                session.allAttemptSerials.end()
+            );
+
+            session.segments.erase(
+                std::remove_if(
+                    session.segments.begin(),
+                    session.segments.end(),
+                    [&](PracticeSegment const& seg) {
+                        return deleteSet.count(seg.ownerSerial) != 0;
+                    }
+                ),
+                session.segments.end()
+            );
+
+            session.updateSpan();
+        }
+
+        path.sessions.erase(
+            std::remove_if(
+                path.sessions.begin(),
+                path.sessions.end(),
+                [](PracticeSession const& session) {
+                    return session.allAttemptSerials.empty() && session.segments.empty();
+                }
+            ),
+            path.sessions.end()
+        );
+
+        auto hasSession = [&](int id) {
+            if (id <= 0) return false;
+            return std::any_of(
+                path.sessions.begin(),
+                path.sessions.end(),
+                [&](PracticeSession const& session) {
+                    return session.sessionId == id;
+                }
+            );
+        };
+
+        if (path.sessions.empty()) {
+            path.activeSessionId = 0;
+            path.selectedSessionId = 0;
+            path.frozen = false;
+            return;
+        }
+
+        if (!hasSession(path.activeSessionId)) {
+            path.activeSessionId = path.sessions.front().sessionId;
+        }
+
+        if (!hasSession(path.selectedSessionId)) {
+            path.selectedSessionId = path.activeSessionId;
+        }
+    }
+
+    void clearRuntimeReplayStateAfterAttemptDeletion_() {
+        stopReplay();
+        stopPlayback();
+
+        playback = false;
+        m_playbackArmed = false;
+        m_pendingRearm = false;
+        botActive = false;
+
+        clearHeldInputs_();
+        applyBotSafety_(false);
+        setdisablePlayerMove(false);
+
+        tagCompositeOwnersHidden_(false);
+        forceHidePlayLayerGhostTextLabelOnly();
+
+        m_currentOwner = nullptr;
+        m_replayAttempt = nullptr;
+        m_replayOwnerSerial = -1;
+        m_replayOwnerIndex = -1;
+        m_activeOwnerSerial = -1;
+        m_practiceCompositeOwnerSerial = -1;
+
+        m_preloadedIndices.clear();
+        m_preloadedSet.clear();
+        m_primedIndices.clear();
+        m_wantToPrimeIndices.clear();
+        m_primedSet.clear();
+        m_wantToPrimeSet.clear();
+        m_attemptsPreloadedTotal = 0;
+
+        m_replayIdx1 = 0;
+        m_replayIdx2 = 0;
+        m_lastEmitIdx1 = m_lastEmitIdx2 = kNoEmitIdx;
+        m_lastPoseIdx1 = m_lastPoseIdx2 = kNoEmitIdx;
+
+        m_didInitialWarp = false;
+        m_freezePlayerXAtEnd = false;
+        m_freezePlayerX = 0.f;
+        m_freezePlayerY = 0.f;
+        m_playerPrevTeleported = false;
+
+        m_gridThreshold.clear();
+        m_cachedCandidates.clear();
+        m_cachedBinL = INT_MAX;
+        m_cachedBinR = INT_MIN;
+
+        invalidateAttemptPointerCaches_();
+        invalidatePrimedPlayerObjectRefs();
+    }
+
+    void removeDeletedAttemptsFromRuntime_(
+    std::unordered_set<int> const& deleteSet
+    ) {
+        if (deleteSet.empty()) return;
+
+        clearAllGhostNodes();
+
+        attempts.clear();
+        invalidateAttemptPointerCaches_();
+
+        m_loadedSerials.clear();
+
+        for (int serial : deleteSet) {
+            m_ghostTextCountedDeadSerials.erase(serial);
+        }
+
+        m_currentOwner = nullptr;
+        m_replayAttempt = nullptr;
+        m_replayOwnerSerial = -1;
+        m_replayOwnerIndex = -1;
+        m_activeOwnerSerial = -1;
+        m_practiceCompositeOwnerSerial = -1;
+
+        m_preloadedIndices.clear();
+        m_preloadedSet.clear();
+        m_primedIndices.clear();
+        m_wantToPrimeIndices.clear();
+        m_primedSet.clear();
+        m_wantToPrimeSet.clear();
+        m_attemptsPreloadedTotal = 0;
+
+        m_replayIdx1 = 0;
+        m_replayIdx2 = 0;
+        m_lastEmitIdx1 = m_lastEmitIdx2 = kNoEmitIdx;
+        m_lastPoseIdx1 = m_lastPoseIdx2 = kNoEmitIdx;
+
+        m_serialCacheDirty = true;
+        m_spans.clear();
+        m_grid.clear();
+        m_gridThreshold.clear();
+        m_cachedCandidates.clear();
+        m_cachedBinL = INT_MAX;
+        m_cachedBinR = INT_MIN;
+
+        invalidateAttemptCounts();
+        invalidatePrimedPlayerObjectRefs();
+        updateGhostVisibility();
+    }
+
+    bool deleteAttemptsBySerialSet_(
+        std::unordered_set<int> const& deleteSet
+    ) {
+        if (deleteSet.empty()) return false;
+        if (!hasCurrentPersistenceTarget_()) return false;
+
+        if (!refreshAttemptCatalogForCurrentLevel_(true, true)) {
+            return false;
+        }
+
+        bool foundAny = false;
+
+        for (auto const& entry : m_attemptCatalog) {
+            if (deleteSet.count(entry.serial) == 0) continue;
+
+            // Normal Attempt Manager can't delete practice attempts (that's different part)
+            if (entry.practiceAttempt) {
+                log::warn(
+                    "[APX delete] refusing normal-attempt delete because serial={} is practice",
+                    entry.serial
+                );
+                return false;
+            }
+
+            foundAny = true;
+        }
+
+        if (!foundAny) return false;
+        if (m_isSaving) return false;
+
+        m_isSaving = true;
+        struct SaveGuard {
+            bool& flag;
+            ~SaveGuard() { flag = false; }
+        } guard{ m_isSaving };
+
+        clearRuntimeReplayStateAfterAttemptDeletion_();
+
+        const auto path = fileForLevel_(m_levelIDOnAttach);
+
+        std::vector<Attempt> keptAttempts;
+        keptAttempts.reserve(m_attemptCatalog.size());
+
+        for (auto const& entry : m_attemptCatalog) {
+            if (deleteSet.count(entry.serial) != 0) {
+                continue;
+            }
+
+            Attempt loaded{};
+            bool usedLegacy = false;
+
+            if (!loadAPXAttemptByCatalogEntry(path, entry, loaded, &usedLegacy)) {
+                log::warn(
+                    "[APX delete] failed to lazy-load kept attempt serial={} from {}",
+                    entry.serial,
+                    geode::utils::string::pathToString(path)
+                );
+                return false;
+            }
+
+            loaded.persistedOnDisk = true;
+            loaded.recordedThisSession = false;
+            keptAttempts.push_back(std::move(loaded));
+        }
+
+        // Practice session deletion handled by Practice tab
+        PracticePath keptPath = m_checkpointMgr.getPath();
+
+        if (!saveAPXFileCurrent(path, keptAttempts, keptPath)) {
+            log::warn(
+                "[APX delete] failed to rewrite APX file after normal-attempt deletion: {}",
+                geode::utils::string::pathToString(path)
+            );
+            return false;
+        }
+
+        removeDeletedAttemptsFromRuntime_(deleteSet);
+
+        clearRuntimeReplayStateAfterAttemptDeletion_();
+
+        clearAttemptCatalog_();
+        scanAttemptCatalogForLevel_(m_levelIDOnAttach);
+
+        armFreshRecordingAfterDeleteRestart_();
+        restartLevel();
+
+        return true;
+    }
+
     void clearAttemptCatalog_() {
         m_attemptCatalog.clear();
+        m_attemptCatalogPracticePath.clear();
         m_attemptCatalogBySerial.clear();
         m_attemptCatalogLevelID = 0;
         m_attemptCatalogScanned = false;
@@ -4909,6 +5987,7 @@ private:
         }
 
         m_attemptCatalog = std::move(scan.attempts);
+        m_attemptCatalogPracticePath = std::move(scan.practicePath);
         m_attemptCatalogBySerial.reserve(m_attemptCatalog.size());
 
         for (size_t i = 0; i < m_attemptCatalog.size(); ++i) {
@@ -5056,6 +6135,42 @@ private:
         }
 
         return result;
+    }
+
+    Attempt* ensurePracticeReplayOwnerLoaded_(
+        int serial,
+        char const* reason
+    ) {
+        if (serial <= 0) return nullptr;
+
+        Attempt* owner = ensureAttemptLoadedBySerial_(serial, false);
+
+        if (!owner) {
+            log::warn(
+                "[Bot] practice replay missing owner serial={} reason={}",
+                serial,
+                reason ? reason : "unknown"
+            );
+            return nullptr;
+        }
+
+        if (owner->p1.empty()) {
+            log::warn(
+                "[Bot] practice replay owner serial={} has no P1 frames reason={}",
+                serial,
+                reason ? reason : "unknown"
+            );
+            return nullptr;
+        }
+
+        // Old start pos attempts will have timestep 0.f but new ones have the correct timestep, so offset them all (oopsies this might be slow)
+        if (m_baseTime != 0.f && owner->baseTimeOffset == 0.f) {
+            owner->baseTimeOffset = m_baseTime;
+            const uint32_t offsetQ = runtimeQuantTimeQ_(m_baseTime);
+            offsetAttemptTimesFast(*owner, offsetQ);
+        }
+
+        return owner;
     }
 
     void rebuildSerialCache_() const {
@@ -7372,9 +8487,18 @@ private:
     }
 
     inline bool explicitWavePointNear(const std::vector<Frame>& v, size_t i) {
-        if (i < v.size() && v[i].wavePointThisFrame) return true;
-        if (i > 0 && v[i-1].wavePointThisFrame) return true;
-        if (i+1 < v.size() && v[i+1].wavePointThisFrame) return true;
+        if (i < v.size() && v[i].wavePointThisFrame) {
+            //log::info("conflict this frame");
+            return true;
+        }
+        if (i > 0 && v[i-1].wavePointThisFrame) {
+            //log::info("conflict previous frame");
+            return true;
+        }
+        if (i+1 < v.size() && v[i+1].wavePointThisFrame) {
+            //log::info("conflict next frame");
+            return true;
+        }
 
         return false;
     }
@@ -7413,6 +8537,9 @@ private:
             startIdx = 0;
         }
 
+        // Starts at 3 so loop over all frames 0, 1, 2, 3
+        if (startIdx == 3) startIdx = 0;
+
         bool& botPrevHold = isP1 ? botPrevHold1 : botPrevHold2;
         bool& botPrevHoldL = isP1 ? botPrevHoldL1 : botPrevHoldL2;
         bool& botPrevHoldR = isP1 ? botPrevHoldR1 : botPrevHoldR2;
@@ -7422,6 +8549,7 @@ private:
         for (size_t poseI = startIdx; poseI <= endIdx; ++poseI) {
             // Click state
             const size_t clickI = std::min(v.size() - 1, poseI);
+            //log::info("poseI: {}", poseI);
 
             const Frame& F = v[clickI];
             const Frame& C = v[poseI];
@@ -7526,13 +8654,13 @@ private:
 
                         const bool directionChanged = movementDir != storedMovementDir;
 
-                        // if (directionChanged) log::info("movement dir: {}, stored dir: {}, x {}, pewvx {}", (int)movementDir, (int)storedMovementDir, ix, prevX);
+                        //if (directionChanged) log::info("movement dir: {}, stored dir: {}, x {}, pewvx {}", (int)movementDir, (int)storedMovementDir, ix, prevX);
 
                         storedMovementDir = movementDir;
 
                         const bool syntheticPoint = directionChanged && !explicitWavePointNear(v, poseI);
 
-                        // log::info("exp: {}, change: {}, synth: {}", explicitPoint, directionChanged, syntheticPoint);
+                        //log::info("exp: {}, change: {}, synth: {}", explicitPoint, directionChanged, syntheticPoint);
 
                         shouldAddWavePoint = canAddWavePoint && (explicitPoint || syntheticPoint);
                     }
@@ -7543,7 +8671,7 @@ private:
                         cocos2d::CCPoint raw = cocos2d::CCPoint(ix, iy);
 
                         if (auto snapped = snapWavePointSimple_(raw, isMini, isP1)) {
-                            // log::info("point add");
+                            //log::info("point add");
                             addedWavePoint = waveTrailAddPointToPlayer(
                                 p->m_waveTrail,
                                 *snapped,
@@ -7585,8 +8713,7 @@ private:
                     if (std::fabs(iy - prevY) > kWaveTeleportedTolerance*8) m_speedUpCameraAnimationAfterTeleportForNFrames = 5;
 
                     if (m_speedUpCameraAnimationAfterTeleportForNFrames > 0) {
-                        auto gl = GJBaseGameLayer::get();
-                        gl->updateCamera(20.0f);
+                        if (m_gl) m_gl->updateCamera(20.0f);
                         m_speedUpCameraAnimationAfterTeleportForNFrames--;
                     }
 

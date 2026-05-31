@@ -97,7 +97,7 @@ private:
 
     void onReplayBest(cocos2d::CCObject*);
     void onReplayPractice(cocos2d::CCObject*);
-    void onDeleteSaveFile(CCObject*);
+    void onOpenAttemptManager(cocos2d::CCObject*);
     void onToggleRecording(cocos2d::CCObject*);
     void onToggleInterpolation(cocos2d::CCObject*);
     void onToggleRandomIcons(cocos2d::CCObject*);

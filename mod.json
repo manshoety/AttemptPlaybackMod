@@ -8,12 +8,13 @@
   },
   "id": "manshoety.attemptplayback",
   "name": "Attempt Playback",
-  "version": "v1.4.56",
+  "version": "v1.4.57",
   "developer": "manshoety",
   "description": "Allows you to see all past attempts as ghosts",
   "dependencies": {
     "geode.node-ids": { "version": ">=v1.23.0", "required": true },
-    "legowiifun.cheat_api": { "version": ">=1.2.3", "required": true }
+    "legowiifun.cheat_api": { "version": ">=1.2.3", "required": true },
+    "alphalaneous.alphas-ui-pack": { "version": ">=v1.1.1", "required": true }
   },
   "tags": [
     "gameplay",
