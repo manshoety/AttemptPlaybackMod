@@ -5555,21 +5555,19 @@ private:
             p
         );
 
-        const cocos2d::CCPoint deltaParent = {
+        cocos2d::CCPoint deltaParent = {
             targetParentPos.x - rawParentPos.x,
-            targetParentPos.y - rawParentPos.y
+            0.f
         };
 
-        cocos2d::CCPoint offset = parentVectorToPlayerLocal_(
+        if (p > 0.5f) {
+            deltaParent.x = -deltaParent.x;
+        }
+
+        return parentVectorToPlayerLocal_(
             player,
             deltaParent
         );
-
-        if (p > 0.5f) {
-            offset.x = -offset.x;
-        }
-
-        return offset;
     }
 
     void updatePlayerMirrorVisuals_() {
@@ -8610,6 +8608,13 @@ private:
                         prevX = p->getPositionX();
                     }
 
+                    float fliptime = mirrorFlipT_();
+                    bool blockWaveAddPoint = false;
+                    if (isWave && p->m_waveTrail && fliptime != 1 && fliptime != 0) {
+                        p->m_waveTrail->reset();
+                        blockWaveAddPoint = true;
+                    }
+
                     /*
                     log::info(
                         "[replay P{}] owner={} ia={} i={} last={} replay={} size={} t={} y={} exp={}",
@@ -8640,7 +8645,7 @@ private:
 
                     const bool explicitPoint = a.wavePointThisFrame;
 
-                    const bool canAddWavePoint = isWave && p->m_waveTrail;
+                    const bool canAddWavePoint = isWave && p->m_waveTrail && !blockWaveAddPoint;
 
                     bool shouldAddWavePoint = false;
 

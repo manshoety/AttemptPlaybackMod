@@ -309,6 +309,9 @@ private:
 
     std::string sortRecentText_() const;
     std::string sortBestText_() const;
+
+    void cancelTopControlsRefresh_();
+    void clearManageLayer_(cocos2d::CCNode* layer);
 };
 
 cocos2d::CCLayer* CreateAttemptManagerPopup();

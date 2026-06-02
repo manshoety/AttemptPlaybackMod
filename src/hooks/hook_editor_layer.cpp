@@ -8,7 +8,6 @@ using namespace geode::prelude;
 
 class $modify(MyLevelEditorLayer, LevelEditorLayer) {
     bool init(GJGameLevel* level, bool noUI) {
-        if (!LevelEditorLayer::init(level, noUI)) return false;
         auto& G = Ghosts::I();
         G.updateModEnabled();
 
@@ -17,6 +16,7 @@ class $modify(MyLevelEditorLayer, LevelEditorLayer) {
             G.saveNewAttemptsForCurrentLevel();
             G.onQuit();
         }
+        if (!LevelEditorLayer::init(level, noUI)) return false;
         return true;
     }
 };

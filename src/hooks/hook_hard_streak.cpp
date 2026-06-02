@@ -20,12 +20,12 @@ class $modify(HardStreakHook, HardStreak) {
         bool isP1Trail = false;
         bool isP2Trail = false;
 
-        if (G.isModEnabled()) {
-            if (auto* base = GJBaseGameLayer::get()) {
-                if (auto* pl = typeinfo_cast<PlayLayer*>(base)) {
-                    isP1Trail = pl->m_player1 && this == pl->m_player1->m_waveTrail;
-                    isP2Trail = pl->m_player2 && this == pl->m_player2->m_waveTrail;
-                }
+        if (!LevelEditorLayer::get() && G.hasModAttachedToLevel()) {
+            auto* pl = G.getPlayLayer();
+
+            if (pl && G.shouldHandlePlayLayer(pl)) {
+                isP1Trail = pl->m_player1 && this == pl->m_player1->m_waveTrail;
+                isP2Trail = pl->m_player2 && this == pl->m_player2->m_waveTrail;
             }
         }
         

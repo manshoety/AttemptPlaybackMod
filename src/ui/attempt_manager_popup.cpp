@@ -252,6 +252,24 @@ namespace {
         item->setSizeMult(0.65f);
         return item;
     }
+
+    void parkMenuItem_(CCMenuItem* item) {
+        if (!item) return;
+
+        item->setVisible(false);
+        item->setEnabled(false);
+        item->setTag(-1);
+        item->setPosition({ -10000.f, -10000.f });
+    }
+
+    void showMenuItem_(CCMenuItem* item, float x, float y, int tag) {
+        if (!item) return;
+
+        item->setPosition({ x, y });
+        item->setTag(tag);
+        item->setVisible(true);
+        item->setEnabled(true);
+    }
 }
 
 AttemptManagerPopup* AttemptManagerPopup::create() {
@@ -285,11 +303,21 @@ bool AttemptManagerPopup::init(float width, float height) {
     return true;
 }
 
+void AttemptManagerPopup::cancelTopControlsRefresh_() {
+    if (!m_topControlsRefreshQueued) return;
+
+    this->unschedule(schedule_selector(AttemptManagerPopup::doQueuedTopControlsRefresh_));
+    m_topControlsRefreshQueued = false;
+}
+
+void AttemptManagerPopup::clearManageLayer_(CCNode* layer) {
+    if (!layer) return;
+
+    layer->removeAllChildrenWithCleanup(true);
+}
+
 void AttemptManagerPopup::onClose(CCObject* sender) {
-    if (m_topControlsRefreshQueued) {
-        this->unschedule(schedule_selector(AttemptManagerPopup::doQueuedTopControlsRefresh_));
-        m_topControlsRefreshQueued = false;
-    }
+    cancelTopControlsRefresh_();
 
     m_rowBgBySerial.clear();
     m_confirmOpen = false;
@@ -366,7 +394,7 @@ void AttemptManagerPopup::rebuild_() {
 
     m_tabMenu = CCMenu::create();
     m_tabMenu->setPosition({0.f, 0.f});
-    m_root->addChild(m_tabMenu);
+    m_root->addChild(m_tabMenu, 80);
 
     m_tabNormalBtn = makeTabButton_(this, menu_selector(AttemptManagerPopup::onTabButton), "Normal", static_cast<int>(Tab::Manage), -225.f, 122.f, 132.f, 30.f, "tab-manage"_spr);
     m_tabPracticeBtn = makeTabButton_(this, menu_selector(AttemptManagerPopup::onTabButton), "Practice", static_cast<int>(Tab::Practice), -75.f, 122.f, 132.f, 30.f, "tab-practice"_spr);
@@ -381,7 +409,7 @@ void AttemptManagerPopup::rebuild_() {
 
     m_bodyLayer = CCNode::create();
     m_bodyLayer->setPosition({0.f, 0.f});
-    m_root->addChild(m_bodyLayer);
+    m_root->addChild(m_bodyLayer, 1);
 
     rebuildBody_();
 
@@ -426,6 +454,8 @@ void AttemptManagerPopup::scaleUIForThatOneTabletUser(float designWidth, float d
 void AttemptManagerPopup::rebuildBody_() {
     if (!m_bodyLayer) return;
 
+    cancelTopControlsRefresh_();
+
     if (!m_manageNormalLayer) {
         m_manageNormalLayer = CCNode::create();
         m_bodyLayer->addChild(m_manageNormalLayer);
@@ -448,12 +478,29 @@ void AttemptManagerPopup::rebuildBody_() {
         rebuildBlankTab_(m_importLayer, "Import Attempts");
     }
 
-    m_manageNormalLayer->setVisible(m_tab == Tab::Manage);
-    m_managePracticeLayer->setVisible(m_tab == Tab::Practice);
-    m_exportLayer->setVisible(m_tab == Tab::Export);
-    m_importLayer->setVisible(m_tab == Tab::Import);
+    const bool showNormal = m_tab == Tab::Manage;
+    const bool showPractice = m_tab == Tab::Practice;
+    const bool showExport = m_tab == Tab::Export;
+    const bool showImport = m_tab == Tab::Import;
 
-    if (m_tab == Tab::Manage || m_tab == Tab::Practice) {
+    if (!showNormal) {
+        clearManageLayer_(m_manageNormalLayer);
+    }
+
+    if (!showPractice) {
+        clearManageLayer_(m_managePracticeLayer);
+    }
+
+    if (!showNormal && !showPractice) {
+        resetPageWidgets_();
+    }
+
+    m_manageNormalLayer->setVisible(showNormal);
+    m_managePracticeLayer->setVisible(showPractice);
+    m_exportLayer->setVisible(showExport);
+    m_importLayer->setVisible(showImport);
+
+    if (showNormal || showPractice) {
         rebuildManagePage_();
     }
 
@@ -523,7 +570,7 @@ void AttemptManagerPopup::rebuildManagePage_() {
 
     m_sortMenu = CCMenu::create();
     m_sortMenu->setPosition({0.f, 0.f});
-    layer->addChild(m_sortMenu);
+    layer->addChild(m_sortMenu, 30);
 
     m_sortRecentBtn = makeSmallTextButton_(
         this,
@@ -726,8 +773,8 @@ void AttemptManagerPopup::setupRowsScroll_(CCNode* layer) {
     m_rowsScrollLayer->setVerticalScrollForHorizontal(true);
 
     m_rowsScrollLayer->setDraggingEnabled(true);
-    m_rowsScrollLayer->blockTouchBehind(true);
-    m_rowsScrollLayer->allowEmptyClickThrough(false);
+    m_rowsScrollLayer->blockTouchBehind(false);
+    m_rowsScrollLayer->allowEmptyClickThrough(true);
 
     m_rowsScrollLayer->setScrollDelta(kRowH);
     m_rowsScrollLayer->setOvershoot(16.f);
@@ -786,6 +833,9 @@ void AttemptManagerPopup::setRowsScrollEnabled_(bool enabled) {
     m_rowsScrollLayer->setVerticalScrollWheel(enabled);
     m_rowsScrollLayer->setDraggingEnabled(enabled);
 
+    m_rowsScrollLayer->blockTouchBehind(enabled);
+    m_rowsScrollLayer->allowEmptyClickThrough(!enabled);
+
     if (!enabled) {
         m_rowsScrollLayer->setScrollY(0.f, false);
     }
@@ -805,18 +855,33 @@ void AttemptManagerPopup::setRowSlotVisible_(RowSlot& slot, bool visible) {
     if (slot.durationLabel) slot.durationLabel->setVisible(visible);
 
     if (slot.checkbox) {
-        slot.checkbox->setVisible(visible);
-        slot.checkbox->setEnabled(visible);
+        if (visible) {
+            slot.checkbox->setVisible(true);
+            slot.checkbox->setEnabled(true);
+        }
+        else {
+            parkMenuItem_(slot.checkbox);
+        }
     }
 
     if (slot.trash) {
-        slot.trash->setVisible(visible);
-        slot.trash->setEnabled(visible);
+        if (visible) {
+            slot.trash->setVisible(true);
+            slot.trash->setEnabled(true);
+        }
+        else {
+            parkMenuItem_(slot.trash);
+        }
     }
 
     if (slot.info) {
-        slot.info->setVisible(visible);
-        slot.info->setEnabled(visible);
+        if (visible) {
+            slot.info->setVisible(true);
+            slot.info->setEnabled(true);
+        }
+        else {
+            parkMenuItem_(slot.info);
+        }
     }
 }
 
@@ -866,9 +931,9 @@ void AttemptManagerPopup::updateAttemptRowSlot_(RowSlot& slot, APXAttemptDiskInf
     slot.bg->setColor(selected ? ccColor3B{5, 5, 5} : ccColor3B{0, 0, 0});
     slot.bg->setOpacity(selected ? 126 : 64);
 
-    slot.checkbox->setPosition({ kRowsCheckboxX, y });
-    slot.checkbox->setTag(a.serial);
+    showMenuItem_(slot.checkbox, kRowsCheckboxX, y, a.serial);
     slot.checkbox->toggle(selected);
+    showMenuItem_(slot.trash, kRowsDeleteX, y, a.serial);
 
     slot.startLabel->setPosition({ kRowsStartPercentX, y });
     slot.startLabel->setString(formatPercent_(a.startPercent).c_str());
@@ -878,9 +943,6 @@ void AttemptManagerPopup::updateAttemptRowSlot_(RowSlot& slot, APXAttemptDiskInf
 
     slot.durationLabel->setPosition({ kRowsDurationX, y });
     slot.durationLabel->setString(formatTime_(a.endTime - a.baseTimeOffset).c_str());
-
-    slot.trash->setPosition({ kRowsDeleteX, y });
-    slot.trash->setTag(a.serial);
 
     setRowSlotVisible_(slot, true);
 
@@ -896,10 +958,8 @@ void AttemptManagerPopup::updateBlockedPracticeRowSlot_(RowSlot& slot, PracticeS
     slot.bg->setColor({120, 20, 20});
     slot.bg->setOpacity(122);
 
-    slot.checkbox->setVisible(false);
-    slot.checkbox->setEnabled(false);
-    slot.trash->setVisible(false);
-    slot.trash->setEnabled(false);
+    parkMenuItem_(slot.checkbox);
+    parkMenuItem_(slot.trash);
 
     slot.startLabel->setVisible(true);
     slot.startLabel->setPosition({ kRowsStartPercentX, y });
@@ -918,10 +978,7 @@ void AttemptManagerPopup::updateBlockedPracticeRowSlot_(RowSlot& slot, PracticeS
     slot.durationLabel->setString("full session only");
     slot.durationLabel->setColor({255, 185, 185});
 
-    slot.info->setVisible(true);
-    slot.info->setEnabled(true);
-    slot.info->setPosition({ kRowsDeleteX, y });
-    slot.info->setTag(session.sessionId);
+    showMenuItem_(slot.info, kRowsDeleteX, y, session.sessionId);
 
     slot.bg->setVisible(true);
 }
@@ -933,18 +990,33 @@ void AttemptManagerPopup::setListSlotVisible_(ListSlot& slot, bool visible) {
     if (slot.bestLabel) slot.bestLabel->setVisible(visible);
 
     if (slot.button) {
-        slot.button->setVisible(visible);
-        slot.button->setEnabled(visible);
+        if (visible) {
+            slot.button->setVisible(true);
+            slot.button->setEnabled(true);
+        }
+        else {
+            parkMenuItem_(slot.button);
+        }
     }
 
     if (slot.trash) {
-        slot.trash->setVisible(visible);
-        slot.trash->setEnabled(visible);
+        if (visible) {
+            slot.trash->setVisible(true);
+            slot.trash->setEnabled(true);
+        }
+        else {
+            parkMenuItem_(slot.trash);
+        }
     }
 
     if (slot.info) {
-        slot.info->setVisible(visible);
-        slot.info->setEnabled(visible);
+        if (visible) {
+            slot.info->setVisible(true);
+            slot.info->setEnabled(true);
+        }
+        else {
+            parkMenuItem_(slot.info);
+        }
     }
 }
 
@@ -1012,8 +1084,12 @@ void AttemptManagerPopup::updateNormalRunSlot_(ListSlot& slot, int itemIndex, in
     slot.nameLabel->setPosition({ 22.f, y });
     slot.countLabel->setPosition({ 160.f, y });
     slot.bestLabel->setPosition({ 255.f, y });
-    slot.button->setPosition({ kListRowHitX, y });
-    slot.button->setTag(isAll ? -1 : (group ? group->id : -2));
+    showMenuItem_(
+        slot.button,
+        kListRowHitX,
+        y,
+        isAll ? -1 : (group ? group->id : -2)
+    );
 
     if (isAll) {
         slot.nameLabel->setString("All Attempts");
@@ -1037,15 +1113,10 @@ void AttemptManagerPopup::updateNormalRunSlot_(ListSlot& slot, int itemIndex, in
     slot.info->setEnabled(false);
 
     if (isAll || !group) {
-        slot.trash->setVisible(false);
-        slot.trash->setEnabled(false);
-        slot.trash->setTag(-1);
+        parkMenuItem_(slot.trash);
     }
     else {
-        slot.trash->setVisible(true);
-        slot.trash->setEnabled(true);
-        slot.trash->setPosition({ kRowsDeleteX, y });
-        slot.trash->setTag(group->id);
+        showMenuItem_(slot.trash, kRowsDeleteX, y, group->id);
     }
 }
 
@@ -1068,18 +1139,13 @@ void AttemptManagerPopup::updatePracticeSessionSlot_(ListSlot& slot, int itemInd
     slot.bestLabel->setPosition({ 255.f, y });
     slot.bestLabel->setString(practiceSessionBestText_(session).c_str());
 
-    slot.button->setPosition({ kListRowHitX, y });
-    slot.button->setTag(session.sessionId);
+    showMenuItem_(slot.button, kListRowHitX, y, session.sessionId);
 
     setListSlotVisible_(slot, true);
 
-    slot.trash->setVisible(true);
-    slot.trash->setEnabled(true);
-    slot.trash->setPosition({ kRowsDeleteX, y });
-    slot.trash->setTag(session.sessionId);
+    showMenuItem_(slot.trash, kRowsDeleteX, y, session.sessionId);
 
-    slot.info->setVisible(false);
-    slot.info->setEnabled(false);
+    parkMenuItem_(slot.info);
 }
 
 void AttemptManagerPopup::rebuildRows_() {
@@ -1681,10 +1747,15 @@ const APXAttemptDiskInfo* AttemptManagerPopup::findAnyAttempt_(int serial) const
 void AttemptManagerPopup::setTab_(Tab tab) {
     if (m_tab == tab) return;
 
+    cancelTopControlsRefresh_();
+
     m_tab = tab;
     m_page = 0;
     m_selectedSerials.clear();
     m_selectedSerial = -1;
+    m_destructiveActionBusy = false;
+    m_confirmOpen = false;
+
     applyCurrentFilter_();
     applySort_();
     rebuildBody_();
