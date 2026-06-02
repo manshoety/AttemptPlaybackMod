@@ -205,6 +205,26 @@ class $modify(MyPlayerObject, PlayerObject) {
         PlayerObject::placeStreakPoint();
     }
 
+    // Wave Trail Drag Fix mod forces me to put the wave point update in here (after the mod runs it's fix)
+    void updateRotation(float dt) {
+        PlayerObject::updateRotation(dt);
+        auto& G = Ghosts::I();
+        if (G.isModEnabled()) {
+            if (auto* pl = typeinfo_cast<PlayLayer*>(this->m_gameLayer)) {
+                if (G.shouldHandlePlayLayer(pl)) {
+                    if (this == pl->m_player1) {
+                        G.recordUpdate(/*isPlayer1*/true, true);
+                        return;
+                    }
+                    else if (this == pl->m_player2) {
+                        G.recordUpdate(/*isPlayer1*/false, true);
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     
 
     //void flipGravity(bool p0, bool p1) {

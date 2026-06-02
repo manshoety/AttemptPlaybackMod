@@ -31,9 +31,13 @@ class $modify(HardStreakHook, HardStreak) {
         
         // Need to let Wave Trail Drag Fix mod place points
         if ((isP1Trail || isP2Trail) && !G.skipHardStreakCheck()) {
+            //log::info("point");
             if (isP1Trail) G.markWavePointThisFrameP1();
             else G.markWavePointThisFrameP2();
         }
+        //else {
+        //    log::info("No point");
+        //}
 
         HardStreak::addPoint(point);
     }

@@ -1,3 +1,7 @@
+# 1.4.58
+- FIX: Ghost wave trail when wave trail drag fix mod is enabled
+- FIX: Replay after deleting most recent attempt in saved levels
+- FIX: Mirror portal bug relating to the player during recording
 # 1.4.57
 - Added a whole new UI to delete specific attempts (exporting/importing coming soon)
 - Stuff to try fixing the mirror portal replay wackiness (still WIP)

@@ -301,12 +301,16 @@ public:
     float getStartPosTolerance() const { return kReplayStartTolerance; }
 
     const std::vector<APXAttemptDiskInfo>& getAttemptCatalog() {
-        if (m_levelIDOnAttach != 0) scanAttemptCatalogForLevel_(m_levelIDOnAttach);
+        if (hasCurrentPersistenceTarget_()) {
+            scanAttemptCatalogForLevel_(m_levelIDOnAttach);
+        }
         return m_attemptCatalog;
     }
 
     const PracticePath& getPracticePathCatalog() {
-        if (m_levelIDOnAttach != 0) scanAttemptCatalogForLevel_(m_levelIDOnAttach);
+        if (hasCurrentPersistenceTarget_()) {
+            scanAttemptCatalogForLevel_(m_levelIDOnAttach);
+        }
         return m_attemptCatalogPracticePath;
     }
 
@@ -2684,6 +2688,8 @@ public:
 
         if (m_pl && m_pl->m_level) {
             m_levelIDOnAttach = m_pl->m_level->m_levelID;
+            refreshLevelName(m_levelIDOnAttach);
+
             LoadFilter f;
             loadFromDisk_(m_levelIDOnAttach, f);
         }
@@ -4391,14 +4397,15 @@ public:
         m_allowSetPlayerClickState = false;
     }
 
-    void recordUpdate(bool isPlayer1) {
+    void recordUpdate(bool isPlayer1, bool isPostWavePointUpdate=false) {
         // if (!shouldRunWorkThisTick_()) return;
         if (!m_pl || m_is_quitting) return;
         const bool isPractice = m_pl->m_isPracticeMode;
         if (isPractice && !recordInPractice) return;
         if (!recording || recordingBlocked) return;
 
-        recordCurrentFrame_(isPlayer1);
+        if (isPostWavePointUpdate) insertWaveStateIntoLastFrame(isPlayer1);
+        else recordCurrentFrame_(isPlayer1);
     }
 
     bool removeReverseOrDuplicateFrames(std::vector<Frame>& frames, double t) {
@@ -4411,6 +4418,27 @@ public:
         if (!frames.empty() && t == frames.back().t) return false;
 
         return true;
+    }
+
+    void insertWaveStateIntoLastFrame(bool isPlayer1) {
+        if (isPlayer1) {
+            if (m_current.p1.empty()) {
+                p1WavePointThisFrame = false;
+                return;
+            }
+
+            m_current.p1.back().wavePointThisFrame = p1WavePointThisFrame;
+            p1WavePointThisFrame = false;
+            return;
+        }
+
+        if (m_current.p2.empty()) {
+            p2WavePointThisFrame = false;
+            return;
+        }
+
+        m_current.p2.back().wavePointThisFrame = p2WavePointThisFrame;
+        p2WavePointThisFrame = false;
     }
     
 
@@ -4435,7 +4463,8 @@ public:
             f.upsideDown = p1->m_isUpsideDown;
             f.isDashing = p1->m_isDashing;
             f.isVisible = p1->isVisible();
-            f.wavePointThisFrame = p1WavePointThisFrame;
+            //f.wavePointThisFrame = p1WavePointThisFrame;
+            //log::info("wavePointThisFrame: {}", p1WavePointThisFrame);
             /*
            log::info(
                 "[record P1] serial={} idx={} t={} y={} exp={}",
@@ -4463,7 +4492,7 @@ public:
             m_lastRecordedX = static_cast<float>(f.x);
             const float currentPercent = m_pl->getCurrentPercent();
             if (currentPercent > m_current.endPercent) m_current.endPercent = currentPercent;
-            p1WavePointThisFrame = false;
+            // p1WavePointThisFrame = false;
         }
         
         if (m_pl->m_player2 && m_prevHadP2 && !isPlayer1) {
@@ -4481,7 +4510,7 @@ public:
             f.upsideDown = p2->m_isUpsideDown;
             f.isDashing = p2->m_isDashing;
             f.isVisible = p2->isVisible();
-            f.wavePointThisFrame = p2WavePointThisFrame;
+            //f.wavePointThisFrame = p2WavePointThisFrame;
 
             // Moved to runtime to reduce recording delay
             //if (!m_current.p2.empty()) {
@@ -4496,7 +4525,7 @@ public:
             f.holdL = p2LHold;
             f.holdR = p2RHold;
             m_current.p2.push_back(f);
-            p2WavePointThisFrame = false;
+            // p2WavePointThisFrame = false;
         }
     }
 
@@ -5145,6 +5174,7 @@ private:
     std::unordered_map<int, size_t> m_attemptCatalogBySerial;
     int m_attemptCatalogLevelID = 0;
     bool m_attemptCatalogScanned = false;
+    std::string m_attemptCatalogCustomSaveId;
 
     bool m_allow_platformer = false;
 
@@ -5479,6 +5509,7 @@ private:
     }
 
     void updateMirrorVisuals_() {
+        if (!botActive) return;
         applyMirrorVisualTransformToNode_(m_ghostRoot);
         updatePlayerMirrorVisuals_();
     }
@@ -5969,11 +6000,16 @@ private:
         m_attemptCatalogPracticePath.clear();
         m_attemptCatalogBySerial.clear();
         m_attemptCatalogLevelID = 0;
+        m_attemptCatalogCustomSaveId.clear();
         m_attemptCatalogScanned = false;
     }
 
     bool scanAttemptCatalogForLevel_(int levelID) {
-        if (m_attemptCatalogScanned && m_attemptCatalogLevelID == levelID) {
+        if (
+            m_attemptCatalogScanned &&
+            m_attemptCatalogLevelID == levelID &&
+            m_attemptCatalogCustomSaveId == m_customSaveId
+        ) {
             return true;
         }
 
@@ -5997,6 +6033,7 @@ private:
         }
 
         m_attemptCatalogLevelID = levelID;
+        m_attemptCatalogCustomSaveId = m_customSaveId;
         m_attemptCatalogScanned = true;
         return true;
     }
@@ -6098,7 +6135,7 @@ private:
             return already;
         }
 
-        if (!m_pl || m_levelIDOnAttach == 0) return nullptr;
+        if (!m_pl || !hasCurrentPersistenceTarget_()) return nullptr;
 
         const auto path = fileForLevel_(m_levelIDOnAttach);
 
@@ -7035,6 +7072,7 @@ private:
                 pc.isDashing = false;
                 
                 // hardResetWaveTrail(a.g1);
+                a.g1->m_waveTrail->reset();
                 a.trailactive1 = false;
                 forceShowPlayerVisuals(a.g1);
             }
@@ -7080,6 +7118,7 @@ private:
                 pc2.isDashing = false;
                 
                 // hardResetWaveTrail(a.g2);
+                a.g2->m_waveTrail->reset();
                 a.trailactive2 = false;
                 forceShowPlayerVisuals(a.g2);
             }
@@ -7460,6 +7499,7 @@ private:
                     advanceFromPrevIdx_(frames, frameIdx, ghostTime, /*mustRewind=*/false);
                 } else {
                     frameIdx = idxForTimeBounded_(frames, accTime, ghostTime);
+                    if (ghost->m_waveTrail) ghost->m_waveTrail->reset();
                 }
                 frameIdx = std::min(frameIdx+2, frames.size()-1);
                 drawIdx = std::min(frameIdx, lastIdx);
@@ -7783,6 +7823,7 @@ private:
                         trail->setOpacity(0);
                         trailActive = false;
                     } else if (trail) {
+                        trail->reset();
                         trail->setVisible(false);
                         trail->setOpacity(0);
                     }
@@ -7798,6 +7839,7 @@ private:
                                     
                             trail->setZOrder(-3);
                             trail->setVisible(true);
+                            //log::info("a");
                             waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                         }
                         else log::info("NO GHOST TRAIL");
@@ -7817,31 +7859,41 @@ private:
                                 if (wf.wavePointThisFrame) {
                                     hasWavePointData = true;
 
+                                    // log::info("slide x: {}, y: {}", static_cast<float>(wf.x), static_cast<float>(wf.y));
+
                                     if (wi == drawIdx) {
+                                        //log::info("b");
                                         waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                                     } else {
+                                        //log::info("c");
                                         waveTrailAddPointToPlayer(trail, {wf.x, wf.y}, !isP2, false);
                                     }
                                 }
                             }
                         } else if (f.wavePointThisFrame) {
                             hasWavePointData = true;
+                            //log::info("d");
+                            // log::info("wavePointThisFrame x: {}, y: {}", ix, iy);
                             waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                         }
                         if (!hasWavePointData) {
                             if (f.hold != prevHolding) {
+                                //log::info("e");
                                 waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                             }
                             else if (fNext.vehicleSize != f.vehicleSize) {
+                                //log::info("f");
                                 waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                             }
-                            else if (pc.wasMovingUp != isMovingUp) {    
+                            else if (pc.wasMovingUp != isMovingUp) {   
+                                //log::info("g"); 
                                 waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                             }
                             else {
                                 const bool stateDartSlide = (std::fabs(fNext.y - f.y) <= kYEqualEps);
                                 if (stateDartSlide != prevDartSlide) {
                                     prevDartSlide = stateDartSlide;
+                                    //log::info("h");
                                     waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                                 }
                             }
@@ -7853,6 +7905,7 @@ private:
                         // Teleport visual wacky stuff
                         if (prevTeleported) {
                             trail->resumeStroke();
+                            //log::info("i");
                             waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
                             prevTeleported = false;
                         }
