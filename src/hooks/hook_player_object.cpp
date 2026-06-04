@@ -16,8 +16,34 @@ class $modify(MyPlayerObject, PlayerObject) {
         // log::info("PlayerObject::init");
     //    return true;
     //}
+
+    PlayLayer* attachedPlayLayerForThis_() {
+        auto& G = Ghosts::I();
+
+        auto* pl = G.getPlayLayer();
+        if (!pl) return nullptr;
+
+        auto* scene = cocos2d::CCDirector::sharedDirector()->getRunningScene();
+        if (!scene) return nullptr;
+
+        // Avoid using a cached PlayLayer after scene switches
+        if (!pl->getParent()) return nullptr;
+        if (!scene->isRunning()) return nullptr;
+
+        if (!G.shouldHandlePlayLayer(pl)) return nullptr;
+
+        auto* p1 = pl->m_player1;
+        auto* p2 = pl->m_player2;
+
+        if (this != p1 && this != p2) {
+            return nullptr;
+        }
+
+        return pl;
+    }
+
     bool pushButton(PlayerButton btn) {
-        if (auto* pl = typeinfo_cast<PlayLayer*>(this->m_gameLayer)) {
+        if (auto* pl = attachedPlayLayerForThis_()) {
             if (this == pl->m_player1) {
                 // log::info("button: {}, holding: true", int(btn));
                 if (btn==PlayerButton::Jump) Ghosts::I().setP1Hold(true);
@@ -34,7 +60,7 @@ class $modify(MyPlayerObject, PlayerObject) {
         return PlayerObject::pushButton(btn);
     }
     bool releaseButton(PlayerButton btn) {
-        if (auto* pl = typeinfo_cast<PlayLayer*>(this->m_gameLayer)) {
+        if (auto* pl = attachedPlayLayerForThis_()) {
             if (this == pl->m_player1) {
                 // log::info("button: {}, holding: false", int(btn));
                 if (btn==PlayerButton::Jump) Ghosts::I().setP1Hold(false);
@@ -67,7 +93,7 @@ class $modify(MyPlayerObject, PlayerObject) {
     void setPosition(CCPoint const& position) {
         auto& ghosts = Ghosts::I();
 
-        auto* pl = typeinfo_cast<PlayLayer*>(this->m_gameLayer);
+        auto* pl = attachedPlayLayerForThis_();
         const bool isP1 = pl && this == pl->m_player1;
         const bool isP2 = pl && this == pl->m_player2;
 
@@ -104,8 +130,7 @@ class $modify(MyPlayerObject, PlayerObject) {
     }
 
     void playSpawnEffect() {
-        auto* pl = typeinfo_cast<PlayLayer*>(this->m_gameLayer);
-        if (!Ghosts::I().shouldHandlePlayLayer(pl)) {
+        if (!attachedPlayLayerForThis_()) {
             PlayerObject::playSpawnEffect();
         }
     }
@@ -114,7 +139,7 @@ class $modify(MyPlayerObject, PlayerObject) {
         // start time here
         auto& G = Ghosts::I();
         if (G.isModEnabled()) {
-            if (auto* pl = typeinfo_cast<PlayLayer*>(this->m_gameLayer)) {
+            if (auto* pl = attachedPlayLayerForThis_()) {
                 if (G.shouldHandlePlayLayer(pl)) {
                     // log::info("p1: {}, p2: {}", this == pl->m_player1, this == pl->m_player2);
                     if (this == pl->m_player1) {
@@ -173,10 +198,10 @@ class $modify(MyPlayerObject, PlayerObject) {
     }
 
     void releaseAllButtons() {
-        auto* pl = typeinfo_cast<PlayLayer*>(this->m_gameLayer);
+        auto* pl = attachedPlayLayerForThis_();
         auto& G = Ghosts::I();
 
-        if (G.shouldHandlePlayLayer(pl)) {
+        if (pl) {
             G.setP1Hold(false);
             G.setP1LHold(false);
             G.setP1RHold(false);
@@ -192,7 +217,7 @@ class $modify(MyPlayerObject, PlayerObject) {
         auto& G = Ghosts::I();
 
         if (G.shouldOwnWaveTrailDuringPlayback()) {
-            auto* pl = typeinfo_cast<PlayLayer*>(this->m_gameLayer);
+            auto* pl = attachedPlayLayerForThis_();
 
             if (pl && G.shouldHandlePlayLayer(pl)) {
                 const bool isRealP1 = pl->m_player1 == this;
@@ -210,7 +235,7 @@ class $modify(MyPlayerObject, PlayerObject) {
         PlayerObject::updateRotation(dt);
         auto& G = Ghosts::I();
         if (G.isModEnabled()) {
-            if (auto* pl = typeinfo_cast<PlayLayer*>(this->m_gameLayer)) {
+            if (auto* pl = attachedPlayLayerForThis_()) {
                 if (G.shouldHandlePlayLayer(pl)) {
                     if (this == pl->m_player1) {
                         G.recordUpdate(/*isPlayer1*/true, true);

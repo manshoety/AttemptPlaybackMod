@@ -288,6 +288,7 @@ public:
     ColorMode colors = ColorMode::Random;
     bool onlyBestGhost = false;
     float m_waveTrailOpacityPct = 100.f;
+    bool m_allowWaveHook = false;
 
     void setP1Hold(bool h) { p1Hold = h; }
     void setP2Hold(bool h) { p2Hold = h; }
@@ -297,6 +298,7 @@ public:
     void setP2RHold(bool h) { p2RHold = h; }
     void markWavePointThisFrameP1() { p1WavePointThisFrame = true; }
     void markWavePointThisFrameP2() { p2WavePointThisFrame = true; }
+    bool allowWaveHook() const { return m_allowWaveHook; }
 
     float getStartPosTolerance() const { return kReplayStartTolerance; }
 
@@ -2683,6 +2685,7 @@ public:
         m_replayAttempt = nullptr;
         m_prevBotPx = 0.f;
         m_nullOwnerSpanSkips = 0;
+        m_allowWaveHook = true;
 
         //log::info("[Ghosts] attach: botActive={}, recording={}, playback={}", botActive, recording, playback);
 
@@ -3057,6 +3060,7 @@ public:
         m_is_quitting = true;
 
         death_sound_preloaded = false;
+        m_allowWaveHook = false;
 
         m_current = Attempt{};
         

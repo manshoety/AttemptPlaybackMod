@@ -77,7 +77,7 @@ namespace {
     constexpr float kTopControlsY = 90.f;
     constexpr float kDeselectBtnX = -76.f;
     constexpr float kRefreshBtnX = 136.f;
-    constexpr float kInfoBtnX = kRefreshBtnX + 22.f;
+    constexpr float kInfoBtnX = kRefreshBtnX + 28.f;
 
     CCLabelBMFont* makeLabel_(std::string const& text, float x, float y, float scale, CCNode* parent,
         ccColor3B color = {255, 255, 255}, CCPoint anchor = {0.5f, 0.5f}) {
@@ -1092,7 +1092,7 @@ void AttemptManagerPopup::updateNormalRunSlot_(ListSlot& slot, int itemIndex, in
     );
 
     if (isAll) {
-        slot.nameLabel->setString("All Attempts");
+        slot.nameLabel->setString("All Attempts   (click to open)");
         std::ostringstream count;
         count << m_normalAttempts.size() << " attempts";
         slot.countLabel->setString(count.str().c_str());
@@ -1604,7 +1604,8 @@ std::string AttemptManagerPopup::filterText_() const {
 }
 
 std::string AttemptManagerPopup::normalRunText_(StartPosGroup const& group) const {
-    return "Start " + formatPercent_(group.representativeStartPercent);
+    return "Start " + formatPercent_(group.representativeStartPercent) + "   (click to open)";
+    // return "Start " + formatPercent_(group.representativeStartPercent);
 }
 
 std::string AttemptManagerPopup::normalRunCountText_(StartPosGroup const& group) const {

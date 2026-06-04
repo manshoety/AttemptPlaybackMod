@@ -34,12 +34,11 @@ class $modify(PLHook, PlayLayer) {
         Ghosts::I().updateModEnabled();
         if (Ghosts::I().isModEnabled()) {
             // log::info("Attaching to level");
-            Ghosts::I().prepareLevelPersistence(level->m_levelID, this);
+            int lvlId = level ? level->m_levelID : 0;
+            Ghosts::I().prepareLevelPersistence(lvlId, this);
+            Ghosts::I().m_levelIDOnAttach = lvlId;
             Ghosts::I().attach(this);
             createGhostTextLabel_();
-
-            int lvlId = level ? level->m_levelID : 0;
-            Ghosts::I().m_levelIDOnAttach = lvlId;
             if (Ghosts::I().isRecording()) {
                 Ghosts::I().renumberCurrentAttemptIfFresh();
             }
@@ -51,10 +50,10 @@ class $modify(PLHook, PlayLayer) {
     }
     $override void resetLevel() {
         //log::info("[PlayLayer] resetLevel");
-        if (Ghosts::I().isModEnabled()) Ghosts::I().setResetting(true);
+        if (Ghosts::I().isAttachedPlayLayer(this)) Ghosts::I().setResetting(true);
         
         PlayLayer::resetLevel();
-        if (Ghosts::I().isModEnabled()) {
+        if (Ghosts::I().isAttachedPlayLayer(this)) {
             Ghosts::I().onReset();
             Ghosts::I().setResetting(false);
         }
@@ -84,7 +83,7 @@ class $modify(PLHook, PlayLayer) {
     }
     $override void levelComplete() {
         // log::info("[PlayLayer] levelComplete");
-        if (Ghosts::I().isModEnabled()) {
+        if (Ghosts::I().isAttachedPlayLayer(this)) {
             if (Ghosts::I().safeMode_enabled) {
                 PlayLayer::showCompleteText();
                 return;
@@ -97,31 +96,29 @@ class $modify(PLHook, PlayLayer) {
     // I want to add a toggle for "don't record noclip runs"
     $override void destroyPlayer(PlayerObject* p0, GameObject* p1) {
         auto& G = Ghosts::I();
-        if (!G.isModEnabled()) {
+        if (!G.isAttachedPlayLayer(this)) {
             PlayLayer::destroyPlayer(p0, p1);
             return;
         }
         if (G.noclip_enabled) return;
         PlayLayer::destroyPlayer(p0, p1);
         if (this->m_playerDied) {
-            //log::info("[PlayLayer] destroyPlayer");
             G.onDeath();
         }
-        else PlayLayer::destroyPlayer(p0, p1);
     }
     $override void showNewBest(bool newReward, int orbs, int diamonds, bool demonKey, bool noRetry, bool noTitle) {
         // log::info("[PlayLayer] showNewBest");
-        if (!Ghosts::I().isModEnabled() || !Ghosts::I().safeMode_enabled) {
+        if (!Ghosts::I().isAttachedPlayLayer(this) || !Ghosts::I().safeMode_enabled) {
             PlayLayer::showNewBest(newReward, orbs, diamonds, demonKey, noRetry, noTitle);
         }
     }
     $override void updateAttempts() {
-        if (Ghosts::I().isModEnabled() && Ghosts::I().isUpdateAttemptCountBlocked()) return;
+        if (Ghosts::I().isAttachedPlayLayer(this) && Ghosts::I().isUpdateAttemptCountBlocked()) return;
         PlayLayer::updateAttempts();
     }
 
     $override void playEndAnimationToPos(CCPoint position) {
-        if (Ghosts::I().isModEnabled()) Ghosts::I().hasReachedEndOfLevel();
+        if (Ghosts::I().isAttachedPlayLayer(this)) Ghosts::I().hasReachedEndOfLevel();
         PlayLayer::playEndAnimationToPos(position);
     }
     //$override void activateEndTrigger(int targetID, bool reverse, bool lockPlayerY) { // can't hook
@@ -143,13 +140,13 @@ class $modify(PLHook, PlayLayer) {
     //$override void removeCheckpoint(bool p0) {
         //log::info("[PlayLayer] removeCheckpoint({})", p0);
     //    PlayLayer::removeCheckpoint(p0);
-    //    if (Ghosts::I().isModEnabled()) {
+    //    if (Ghosts::I().isAttachedPlayLayer(this)) {
     //        Ghosts::I().onPracticeUndoCheckpoint();
     //    }
     //}
     $override void togglePracticeMode(bool on) {
         // log::info("[PlayLayer] togglePracticeMode({})", on);
-        if (Ghosts::I().isModEnabled()) Ghosts::I().onPracticeToggle(on);
+        if (Ghosts::I().isAttachedPlayLayer(this)) Ghosts::I().onPracticeToggle(on);
         PlayLayer::togglePracticeMode(on);
     }
     //$override void commitJumps() {
@@ -177,7 +174,7 @@ class $modify(DestroyPlayerEarliest, PlayLayer) {
     }
 
     void destroyPlayer(PlayerObject* p0, GameObject* p1) {
-        if (Ghosts::I().isModEnabled()) {
+        if (Ghosts::I().isAttachedPlayLayer(this)) {
             // I'm dumb and didn't realize this was a thing
             if (p1 && (p1 == m_anticheatSpike)) {
                 PlayLayer::destroyPlayer(p0, p1);
@@ -213,14 +210,14 @@ class $modify(DestroyPlayerLatest, PlayLayer) {
     void destroyPlayer(PlayerObject* p0, GameObject* p1) {
         PlayLayer::destroyPlayer(p0, p1);
 
-        if (Ghosts::I().isModEnabled()) {
+        if (Ghosts::I().isAttachedPlayLayer(this)) {
             Ghosts::I().endPlayerDestroyedCheck(this->m_playerDied);
             // log::info("End player destroyed");
         }
     }
     void resetLevel() {
         PlayLayer::resetLevel();
-        if (Ghosts::I().isModEnabled()) Ghosts::I().resetNoclipDetectedFlag();
+        if (Ghosts::I().isAttachedPlayLayer(this)) Ghosts::I().resetNoclipDetectedFlag();
         // log::info("Reset level");
     }
 };
