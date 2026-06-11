@@ -1,3 +1,7 @@
+# 1.4.60
+- FIX: Dual ghost showing up before entering dual
+- FIX: Dual wave trail teleport fix
+- Attempt Manager crash fixes
 # 1.4.58
 - FIX: Ghost wave trail when wave trail drag fix mod is enabled
 - FIX: Replay after deleting most recent attempt in saved levels

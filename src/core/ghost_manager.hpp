@@ -95,6 +95,8 @@
 // Make it so that when we run out of player objects, we allow half of them to be reused and keep the rest dead, but ensure once reused, we don't just spam reuse those and cause none to stay dead
 // Is second dual still not visible sometimes? test with bloodbath full run
 
+// When in wave be dual, then single, then dual again all in continuous attempts. The wave trail of the second player icons teleport ahead and have wave trail behind.
+
 
 using namespace geode::prelude;
 
@@ -2944,7 +2946,8 @@ public:
         //}
 
         if (botActive) {
-            m_playerPrevTeleported = false;
+            m_playerPrevTeleportedP1 = false;
+            m_playerPrevTeleportedP2 = false;
             m_p2JustSpawned = false;
             m_prevHadP2 = false;
             // Check for start position switch
@@ -3073,7 +3076,8 @@ public:
         m_filterByStartPosition = false;
         applyBotSafety_(false);
 
-        m_playerPrevTeleported = false;
+        m_playerPrevTeleportedP1 = false;
+        m_playerPrevTeleportedP2 = false;
         m_preloadedIndices.clear();
         m_preloadedSet.clear();
         m_primedIndices.clear();
@@ -3903,7 +3907,8 @@ public:
         m_freezePlayerXAtEnd = false;
         m_freezePlayerX = 0.f;
         m_freezePlayerY = 0.f;
-        m_playerPrevTeleported = false;
+        m_playerPrevTeleportedP1 = false;
+        m_playerPrevTeleportedP2 = false;
         invalidatePrimedPlayerObjectRefs();
         m_initialAttemptsToSet.clear();
         m_preloadOrder.clear();
@@ -5243,7 +5248,8 @@ private:
     static constexpr float kNoDualTimeGap = 0.1f;
     static constexpr float kYEqualEps = 0.1f;
     static constexpr double kP1ContinuesPastP2Threshold = 0.5;
-    bool m_playerPrevTeleported = false;
+    bool m_playerPrevTeleportedP1 = false;
+    bool m_playerPrevTeleportedP2 = false;
     bool m_filterByStartPosition = false;
 
     std::vector<uint32_t> m_preloadedIndices;
@@ -5850,7 +5856,8 @@ private:
         m_freezePlayerXAtEnd = false;
         m_freezePlayerX = 0.f;
         m_freezePlayerY = 0.f;
-        m_playerPrevTeleported = false;
+        m_playerPrevTeleportedP1 = false;
+        m_playerPrevTeleportedP2 = false;
 
         m_gridThreshold.clear();
         m_cachedCandidates.clear();
@@ -7362,39 +7369,18 @@ private:
         }
 
         if (m_currentOwner->hadDual && !p2.empty()) {
-            if (wentBack) {
-                m_replayIdx2 = idxForTimeBounded_(
-                    p2,
-                    m_currentOwner->acc2Time,
-                    sessionTime
-                );
-            } else {
-                size_t predictedP2 = oldP2 + p1Delta;
-
-                if (predictedP2 >= p2.size()) {
-                    predictedP2 = p2.size() - 1;
-                }
-
-                m_replayIdx2 = predictedP2;
-
-                // correct P2 if it is multiple frames off
-                const size_t timeP2 = idxForTimeBounded_(
-                    p2,
-                    m_currentOwner->acc2Time,
-                    sessionTime
-                );
-
-                const long diff = static_cast<long>(timeP2) -
-                                static_cast<long>(m_replayIdx2);
-
-                if (std::abs(diff) >= 2) {
-                    m_replayIdx2 = timeP2;
-                }
-            }
+            m_replayIdx2 = idxForTimeBounded_(
+                p2,
+                m_currentOwner->acc2Time,
+                sessionTime
+            );
 
             if (m_replayIdx2 >= p2.size()) {
                 m_replayIdx2 = p2.size() - 1;
             }
+        }
+        else {
+            m_replayIdx2 = 0;
         }
         /*
         log::info(
@@ -7503,10 +7489,15 @@ private:
                     advanceFromPrevIdx_(frames, frameIdx, ghostTime, /*mustRewind=*/false);
                 } else {
                     frameIdx = idxForTimeBounded_(frames, accTime, ghostTime);
-                    if (ghost->m_waveTrail) ghost->m_waveTrail->reset();
+                    if (ghost && ghost->m_waveTrail) ghost->m_waveTrail->reset();
                 }
-                frameIdx = std::min(frameIdx+2, frames.size()-1);
-                drawIdx = std::min(frameIdx, lastIdx);
+
+                const size_t timeIdx = std::min(frameIdx, lastIdx);
+                drawIdx = timeIdx;
+
+                if (!isP2) {
+                    drawIdx = std::min(timeIdx + 2, lastIdx);
+                }
 
                 const bool atLastFrame = (drawIdx >= lastIdx);
                 const bool atEndTime   = (ghostTime >= lastT - kEolTimeTolerance);
@@ -7560,31 +7551,47 @@ private:
                 // Make P2 invisible when there's a P2 data gap (not in dual mode)
                 if (isP2 && ghost) {
                     bool hideForGap = false;
-                    if (drawIdx < lastIdx) {
-                        const double t0 = frames[drawIdx].t;
-                        const double t1 = frames[drawIdx+1].t;
+
+                    if (timeIdx < lastIdx) {
+                        const double t0 = frames[timeIdx].t;
+                        const double t1 = frames[timeIdx + 1].t;
                         const double gap = t1 - t0;
 
                         if (gap > kNoDualTimeGap && ghostTime > t0 && ghostTime < t1) {
                             hideForGap = true;
                         }
                     }
-                    // When they both die, don't be invisible
-                    // Only be invisible when p2 ended and p1 has more data
-                    bool hideForP2EndedWhileP1Continues = false;
-                    if (!hideForGap && !eolFrozen && (atLastFrame || atEndTime)) {
-                        const double p2LastT = lastT;
-                        const double p1LastT = a.p1.empty()
-                            ? p2LastT
-                            : static_cast<double>(a.p1.back().t);
 
-                        if (p1LastT - p2LastT > kP1ContinuesPastP2Threshold) {
-                            hideForP2EndedWhileP1Continues = true;
+                    bool hideForP2EndedWhileP1Continues = false;
+                    if (!hideForGap && !eolFrozen) {
+                        const bool atLastFrameByTime = timeIdx >= lastIdx;
+                        const bool atEndTimeByTime = ghostTime >= lastT - kEolTimeTolerance;
+
+                        if (atLastFrameByTime || atEndTimeByTime) {
+                            const double p2LastT = lastT;
+                            const double p1LastT = a.p1.empty()
+                                ? p2LastT
+                                : static_cast<double>(a.p1.back().t);
+
+                            if (p1LastT - p2LastT > kP1ContinuesPastP2Threshold) {
+                                hideForP2EndedWhileP1Continues = true;
+                            }
                         }
                     }
 
                     if (hideForGap || hideForP2EndedWhileP1Continues) {
                         a.setP2Visible(false, true);
+
+                        if (ghost->m_waveTrail) {
+                            ghost->m_waveTrail->reset();
+                            ghost->m_waveTrail->setVisible(false);
+                            ghost->m_waveTrail->setOpacity(0);
+                        }
+
+                        trailActive = false;
+                        prevTeleported = false;
+                        hasWavePointData = false;
+
                         return;
                     }
                 }
@@ -8608,10 +8615,10 @@ private:
 
             const Frame& F = v[clickI];
             const Frame& C = v[poseI];
-            if (setClicks) {
+            if (setClicks && (isP1 || m_isTwoPlayer)) {
                 if (F.hold  != botPrevHold) {
                     // best method but might not work due to Click Between Frames
-                    m_pl->handleButton(F.hold, /*btn=*/1, /*isP1=*/true);
+                    m_pl->handleButton(F.hold, /*btn=*/1, /*isP1=*/isP1);
 
                     // if didn't work
                     if (F.hold != p1Hold) {
@@ -8622,7 +8629,7 @@ private:
                     botPrevHold  = F.hold;
                 }
                 if (F.holdL != botPrevHoldL) {
-                    m_pl->handleButton(F.holdL, /*btn=*/2, /*isP1=*/true);
+                    m_pl->handleButton(F.holdL, /*btn=*/2, /*isP1=*/isP1);
 
                     if (F.holdL != p1LHold) {
                         if (F.holdL) p->pushButton(PlayerButton::Left);
@@ -8632,7 +8639,7 @@ private:
                     botPrevHoldL = F.holdL;
                 }
                 if (F.holdR != botPrevHoldR) {
-                    m_pl->handleButton(F.holdR, /*btn=*/3, /*isP1=*/true);
+                    m_pl->handleButton(F.holdR, /*btn=*/3, /*isP1=*/isP1);
 
                     if (F.holdR != p1RHold) {
                         if (F.holdR) p->pushButton(PlayerButton::Right);
@@ -8751,20 +8758,36 @@ private:
                     }
 
                     // Teleport goop
-                    if (m_playerPrevTeleported) {
+                    bool& playerPrevTeleported = isP1
+                        ? m_playerPrevTeleportedP1
+                        : m_playerPrevTeleportedP2;
+
+                    if (playerPrevTeleported) {
                         if (canAddWavePoint) {
                             p->m_waveTrail->reset();
                             p->m_waveTrail->resumeStroke();
+
                             if (!addedWavePoint) {
-                                addedWavePoint = waveTrailAddPointToPlayer(p->m_waveTrail, {ix, iy}, isP1, m_p2JustSpawned);
+                                addedWavePoint = waveTrailAddPointToPlayer(
+                                    p->m_waveTrail,
+                                    { ix, iy },
+                                    isP1,
+                                    !isP1 && m_p2JustSpawned
+                                );
                             }
                         }
-                        m_playerPrevTeleported = false;
+
+                        playerPrevTeleported = false;
                     }
+
                     bool teleported = (b && std::fabs(static_cast<float>(b->y) - iy) > kWaveTeleportedTolerance);
+
                     if (teleported) {
-                        if (isWave && p->m_waveTrail) p->m_waveTrail->stopStroke();
-                        m_playerPrevTeleported = true;
+                        if (isWave && p->m_waveTrail) {
+                            p->m_waveTrail->stopStroke();
+                        }
+
+                        playerPrevTeleported = true;
                     }
 
                     p->setVisible(a.isVisible);

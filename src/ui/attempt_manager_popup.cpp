@@ -313,15 +313,49 @@ void AttemptManagerPopup::cancelTopControlsRefresh_() {
 void AttemptManagerPopup::clearManageLayer_(CCNode* layer) {
     if (!layer) return;
 
+    disableManageLayerTouches_(layer);
+    layer->setVisible(false);
     layer->removeAllChildrenWithCleanup(true);
 }
 
+void AttemptManagerPopup::disableManageLayerTouches_(CCNode* layer) {
+    if (!layer) return;
+
+    if (m_rowsScrollLayer && m_rowsScrollLayer->getParent()) {
+        m_rowsScrollLayer->setVerticalScroll(false);
+        m_rowsScrollLayer->setVerticalScrollWheel(false);
+        m_rowsScrollLayer->setDraggingEnabled(false);
+        m_rowsScrollLayer->blockTouchBehind(false);
+        m_rowsScrollLayer->allowEmptyClickThrough(true);
+    }
+
+    if (m_rowsMenu) m_rowsMenu->setEnabled(false);
+    if (m_actionMenu) m_actionMenu->setEnabled(false);
+    if (m_pageMenu) m_pageMenu->setEnabled(false);
+    if (m_sortMenu) m_sortMenu->setEnabled(false);
+}
+
 void AttemptManagerPopup::onClose(CCObject* sender) {
+    if (m_confirmOpen || m_destructiveActionBusy || m_uiTransitioning || m_rebuildQueued) {
+        return;
+    }
+
     cancelTopControlsRefresh_();
 
+    this->unschedule(schedule_selector(AttemptManagerPopup::doQueuedRefreshManagePage_));
+    m_manageRefreshQueued = false;
+    m_manageRefreshReload = false;
+
+    if (m_rowsScrollLayer && m_rowsScrollLayer->getParent()) {
+        m_rowsScrollLayer->setVerticalScroll(false);
+        m_rowsScrollLayer->setVerticalScrollWheel(false);
+        m_rowsScrollLayer->setDraggingEnabled(false);
+        m_rowsScrollLayer->blockTouchBehind(false);
+        m_rowsScrollLayer->allowEmptyClickThrough(true);
+    }
+
     m_rowBgBySerial.clear();
-    m_confirmOpen = false;
-    m_destructiveActionBusy = false;
+
     Popup::onClose(sender);
 }
 
@@ -456,6 +490,7 @@ void AttemptManagerPopup::rebuildBody_() {
 
     cancelTopControlsRefresh_();
 
+    // Ensure tab root layers exist
     if (!m_manageNormalLayer) {
         m_manageNormalLayer = CCNode::create();
         m_bodyLayer->addChild(m_manageNormalLayer);
@@ -478,28 +513,35 @@ void AttemptManagerPopup::rebuildBody_() {
         rebuildBlankTab_(m_importLayer, "Import Attempts");
     }
 
-    const bool showNormal = m_tab == Tab::Manage;
+    const bool showNormal   = m_tab == Tab::Manage;
     const bool showPractice = m_tab == Tab::Practice;
-    const bool showExport = m_tab == Tab::Export;
-    const bool showImport = m_tab == Tab::Import;
+    const bool showExport   = m_tab == Tab::Export;
+    const bool showImport   = m_tab == Tab::Import;
 
-    if (!showNormal) {
-        clearManageLayer_(m_manageNormalLayer);
+    // Hide inactive roots
+    if (m_manageNormalLayer) {
+        if (!showNormal && m_tab != Tab::Practice) {
+            disableManageLayerTouches_(m_manageNormalLayer);
+        }
+        m_manageNormalLayer->setVisible(showNormal);
     }
 
-    if (!showPractice) {
-        clearManageLayer_(m_managePracticeLayer);
+    if (m_managePracticeLayer) {
+        if (!showPractice && m_tab != Tab::Manage) {
+            disableManageLayerTouches_(m_managePracticeLayer);
+        }
+        m_managePracticeLayer->setVisible(showPractice);
     }
 
-    if (!showNormal && !showPractice) {
-        resetPageWidgets_();
+    if (m_exportLayer) {
+        m_exportLayer->setVisible(showExport);
     }
 
-    m_manageNormalLayer->setVisible(showNormal);
-    m_managePracticeLayer->setVisible(showPractice);
-    m_exportLayer->setVisible(showExport);
-    m_importLayer->setVisible(showImport);
+    if (m_importLayer) {
+        m_importLayer->setVisible(showImport);
+    }
 
+    // Rebuild active manage page
     if (showNormal || showPractice) {
         rebuildManagePage_();
     }
@@ -559,8 +601,9 @@ void AttemptManagerPopup::rebuildManagePage_() {
     CCNode* layer = m_tab == Tab::Practice ? m_managePracticeLayer : m_manageNormalLayer;
     if (!layer) return;
 
-    resetPageWidgets_();
+    disableManageLayerTouches_(layer);
     layer->removeAllChildrenWithCleanup(true);
+    resetPageWidgets_();
     layer->setPosition({-25.f, 0.f});
 
     makePanel_(kLeftPanelX, kPanelY, kLeftPanelW, kLeftPanelH, layer, 86);
@@ -1747,6 +1790,7 @@ const APXAttemptDiskInfo* AttemptManagerPopup::findAnyAttempt_(int serial) const
 
 void AttemptManagerPopup::setTab_(Tab tab) {
     if (m_tab == tab) return;
+    if (m_uiTransitioning || m_rebuildQueued || m_confirmOpen || m_destructiveActionBusy) return;
 
     cancelTopControlsRefresh_();
 
@@ -1754,12 +1798,12 @@ void AttemptManagerPopup::setTab_(Tab tab) {
     m_page = 0;
     m_selectedSerials.clear();
     m_selectedSerial = -1;
-    m_destructiveActionBusy = false;
-    m_confirmOpen = false;
 
     applyCurrentFilter_();
     applySort_();
-    rebuildBody_();
+    clampPage_();
+
+    queueRebuildBody_();
 }
 
 void AttemptManagerPopup::setSortMode_(SortMode sortMode) {
@@ -1904,9 +1948,13 @@ void AttemptManagerPopup::refreshTabButtons_() {
 }
 
 void AttemptManagerPopup::rebuildManagePageForViewChange_() {
+    if (m_uiTransitioning || m_rebuildQueued) return;
+
     applyCurrentFilter_();
     applySort_();
-    rebuildManagePage_();
+    clampPage_();
+
+    queueRebuildBody_();
 }
 
 void AttemptManagerPopup::refreshTopControls_() {
@@ -1949,6 +1997,32 @@ void AttemptManagerPopup::queueTopControlsRefresh_() {
 void AttemptManagerPopup::doQueuedTopControlsRefresh_(float) {
     m_topControlsRefreshQueued = false;
     refreshTopControls_();
+}
+
+void AttemptManagerPopup::queueRefreshManagePage_(bool reloadFromRuntime) {
+    m_manageRefreshReload = m_manageRefreshReload || reloadFromRuntime;
+
+    if (m_manageRefreshQueued) return;
+    m_manageRefreshQueued = true;
+
+    if (m_sortMenu) m_sortMenu->setEnabled(false);
+    if (m_pageMenu) m_pageMenu->setEnabled(false);
+    if (m_rowsMenu) m_rowsMenu->setEnabled(false);
+    if (m_actionMenu) m_actionMenu->setEnabled(false);
+
+    this->scheduleOnce(
+        schedule_selector(AttemptManagerPopup::doQueuedRefreshManagePage_),
+        0.f
+    );
+}
+
+void AttemptManagerPopup::doQueuedRefreshManagePage_(float) {
+    const bool reload = m_manageRefreshReload;
+
+    m_manageRefreshQueued = false;
+    m_manageRefreshReload = false;
+
+    refreshManagePage_(reload);
 }
 
 std::string AttemptManagerPopup::sortRecentText_() const {
@@ -2004,16 +2078,54 @@ void AttemptManagerPopup::refreshSelectedLabelOnly_() {
     m_selectedLabel->setString(ss.str().c_str());
 }
 
+void AttemptManagerPopup::queueRebuildBody_() {
+    if (m_rebuildQueued) return;
+
+    m_rebuildQueued = true;
+    m_uiTransitioning = true;
+
+    cancelTopControlsRefresh_();
+
+    if (m_tabMenu) m_tabMenu->setEnabled(false);
+    if (m_sortMenu) m_sortMenu->setEnabled(false);
+    if (m_pageMenu) m_pageMenu->setEnabled(false);
+    if (m_rowsMenu) m_rowsMenu->setEnabled(false);
+    if (m_actionMenu) m_actionMenu->setEnabled(false);
+
+    if (m_rowsScrollLayer && m_rowsScrollLayer->getParent()) {
+        m_rowsScrollLayer->setVerticalScroll(false);
+        m_rowsScrollLayer->setVerticalScrollWheel(false);
+        m_rowsScrollLayer->setDraggingEnabled(false);
+        m_rowsScrollLayer->blockTouchBehind(false);
+        m_rowsScrollLayer->allowEmptyClickThrough(true);
+    }
+
+    this->scheduleOnce(
+        schedule_selector(AttemptManagerPopup::doQueuedRebuildBody_),
+        0.f
+    );
+}
+
+void AttemptManagerPopup::doQueuedRebuildBody_(float) {
+    m_rebuildQueued = false;
+
+    rebuildBody_();
+
+    m_uiTransitioning = false;
+
+    refreshTabButtons_();
+    refreshPagingButtons_();
+    refreshTopControls_();
+}
+
 void AttemptManagerPopup::onTabButton(CCObject* sender) {
-    if (m_destructiveActionBusy || m_confirmOpen) return;
+    if (m_uiTransitioning || m_rebuildQueued || m_confirmOpen || m_destructiveActionBusy) return;
 
     auto* node = typeinfo_cast<CCNode*>(sender);
     if (!node) return;
 
-    const int raw = node->getTag();
-    if (raw < static_cast<int>(Tab::Manage) || raw > static_cast<int>(Tab::Import)) return;
-
-    setTab_(static_cast<Tab>(raw));
+    auto tab = static_cast<Tab>(node->getTag());
+    setTab_(tab);
 }
 
 void AttemptManagerPopup::onSortRecent(CCObject*) {
@@ -2246,8 +2358,8 @@ void AttemptManagerPopup::onPracticeInfo(CCObject*) {
 }
 
 void AttemptManagerPopup::onRefresh(CCObject*) {
-    if (m_destructiveActionBusy || m_confirmOpen) return;
-    refreshManagePage_(true);
+    if (m_destructiveActionBusy || m_confirmOpen || m_uiTransitioning || m_rebuildQueued) return;
+    queueRefreshManagePage_(true);
 }
 
 bool AttemptManagerPopup::deleteAttemptBySerial_(int serial) {
@@ -2366,7 +2478,7 @@ void AttemptManagerPopup::showDeleteAttemptConfirm_(int serial) {
             if (deleteAttemptBySerial_(serial)) {
                 m_selectedSerials.erase(serial);
                 if (m_selectedSerial == serial) m_selectedSerial = -1;
-                refreshManagePage_(true);
+                queueRefreshManagePage_(true);
             }
             else {
                 m_destructiveActionBusy = false;
@@ -2413,7 +2525,7 @@ void AttemptManagerPopup::showDeleteSelectedConfirm_() {
             if (deleteSelectedAttempts_()) {
                 m_selectedSerials.clear();
                 m_selectedSerial = -1;
-                refreshManagePage_(true);
+                queueRefreshManagePage_(true);
             }
             else {
                 m_destructiveActionBusy = false;
@@ -2480,7 +2592,7 @@ void AttemptManagerPopup::showDeletePercentConfirm_(float minPercent, float maxP
             if (deleteAttemptsByPercentRange_(minPercent, maxPercent)) {
                 m_selectedSerials.clear();
                 m_selectedSerial = -1;
-                refreshManagePage_(true);
+                queueRefreshManagePage_(true);
             }
             else {
                 m_destructiveActionBusy = false;
@@ -2545,7 +2657,7 @@ void AttemptManagerPopup::showDeleteAllConfirm_() {
                 m_savedRowsScrollY = 0.f;
                 m_normalView = NormalView::Runs;
                 m_practiceView = PracticeView::Sessions;
-                refreshManagePage_(true);
+                queueRefreshManagePage_(true);
 
                 FLAlertLayer::create(
                     "Success",
@@ -2609,7 +2721,7 @@ void AttemptManagerPopup::showDeleteNormalRunConfirm_(int groupId) {
                 m_page = 0;
                 m_selectedSerials.clear();
                 m_selectedSerial = -1;
-                refreshManagePage_(true);
+                queueRefreshManagePage_(true);
             }
             else {
                 m_destructiveActionBusy = false;
@@ -2665,7 +2777,7 @@ void AttemptManagerPopup::showDeletePracticeSessionConfirm_(int sessionId) {
                 m_selectedSerial = -1;
                 m_practiceView = PracticeView::Sessions;
                 m_selectedPracticeSessionId = 0;
-                refreshManagePage_(true);
+                queueRefreshManagePage_(true);
             }
             else {
                 m_destructiveActionBusy = false;

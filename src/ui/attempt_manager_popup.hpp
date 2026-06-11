@@ -132,6 +132,10 @@ private:
     bool m_destructiveActionBusy = false;
     bool m_confirmOpen = false;
     bool m_topControlsRefreshQueued = false;
+    bool m_rebuildQueued = false;
+    bool m_uiTransitioning = false;
+    bool m_manageRefreshQueued = false;
+    bool m_manageRefreshReload = false;
 
     cocos2d::CCNode* m_root = nullptr;
     cocos2d::CCNode* m_bodyLayer = nullptr;
@@ -312,6 +316,12 @@ private:
 
     void cancelTopControlsRefresh_();
     void clearManageLayer_(cocos2d::CCNode* layer);
+
+    void queueRebuildBody_();
+    void doQueuedRebuildBody_(float);
+    void disableManageLayerTouches_(cocos2d::CCNode* layer);
+    void queueRefreshManagePage_(bool reloadFromRuntime);
+    void doQueuedRefreshManagePage_(float);
 };
 
 cocos2d::CCLayer* CreateAttemptManagerPopup();

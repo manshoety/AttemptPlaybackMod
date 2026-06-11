@@ -336,7 +336,7 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.f)
                 .scale(0.4f),
 
-            Build<CCLabelBMFont>::create("Beta 1.4.59", "bigFont.fnt")
+            Build<CCLabelBMFont>::create(fmt::format("Beta {}", geode::Mod::get()->getVersion().toNonVString()).c_str(),"bigFont.fnt")
                 .pos(195.f, 136.f)
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
