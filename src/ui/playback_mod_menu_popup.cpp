@@ -502,6 +502,7 @@ void PlaybackModMenu::buildTemplateUI_() {
         .collect();
 
         scaleUIForThatOneTabletUser(kPopupW, kPopupH);
+        normalizePopupMenuTouchPriorities(m_mainLayer, -504);
 
         cacheReplayButtons_();
         refreshReplayButtons_();
@@ -1048,6 +1049,8 @@ bool PreloadAttemptsPopup::init(float width, float height) {
     refreshInfoLabels_(startVal);
     // setPreloadValue_(); I don't use this now and reset preload on each click of the load buttons
 
+    normalizePopupMenuTouchPriorities(m_mainLayer, -504);
+
     this->scheduleUpdate();
     return true;
 }
@@ -1421,6 +1424,7 @@ bool PlaybackSettingsPopup::init(float width, float height) {
 
     // Enforce dependent visibility/enable state
     refreshDependentVisibility_();
+    normalizePopupMenuTouchPriorities(m_mainLayer, -504);
 
     this->scheduleUpdate();
     return true;

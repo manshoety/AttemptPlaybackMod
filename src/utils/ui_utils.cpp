@@ -135,7 +135,16 @@ float computeFitScale_(float actualW, float actualH, float designW, float design
     return s;
 }
 
+void normalizePopupMenuTouchPriorities(cocos2d::CCNode* root, int priority) {
+    if (!root) return;
 
+    if (auto* menu = typeinfo_cast<cocos2d::CCMenu*>(root)) {
+        menu->setTouchPriority(priority);
+        menu->setTouchEnabled(true);
+        menu->setEnabled(true);
+    }
 
-
-
+    for (auto* child : root->getChildrenExt()) {
+        normalizePopupMenuTouchPriorities(child, priority);
+    }
+}

@@ -4,6 +4,7 @@
 #include <UIBuilder.hpp>
 #include <Geode/loader/Mod.hpp>
 #include "../core/ghost_manager.hpp"
+#include "../utils/ui_utils.hpp"
 
 using namespace geode::prelude;
 using namespace cocos2d;
@@ -43,6 +44,8 @@ bool GhostDistancePopup::init(float width, float height) {
 
     updateValueLabel_();
     layoutPreview_();
+
+    normalizePopupMenuTouchPriorities(m_mainLayer, -504);
 
     return true;
 }

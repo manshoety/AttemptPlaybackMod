@@ -227,6 +227,8 @@ protected:
         buildColorButtons_();
         refreshAllX_();
 
+        normalizePopupMenuTouchPriorities(m_mainLayer, -504);
+
         m_mainLayer->updateLayout();
         return true;
     }

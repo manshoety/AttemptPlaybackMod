@@ -539,6 +539,7 @@ void AttemptManagerPopup::rebuild_() {
     closeMenu->addChild(closeBtn);
 
     scaleUIForThatOneTabletUser(kPopupW, kPopupH);
+    normalizePopupMenuTouchPriorities(m_mainLayer, -504);
 }
 
 void AttemptManagerPopup::scaleUIForThatOneTabletUser(float designWidth, float designHeight) {
