@@ -297,15 +297,8 @@ bool AttemptManagerPopup::init(float width, float height) {
 
     m_mainLayer->setLayout(AnchorLayout::create());
 
-    this->setTouchEnabled(false);
-    m_initialBuildQueued = true;
-
     loadAttemptsFromRuntime_();
-
-    this->scheduleOnce(
-        schedule_selector(AttemptManagerPopup::doInitialBuild_),
-        0.f
-    );
+    rebuild_();
 
     return true;
 }
@@ -363,6 +356,13 @@ void AttemptManagerPopup::disableManageLayerTouches_(CCNode* layer) {
 }
 
 void AttemptManagerPopup::onClose(CCObject* sender) {
+    if (m_rowsScrollLayer && m_rowsScrollLayer->getParent()) {
+        m_rowsScrollLayer->setVerticalScroll(false);
+        m_rowsScrollLayer->setVerticalScrollWheel(false);
+        m_rowsScrollLayer->setDraggingEnabled(false);
+        m_rowsScrollLayer->blockTouchBehind(false);
+        m_rowsScrollLayer->allowEmptyClickThrough(true);
+    }
     if (m_confirmOpen || m_destructiveActionBusy || m_uiTransitioning || m_rebuildQueued) {
         return;
     }

@@ -104,6 +104,7 @@
 // Wave ghosts are very laggy, see if I can improve them
 // player2 should play death effect too
 // Dual wave has the teleport wave trail vertical issue (that I fixed for the real player). test on level "want u: 128189958"
+// DO NOT LET THE USER DELETE A PRACTICE RUN WHILE RECORDING THAT RUN (VERY BAD)
 
 
 using namespace geode::prelude;
