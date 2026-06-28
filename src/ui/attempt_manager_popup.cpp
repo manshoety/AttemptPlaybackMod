@@ -81,7 +81,7 @@ namespace {
 
     CCLabelBMFont* makeLabel_(std::string const& text, float x, float y, float scale, CCNode* parent,
         ccColor3B color = {255, 255, 255}, CCPoint anchor = {0.5f, 0.5f}) {
-        auto* label = CCLabelBMFont::create(text.c_str(), "bigFont.fnt");
+        auto* label = CCLabelBMFont::create(text.empty() ? " " : text.c_str(), "bigFont.fnt");
         label->setAnchorPoint(anchor);
         label->setScale(scale);
         label->setColor(color);
@@ -113,7 +113,7 @@ namespace {
         bg->setAnchorPoint({ 0.5f, 0.5f });
         bg->setScale(scale);
 
-        auto* label = CCLabelBMFont::create(text.c_str(), "bigFont.fnt");
+        auto* label = CCLabelBMFont::create(text.empty() ? " " : text.c_str(), "bigFont.fnt");
         if (outLabel) *outLabel = label;
         label->setAnchorPoint({ 0.5f, 0.5f });
         label->setPosition({ w * 0.5f, h * 0.5f });
@@ -149,7 +149,7 @@ namespace {
         bg->setContentSize({ w, h });
         bg->setAnchorPoint({ 0.5f, 0.5f });
 
-        auto* label = CCLabelBMFont::create(text.c_str(), "bigFont.fnt");
+        auto* label = CCLabelBMFont::create(text.empty() ? " " : text.c_str(), "bigFont.fnt");
         label->setAnchorPoint({ 0.5f, 0.5f });
         label->setPosition({ w * 0.5f, h * 0.52f });
         label->setScale(0.40f);
@@ -297,10 +297,37 @@ bool AttemptManagerPopup::init(float width, float height) {
 
     m_mainLayer->setLayout(AnchorLayout::create());
 
+    this->setTouchEnabled(false);
+    m_initialBuildQueued = true;
+
     loadAttemptsFromRuntime_();
-    rebuild_();
+
+    this->scheduleOnce(
+        schedule_selector(AttemptManagerPopup::doInitialBuild_),
+        0.f
+    );
 
     return true;
+}
+
+void AttemptManagerPopup::doInitialBuild_(float) {
+    m_initialBuildQueued = false;
+
+    rebuild_();
+
+    m_enableTouchesQueued = true;
+    this->scheduleOnce(
+        schedule_selector(AttemptManagerPopup::enablePopupTouches_),
+        0.f
+    );
+}
+
+void AttemptManagerPopup::enablePopupTouches_(float) {
+    m_enableTouchesQueued = false;
+
+    if (m_confirmOpen || m_destructiveActionBusy) return;
+
+    this->setTouchEnabled(true);
 }
 
 void AttemptManagerPopup::cancelTopControlsRefresh_() {
@@ -341,6 +368,19 @@ void AttemptManagerPopup::onClose(CCObject* sender) {
     }
 
     cancelTopControlsRefresh_();
+
+    if (m_initialBuildQueued) {
+        this->unschedule(schedule_selector(AttemptManagerPopup::doInitialBuild_));
+        m_initialBuildQueued = false;
+    }
+    if (m_enableTouchesQueued) {
+        this->unschedule(schedule_selector(AttemptManagerPopup::enablePopupTouches_));
+        m_enableTouchesQueued = false;
+    }
+
+    this->unschedule(schedule_selector(AttemptManagerPopup::doQueuedRebuildBody_));
+    m_rebuildQueued = false;
+    m_uiTransitioning = false;
 
     this->unschedule(schedule_selector(AttemptManagerPopup::doQueuedRefreshManagePage_));
     m_manageRefreshQueued = false;
@@ -407,13 +447,39 @@ void AttemptManagerPopup::loadAttemptsFromRuntime_() {
 }
 
 void AttemptManagerPopup::rebuild_() {
-    m_mainLayer->removeAllChildrenWithCleanup(true);
+    if (!m_mainLayer) return;
 
-    m_root = CCNode::create();
+    cancelTopControlsRefresh_();
+
+    if (m_manageNormalLayer) disableManageLayerTouches_(m_manageNormalLayer);
+    if (m_managePracticeLayer) disableManageLayerTouches_(m_managePracticeLayer);
+
+    if (m_root && m_root->getParent()) {
+        m_root->removeAllChildrenWithCleanup(true);
+    }
+    else {
+        m_root = CCNode::create();
+        m_root->setID("attempt-manager-root"_spr);
+        m_mainLayer->addChild(m_root, 100);
+    }
+
+    m_bodyLayer = nullptr;
+    m_manageNormalLayer = nullptr;
+    m_managePracticeLayer = nullptr;
+    m_exportLayer = nullptr;
+    m_importLayer = nullptr;
+
+    m_tabMenu = nullptr;
+    m_tabNormalBtn = nullptr;
+    m_tabPracticeBtn = nullptr;
+    m_tabExportBtn = nullptr;
+    m_tabImportBtn = nullptr;
+
+    resetPageWidgets_();
+
     m_root->setContentSize({0.f, 0.f});
     m_root->setAnchorPoint({0.5f, 0.5f});
     m_root->setPosition(m_mainLayer->getContentSize() * 0.5f);
-    m_mainLayer->addChild(m_root);
 
     auto* gradient = createFullscreenGradient_();
     gradient->setColor({100, 86, 255});
@@ -439,6 +505,7 @@ void AttemptManagerPopup::rebuild_() {
     m_tabMenu->addChild(m_tabPracticeBtn);
     m_tabMenu->addChild(m_tabExportBtn);
     m_tabMenu->addChild(m_tabImportBtn);
+
     refreshTabButtons_();
 
     m_bodyLayer = CCNode::create();
@@ -451,7 +518,6 @@ void AttemptManagerPopup::rebuild_() {
     closeMenu->setPosition({0.f, 0.f});
     m_root->addChild(closeMenu, 50);
 
-    // exit button
     auto* closeSpr = CircleButtonSprite::createWithSpriteFrameName(
         "geode.loader/close.png",
         0.85f,
@@ -470,7 +536,6 @@ void AttemptManagerPopup::rebuild_() {
     closeBtn->setScale(0.8f);
     closeBtn->setSizeMult(0.8f);
     closeBtn->setID("attempt-manager-close"_spr);
-
     closeMenu->addChild(closeBtn);
 
     scaleUIForThatOneTabletUser(kPopupW, kPopupH);
@@ -520,14 +585,14 @@ void AttemptManagerPopup::rebuildBody_() {
 
     // Hide inactive roots
     if (m_manageNormalLayer) {
-        if (!showNormal && m_tab != Tab::Practice) {
+        if (!showNormal) {
             disableManageLayerTouches_(m_manageNormalLayer);
         }
         m_manageNormalLayer->setVisible(showNormal);
     }
 
     if (m_managePracticeLayer) {
-        if (!showPractice && m_tab != Tab::Manage) {
+        if (!showPractice) {
             disableManageLayerTouches_(m_managePracticeLayer);
         }
         m_managePracticeLayer->setVisible(showPractice);
@@ -877,7 +942,7 @@ void AttemptManagerPopup::setRowsScrollEnabled_(bool enabled) {
     m_rowsScrollLayer->setDraggingEnabled(enabled);
 
     m_rowsScrollLayer->blockTouchBehind(enabled);
-    m_rowsScrollLayer->allowEmptyClickThrough(!enabled);
+    m_rowsScrollLayer->allowEmptyClickThrough(true);
 
     if (!enabled) {
         m_rowsScrollLayer->setScrollY(0.f, false);
@@ -966,6 +1031,17 @@ void AttemptManagerPopup::buildRowSlots_() {
     }
 }
 
+static void safeSetString_(CCLabelBMFont* label, std::string const& text) {
+    if (!label) return;
+
+    const std::string safeText = text.empty() ? " " : text;
+    const char* current = label->getString();
+
+    if (current && safeText == current) return;
+
+    label->setString(safeText.c_str());
+}
+
 void AttemptManagerPopup::updateAttemptRowSlot_(RowSlot& slot, APXAttemptDiskInfo const& a, int row, float contentH) {
     const float y = contentH - kRowsContentPadTop - kRowH * 0.5f - static_cast<float>(row) * kRowH;
     const bool selected = isSelected_(m_selectedSerials, a.serial);
@@ -979,13 +1055,13 @@ void AttemptManagerPopup::updateAttemptRowSlot_(RowSlot& slot, APXAttemptDiskInf
     showMenuItem_(slot.trash, kRowsDeleteX, y, a.serial);
 
     slot.startLabel->setPosition({ kRowsStartPercentX, y });
-    slot.startLabel->setString(formatPercent_(a.startPercent).c_str());
+    safeSetString_(slot.startLabel, formatPercent_(a.startPercent));
 
     slot.endLabel->setPosition({ kRowsEndPercentX, y });
-    slot.endLabel->setString(formatPercent_(a.endPercent).c_str());
+    safeSetString_(slot.endLabel, formatPercent_(a.endPercent));
 
     slot.durationLabel->setPosition({ kRowsDurationX, y });
-    slot.durationLabel->setString(formatTime_(a.endTime - a.baseTimeOffset).c_str());
+    safeSetString_(slot.durationLabel, formatTime_(a.endTime - a.baseTimeOffset));
 
     setRowSlotVisible_(slot, true);
 
@@ -1006,19 +1082,19 @@ void AttemptManagerPopup::updateBlockedPracticeRowSlot_(RowSlot& slot, PracticeS
 
     slot.startLabel->setVisible(true);
     slot.startLabel->setPosition({ kRowsStartPercentX, y });
-    slot.startLabel->setString("Replay Path");
+    safeSetString_(slot.startLabel, "Replay Path");
     slot.startLabel->setColor({255, 210, 210});
 
     slot.endLabel->setVisible(true);
     slot.endLabel->setPosition({ kRowsEndPercentX + 8.f, y });
     std::ostringstream ss;
     ss << session.replayPathAttempts << " locked";
-    slot.endLabel->setString(ss.str().c_str());
+    safeSetString_(slot.endLabel, ss.str().c_str());
     slot.endLabel->setColor({255, 210, 210});
 
     slot.durationLabel->setVisible(true);
     slot.durationLabel->setPosition({ kRowsDurationX - 10.f, y });
-    slot.durationLabel->setString("full session only");
+    safeSetString_(slot.durationLabel, "full session only");
     slot.durationLabel->setColor({255, 185, 185});
 
     showMenuItem_(slot.info, kRowsDeleteX, y, session.sessionId);
@@ -1135,19 +1211,19 @@ void AttemptManagerPopup::updateNormalRunSlot_(ListSlot& slot, int itemIndex, in
     );
 
     if (isAll) {
-        slot.nameLabel->setString("All Attempts   (click to open)");
+        safeSetString_(slot.nameLabel, "All Attempts   (click to open)");
         std::ostringstream count;
         count << m_normalAttempts.size() << " attempts";
-        slot.countLabel->setString(count.str().c_str());
+        safeSetString_(slot.countLabel, count.str().c_str());
 
         float best = 0.f;
         for (auto const& a : m_normalAttempts) best = std::max(best, a.endPercent);
-        slot.bestLabel->setString(("Best " + formatPercent_(best)).c_str());
+        safeSetString_(slot.bestLabel, ("Best " + formatPercent_(best)).c_str());
     }
     else if (group) {
-        slot.nameLabel->setString(normalRunText_(*group).c_str());
-        slot.countLabel->setString(normalRunCountText_(*group).c_str());
-        slot.bestLabel->setString(normalRunBestText_(*group).c_str());
+        safeSetString_(slot.nameLabel, normalRunText_(*group).c_str());
+        safeSetString_(slot.countLabel, normalRunCountText_(*group).c_str());
+        safeSetString_(slot.bestLabel, normalRunBestText_(*group).c_str());
     }
 
     setListSlotVisible_(slot, true);
@@ -1174,13 +1250,13 @@ void AttemptManagerPopup::updatePracticeSessionSlot_(ListSlot& slot, int itemInd
     slot.bg->setOpacity(64);
 
     slot.nameLabel->setPosition({ 22.f, y });
-    slot.nameLabel->setString(practiceSessionText_(session).c_str());
+    safeSetString_(slot.nameLabel, practiceSessionText_(session).c_str());
 
     slot.countLabel->setPosition({ 160.f, y });
-    slot.countLabel->setString(practiceSessionCountText_(session).c_str());
+    safeSetString_(slot.countLabel, practiceSessionCountText_(session).c_str());
 
     slot.bestLabel->setPosition({ 255.f, y });
-    slot.bestLabel->setString(practiceSessionBestText_(session).c_str());
+    safeSetString_(slot.bestLabel, practiceSessionBestText_(session).c_str());
 
     showMenuItem_(slot.button, kListRowHitX, y, session.sessionId);
 
@@ -1228,7 +1304,7 @@ void AttemptManagerPopup::rebuildRows_() {
 
         if (m_emptyRowsLabel) {
             m_emptyRowsLabel->setVisible(true);
-            m_emptyRowsLabel->setString(m_tab == Tab::Practice ? "No practice sessions found for this level." : "No normal-mode runs found for this level.");
+            safeSetString_(m_emptyRowsLabel, m_tab == Tab::Practice ? "No practice sessions found for this level." : "No normal-mode runs found for this level.");
             m_emptyRowsLabel->setPosition({ kRowsViewW * 0.5f, kRowsViewH * 0.5f + 18.f });
         }
 
@@ -1856,10 +1932,10 @@ void AttemptManagerPopup::refreshTopLabels_() {
         if (isNormalRunsView_()) ss << m_startPosGroups.size() << " Runs";
         else if (isPracticeSessionsView_()) ss << m_practiceSessions.size() << " Sessions";
         else ss << m_visibleAttempts.size() << " Attempts";
-        m_totalLabel->setString(ss.str().c_str());
+        safeSetString_(m_totalLabel, ss.str().c_str());
     }
-
-    if (m_filterLabel) m_filterLabel->setString(filterText_().c_str());
+    
+    if (m_filterLabel) safeSetString_(m_filterLabel, filterText_().c_str());
 
     if (m_pageLabel) {
         std::ostringstream ss;
@@ -1872,13 +1948,13 @@ void AttemptManagerPopup::refreshTopLabels_() {
            << " | Page " << (m_page + 1)
            << " / " << pageCount_();
 
-        m_pageLabel->setString(ss.str().c_str());
+        safeSetString_(m_pageLabel, ss.str().c_str());
     }
 
     if (m_selectedLabel) {
         std::ostringstream ss;
         ss << m_selectedSerials.size() << " Selected";
-        m_selectedLabel->setString(ss.str().c_str());
+        safeSetString_(m_selectedLabel, ss.str().c_str());
     }
 }
 
@@ -1932,11 +2008,21 @@ void AttemptManagerPopup::refreshPagingButtons_() {
 }
 
 void AttemptManagerPopup::refreshTabButtons_() {
-    auto setTabState = [this](CCMenuItemSpriteExtra* btn, Tab tab) {
+    const bool canUse =
+        !m_uiTransitioning &&
+        !m_rebuildQueued &&
+        !m_destructiveActionBusy &&
+        !m_confirmOpen;
+
+    if (m_tabMenu) {
+        m_tabMenu->setEnabled(canUse);
+    }
+
+    auto setTabState = [this, canUse](CCMenuItemSpriteExtra* btn, Tab tab) {
         if (!btn) return;
 
         const bool active = (m_tab == tab);
-        btn->setEnabled(!m_destructiveActionBusy && !m_confirmOpen);
+        btn->setEnabled(canUse);
         btn->setOpacity(active ? 255 : 185);
         btn->setScale(active ? 1.02f : 0.96f);
     };
@@ -2034,9 +2120,8 @@ std::string AttemptManagerPopup::sortBestText_() const {
 }
 
 void AttemptManagerPopup::refreshSortButtons_() {
-    if (m_sortRecentLabel) m_sortRecentLabel->setString(sortRecentText_().c_str());
-    if (m_sortBestLabel) m_sortBestLabel->setString(sortBestText_().c_str());
-
+    if (m_sortRecentLabel) safeSetString_(m_sortRecentLabel, sortRecentText_().c_str());
+    if (m_sortBestLabel) safeSetString_(m_sortBestLabel, sortBestText_().c_str());
     const bool canUse = !m_destructiveActionBusy && !m_confirmOpen && !isNormalRunsView_() && !isPracticeSessionsView_();
 
     auto setSortState = [this, canUse](CCMenuItemSpriteExtra* btn, SortMode mode) {
@@ -2075,7 +2160,7 @@ void AttemptManagerPopup::refreshSelectedLabelOnly_() {
 
     std::ostringstream ss;
     ss << m_selectedSerials.size() << " Selected";
-    m_selectedLabel->setString(ss.str().c_str());
+    safeSetString_(m_selectedLabel, ss.str().c_str());
 }
 
 void AttemptManagerPopup::queueRebuildBody_() {

@@ -1,3 +1,8 @@
+# 1.4.62
+- FIX: Crash fixes
+- FIX: Ghost offset fix
+- CHANGE: Real player plays death effect and audio when enabled
+- FIX: Ghosts that completed the level vanish instead of dying at the end
 # 1.4.60
 - FIX: Dual ghost showing up before entering dual
 - FIX: Dual wave trail teleport fix

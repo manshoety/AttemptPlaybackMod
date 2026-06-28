@@ -842,6 +842,26 @@ bool PreloadAttemptsPopup::init(float width, float height) {
 
     m_isReplayBest = (m_kind == ReplayKind::BestSingle);
 
+    if (!G.hasAnyReplayDataForCurrentLevel(m_kind)) {
+        replay_ui_detail::setFallbackFlag(false);
+
+        if (m_isReplayBest) {
+            FLAlertLayer::create(
+                "No Attempts",
+                gd::string("There are no recorded normal mode attempts for this level."),
+                "OK"
+            )->show();
+        } else {
+            FLAlertLayer::create(
+                "No Attempts",
+                gd::string("There are no recorded practice attempts for this level."),
+                "OK"
+            )->show();
+        }
+
+        return false;
+    }
+
     if (m_isReplayBest ) {
         G.setUseCheckpointsRoute(false);
         m_replayOn = G.startReplayBest();

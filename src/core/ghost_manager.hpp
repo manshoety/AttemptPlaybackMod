@@ -95,7 +95,15 @@
 // Make it so that when we run out of player objects, we allow half of them to be reused and keep the rest dead, but ensure once reused, we don't just spam reuse those and cause none to stay dead
 // Is second dual still not visible sometimes? test with bloodbath full run
 
-// When in wave be dual, then single, then dual again all in continuous attempts. The wave trail of the second player icons teleport ahead and have wave trail behind.
+// Make the real player play the death effect (but not technically die) when "ghosst explode" is enabled
+
+// Wave safety thing makes it not record wave points when in reverse mode (negative x direction)
+// CBF shows maybe I should check 2 frames ahead and behind for a real wave point instead of 1?
+// Separate the player 1 and player 2 colors in the color selector thing. Make the files compatible with the old format, and new format. Autoconvert would be replicating the base player colors to both player 1 and player 2.
+// Add little X on top layer that shows up when an attempt dies (optional) (size, opacity settings)
+// Wave ghosts are very laggy, see if I can improve them
+// player2 should play death effect too
+// Dual wave has the teleport wave trail vertical issue (that I fixed for the real player). test on level "want u: 128189958"
 
 
 using namespace geode::prelude;
@@ -551,7 +559,7 @@ public:
     size_t m_numDeadGhosts = 0;
     size_t m_numAliveGhosts = 0;
     int m_ghostTextFlashActionTag = 812345;
-    GhostTextPreset m_ghostTextMode = GhostTextPreset::AliveAttempts;
+    GhostTextPreset m_ghostTextMode = GhostTextPreset::DeadAttempts;
 
     std::string m_lastAppliedPlayLayerGhostText = "";
     bool m_lastAppliedPlayLayerGhostTextVisible = false;
@@ -1581,6 +1589,31 @@ public:
             forcePlayersVisible_();
             clearHeldInputs_();
         }
+    }
+
+    bool hasAnyReplayDataForCurrentLevel(ReplayKind kind) {
+        const bool wantPractice = (kind == ReplayKind::PracticeComposite);
+
+        if (hasCurrentPersistenceTarget_()) {
+            scanAttemptCatalogForLevel_(m_levelIDOnAttach);
+        }
+
+        for (auto const& a : attempts) {
+            if (a.practiceAttempt != wantPractice) continue;
+
+            const bool hasData = !a.p1.empty() || (a.hadDual && !a.p2.empty());
+            if (hasData) return true;
+        }
+
+        for (auto const& entry : m_attemptCatalog) {
+            if (entry.practiceAttempt != wantPractice) continue;
+
+            if (entry.p1Count > 0 || entry.p2Count > 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     int getTotalAttemptsCount() {
@@ -2831,6 +2864,7 @@ public:
 
     void onReset() {
         m_justDied = false;
+        m_playingEndAnimation = false;
 
         if (m_forceFreshRecordingAfterDelete) {
             m_forceFreshRecordingAfterDelete = false;
@@ -2922,6 +2956,7 @@ public:
         m_playbackArmed = false;
         m_pendingRearm = false;
         m_activeOwnerSerial = -1;
+        m_mirrorVisualWarmupFrames = 2;
         m_px = 0.f;
         m_px2 = 0.f;
         m_prevpx2 = 0.f;
@@ -3104,6 +3139,7 @@ public:
         clearGhostBatches_();
         resetPlayerMirrorVisualOffsets_();
         resetMirrorVisualState_();
+        m_mirrorVisualWarmupFrames = 0;
         
         if (m_ghostRoot) {
             m_ghostRoot->setScaleX(1.f);
@@ -3487,6 +3523,10 @@ public:
     }
 
     bool startReplayPractice() {
+        // Maybe the crash the one person had was from reset/toggle the PlayLayer directly from a menu click callback
+        // On macOS, resetting while Geode/Cocos is still releasing the clicked UI
+        // object can maybe crash in CCObject::release from executeMainThreadQueue()?
+        // I'll check after the next update if they still have the crash (only 1 report so far)
         m_freezePlayerXAtEnd = false;
         m_chainAuthoritative = true;
         m_hasWavePointData = false;
@@ -4141,7 +4181,7 @@ public:
     }
 
     void hasReachedEndOfLevel() {
-        m_freezePlayerXAtEnd = true;
+        m_playingEndAnimation = true;
     }
 
     void preUpdate() {
@@ -4201,9 +4241,12 @@ public:
             if (previousOwnerSerial > 0) {
                 m_currentlyHiddenSerials.erase(previousOwnerSerial);
                 if (Attempt* oldOwner = findAttemptBySerial_(previousOwnerSerial)) {
-                    countGhostTextDeathOnce_(*oldOwner);
+                    clearGhostOffset_(*oldOwner);
+
                     oldOwner->primedP1 = false;
                     oldOwner->primedP2 = false;
+                    oldOwner->eolFrozenP1 = false;
+                    oldOwner->eolFrozenP2 = false;
                     oldOwner->setP1Visible(false, true);
                     oldOwner->setP2Visible(false, true);
                 }
@@ -4248,9 +4291,43 @@ public:
                     }
                 }
             }
+            m_pl->m_player1->stopDashing();
+            if (m_ghostsExplode) m_pl->m_player1->playDeathEffect();
+
+            if (m_pl->m_player2 && m_pl->m_player2->isVisible()) {
+                m_pl->m_player2->stopDashing();
+                if (m_ghostsExplode) m_pl->m_player2->playDeathEffect();
+            }
+
+            if (m_ghostsExplodeSFX && m_fmodEngine) {
+                if (m_fmodEngine->m_sfxVolume != 0) {
+                    static std::mt19937 rng(
+                        (uint32_t)std::chrono::high_resolution_clock::now().time_since_epoch().count()
+                    );
+
+                     std::string sfxPath;
+
+                    if (m_useCustomExplodeSounds) {
+                        refreshAndPreloadCustomExplodeSfx_(false);
+
+                        if (!customSfx.empty()) {
+                            std::uniform_int_distribution<size_t> dist(0, customSfx.size() - 1);
+                            sfxPath = customSfx[dist(rng)];
+                        }
+                    }
+
+                    // Fallback when custom disabled or folder empty
+                    if (sfxPath.empty()) {
+                        sfxPath = "explode_11.ogg"_spr;
+                    }
+
+                    g_explodeLimiter.play(sfxPath, /*volume*/ 1.f, /*pitch*/ 1.f);
+                }
+            }
+            countGhostTextDeathOnceBySerial_(m_currentOwner->serial);
         }
 
-        if (m_freezePlayerXAtEnd && !m_currentOwner->completed) {
+        if (m_freezePlayerXAtEnd && !m_playingEndAnimation) {
             m_pl->m_player1->setPosition({m_freezePlayerX, m_freezePlayerY});
             m_pl->m_player1->setRotation(m_freezePlayerRotation);
             if (m_pl->m_player2 && m_pl->m_player2->isVisible()) {
@@ -4822,7 +4899,7 @@ public:
                         GhostsVisibleThisFrame ++;
                         currentPreloaded++;
                     }
-                    else countGhostTextDeathOnce_(a);
+                    else if (!a.completed) countGhostTextDeathOnce_(a);
                     it = m_wantToPrimeIndices.erase(it);
 
                 }
@@ -4870,7 +4947,7 @@ public:
                         numCurrentlyDead++;
                         // remove on death (if ghosts explode, meaning they disapear so I can remove them early)
                         // or remove them if I need player objects freed up
-                        if (m_ghostsExplode || needToFreePlayerObjectsForWaitingQueue(numCurrentlyDead)) {
+                        if (a.completed || m_ghostsExplode || needToFreePlayerObjectsForWaitingQueue(numCurrentlyDead)) {
                             a.setP1Visible(false);
                                 a.setP2Visible(false);
                                 // pool release player objects
@@ -4922,7 +4999,7 @@ public:
                             if (primeGhostToPX_(a, ai, px, px2)) {
                                 if (m_primedSet.insert(ai).second) m_primedIndices.push_back(ai);
                             }
-                            else countGhostTextDeathOnce_(a);
+                            else if (!a.completed) countGhostTextDeathOnce_(a);
                         }
                         else {
                             if (m_wantToPrimeSet.insert(ai).second) {
@@ -5210,6 +5287,7 @@ private:
     int m_previousActiveOwnerSerial = -1;
 
     bool m_freezePlayerXAtEnd = false;
+    bool m_playingEndAnimation = false;
     float m_freezePlayerX = 0.f;
     float m_freezePlayerY = 0.f;
     float m_freezePlayerXP2 = 0.f;
@@ -5296,6 +5374,39 @@ private:
     float m_lastPlayerMirrorFlipT = 0.f;
     bool m_havePlayerMirrorFlipSample = false;
     bool m_havePlayerMirrorAnchorSide = false;
+    int m_mirrorVisualWarmupFrames = 0;
+
+    static constexpr float kMirrorEndpointEps_ = 0.001f;
+
+    bool mirrorEndpointSide_(float t, int& sideOut) const {
+        if (t <= kMirrorEndpointEps_) {
+            sideOut = 0;
+            return true;
+        }
+        if (t >= 1.f - kMirrorEndpointEps_) {
+            sideOut = 1;
+            return true;
+        }
+        return false;
+    }
+
+    void syncGhostMirrorEndpointState_(int side) {
+        m_mirrorAnchorSide = side;
+        m_haveMirrorAnchorSide = true;
+        m_lastMirrorFlipT = side ? 1.f : 0.f;
+        m_haveMirrorFlipSample = true;
+
+        m_mirrorEndpointHoldFrames = 0;
+        m_pendingMirrorAnchorSide = -1;
+        m_lastMirrorVisualT = 0.f;
+    }
+
+    void syncPlayerMirrorEndpointState_(int side) {
+        m_playerMirrorAnchorSide = side;
+        m_havePlayerMirrorAnchorSide = true;
+        m_lastPlayerMirrorFlipT = side ? 1.f : 0.f;
+        m_havePlayerMirrorFlipSample = true;
+    }
 
     float mirrorFlipT_() const {
         if (!m_gl) return 0.f;
@@ -5472,21 +5583,18 @@ private:
         if (!parent) return;
 
         const float rawT = mirrorFlipT_();
+        int endpointSide = 0;
+        if (mirrorEndpointSide_(rawT, endpointSide)) {
+            syncGhostMirrorEndpointState_(endpointSide);
+            node->setScaleX(1.f);
+            node->setPositionX(0.f);
+            return;
+        }
+
         updateMirrorAnchorSide_(rawT);
 
-        float t = 0.f;
-
-        if (mirrorEndpointVisualHold_(rawT, t)) {
-            if (t == 0.f) {
-                node->setScaleX(1.f);
-                node->setPositionX(0.f);
-                return;
-            }
-        }
-        else {
-            t = mirrorVisualT_(rawT);
-            m_lastMirrorVisualT = t;
-        }
+        const float t = mirrorVisualT_(rawT);
+        m_lastMirrorVisualT = t;
 
         const float pivotX = screenCenterXInNode_(parent);
         const float sx = 1.f - 2.f * t;
@@ -5498,6 +5606,17 @@ private:
     void resetMirrorVisualState_() {
         m_lastMirrorFlipT = mirrorFlipT_();
         m_mirrorAnchorSide = m_lastMirrorFlipT >= 0.5f ? 1 : 0;
+
+        int endpointSide = 0;
+        if (mirrorEndpointSide_(m_lastMirrorFlipT, endpointSide)) {
+            m_mirrorAnchorSide = endpointSide;
+            m_playerMirrorAnchorSide = endpointSide;
+        }
+        else {
+            m_mirrorAnchorSide = m_lastMirrorFlipT >= 0.5f ? 1 : 0;
+            m_playerMirrorAnchorSide = m_mirrorAnchorSide;
+        }
+
         m_haveMirrorFlipSample = true;
         m_haveMirrorAnchorSide = true;
 
@@ -5506,7 +5625,6 @@ private:
         m_lastMirrorVisualT = 0.f;
 
         m_lastPlayerMirrorFlipT = m_lastMirrorFlipT;
-        m_playerMirrorAnchorSide = m_lastPlayerMirrorFlipT >= 0.5f ? 1 : 0;
         m_havePlayerMirrorFlipSample = true;
         m_havePlayerMirrorAnchorSide = true;
 
@@ -5520,6 +5638,26 @@ private:
 
     void updateMirrorVisuals_() {
         if (!botActive) return;
+
+        if (m_mirrorVisualWarmupFrames > 0) {
+            --m_mirrorVisualWarmupFrames;
+
+            if (m_ghostRoot) {
+                m_ghostRoot->setScaleX(1.f);
+                m_ghostRoot->setPositionX(0.f);
+            }
+
+            resetPlayerMirrorVisualOffsets_();
+
+            int endpointSide = 0;
+            if (mirrorEndpointSide_(mirrorFlipT_(), endpointSide)) {
+                syncGhostMirrorEndpointState_(endpointSide);
+                syncPlayerMirrorEndpointState_(endpointSide);
+            }
+
+            return;
+        }
+
         applyMirrorVisualTransformToNode_(m_ghostRoot);
         updatePlayerMirrorVisuals_();
     }
@@ -5575,11 +5713,13 @@ private:
         if (!parent) return {0.f, 0.f};
 
         const float rawT = mirrorFlipT_();
-        updatePlayerMirrorAnchorSide_(rawT);
-
-        if (rawT == 0.f || rawT == 1.f) {
+        int endpointSide = 0;
+        if (mirrorEndpointSide_(rawT, endpointSide)) {
+            syncPlayerMirrorEndpointState_(endpointSide);
             return {0.f, 0.f};
         }
+
+        updatePlayerMirrorAnchorSide_(rawT);
 
         float p = playerMirrorProgress_(rawT);
         p = std::clamp(p, 0.f, 1.f);
@@ -6765,6 +6905,12 @@ private:
         return ( (h / 4294967296.0f) * 2.f ) - 1.f;
     }
 
+    void clearGhostOffset_(Attempt& a) {
+        a.ghostOffsetPx = 0.f;
+        a.ghostOffsetTime = 0.0;
+        a.offsetApplied = true;
+    }
+
     void applyRandomOffsetSingle(Attempt& a, bool forceNegative) {
         if (m_randomDistPx == 0) {
             a.ghostOffsetPx = 0.f;
@@ -6788,7 +6934,7 @@ private:
 
         constexpr float kMinOffsetPx = -100.0f;
         constexpr float kMaxOffsetPx = 174.0f;
-        constexpr float kMinMagPx = 10.0f;
+        constexpr float kExactOverlapEpsilonPx = 1.0f;
         constexpr double kEndGapSec = 0.5;
 
         const double ups = std::max(1e-6, m_offsetUnitsPerSecond);
@@ -6815,21 +6961,23 @@ private:
 
         if (forceNegative) {
             offsetPx = -std::fabs(offsetPx);
-            offsetPx = wrapIntoWindow(offsetPx, kMinOffsetPx, -kMinMagPx);
+            offsetPx = wrapIntoWindow(offsetPx, kMinOffsetPx, 0.0f);
         } else {
             offsetPx = wrapIntoWindow(offsetPx, kMinOffsetPx, usableMaxPx);
         }
 
         // Don't have 0 offset to avoid weird overlap
-        if (std::fabs(offsetPx) < kMinMagPx) {
-            const float posCandidate = std::min(kMinMagPx, usableMaxPx);
-            const float negCandidate = -kMinMagPx;
+        if (std::fabs(offsetPx) < kExactOverlapEpsilonPx) {
+            const bool canNudgeForward = usableMaxPx >= kExactOverlapEpsilonPx;
+            const float sign = signedUnit_(
+                static_cast<uint32_t>(a.serial) ^
+                static_cast<uint32_t>(m_levelIDOnAttach) ^
+                0x7F4A7C15u
+            ) >= 0.f ? 1.f : -1.f;
 
-            if (offsetPx >= 0.f && posCandidate >= kMinMagPx) {
-                offsetPx = posCandidate;
-            } else {
-                offsetPx = negCandidate;
-            }
+            offsetPx = (sign > 0.f && canNudgeForward)
+                ? kExactOverlapEpsilonPx
+                : -kExactOverlapEpsilonPx;
         }
 
         a.ghostOffsetPx   = offsetPx;
@@ -6838,7 +6986,13 @@ private:
 
     void applyRandomOffsetsAll_() {
         for (auto& a : attempts) {
-            applyRandomOffsetSingle(a, isRouteOwnerForOffset_(a));
+            if (isRouteOwnerForOffset_(a)) {
+                clearGhostOffset_(a);
+                continue;
+            }
+
+            applyRandomOffsetSingle(a, false);
+            a.offsetApplied = true;
         }
     }
     
@@ -7024,12 +7178,26 @@ private:
 
     bool primeGhostToPX_(Attempt& a, size_t attemptIdx, float pxw, float px2w) {
         //log::info("Priming");
+        const bool isHiddenOwner = isOwnerAnywhereInRoute_(a);
+        const bool isRouteOwner = isRouteOwnerForOffset_(a);
+
+        if (!a.offsetApplied) {
+            if (isRouteOwner) {
+                clearGhostOffset_(a);
+            }
+            else {
+                applyRandomOffsetSingle(a, false);
+                a.offsetApplied = true;
+            }
+        }
+
         double ghostTime = m_currentSessionTime + a.ghostOffsetTime;
         if (ghostTime < 0.0) ghostTime = 0.0;
 
-        if (!a.p1.empty() && ghostTime > a.p1.back().t) return false;
-
-        bool isAnOwner = isOwnerAnywhereInRoute_(a);
+        constexpr double kPrimeEolTolerance = 0.02;
+        if (!a.p1.empty() && ghostTime > static_cast<double>(a.p1.back().t) + kPrimeEolTolerance) {
+            return false;
+        }
         
         if (!a.p1.empty() && !a.primedP1) {
             //log::info("p1 not created");
@@ -7049,12 +7217,6 @@ private:
                     setPOFrameForIcon(a.g1, a.g1CurMode, a, m_randomIcons);
                 }
                 //else log::info("NOT g1 or empty");
-            }
-            
-            // One frame late to apply
-            if (!a.offsetApplied) {
-                applyRandomOffsetSingle(a, isAnOwner);
-                a.offsetApplied = true;
             }
             
             a.i1 = idxForTime(a.acc1Time, a.p1, ghostTime);
@@ -7086,6 +7248,7 @@ private:
                 a.g1->m_waveTrail->reset();
                 a.trailactive1 = false;
                 forceShowPlayerVisuals(a.g1);
+                a.setP1Visible(f.isVisible, true);
             }
 
             a.previouslyHolding1 = f.hold;
@@ -7132,6 +7295,7 @@ private:
                 a.g2->m_waveTrail->reset();
                 a.trailactive2 = false;
                 forceShowPlayerVisuals(a.g2);
+                a.setP2Visible(f2.isVisible, true);
             }
 
             a.previouslyHolding2 = f2.hold;
@@ -7504,19 +7668,60 @@ private:
 
                 // EOL freeze check
                 if ((atLastFrame || atEndTime) && !isP2) {
-                    if (ghost) {
-                        ghost->stopDashing();
-                        if (m_ghostsExplode) {
-                            // ghost->playerDestroyed(false);
-                            ghost->playDeathEffect();
-                            // ghost->setOpacity(0);
+                    eolFrozen = true;
+
+                    if (completedLevel) {
+                        a.eolFrozenP1 = true;
+                        a.eolFrozenP2 = true;
+
+                        a.setP1Visible(false, true);
+                        a.setP2Visible(false, true);
+
+                        if (a.g1) {
+                            a.g1->stopDashing();
+
+                            if (a.g1->m_waveTrail) {
+                                a.g1->m_waveTrail->reset();
+                                a.g1->m_waveTrail->setVisible(false);
+                                a.g1->m_waveTrail->setOpacity(0);
+                            }
                         }
 
-                        if (m_ghostsExplodeSFX && m_fmodEngine && !completedLevel) {
-                            if (m_fmodEngine->m_sfxVolume != 0) {
+                        if (a.g2) {
+                            a.g2->stopDashing();
 
+                            if (a.g2->m_waveTrail) {
+                                a.g2->m_waveTrail->reset();
+                                a.g2->m_waveTrail->setVisible(false);
+                                a.g2->m_waveTrail->setOpacity(0);
+                            }
+                        }
+
+                        a.trailactive1 = false;
+                        a.trailactive2 = false;
+                        a.prevTeleported1 = false;
+                        a.prevTeleported2 = false;
+                        a.hasWavePointData = false;
+
+                        return;
+                    }
+
+                    // Non-completed ghosts
+                    if (ghost) {
+                        ghost->stopDashing();
+
+                        if (m_ghostsExplode) {
+                            ghost->playDeathEffect();
+                        }
+
+                        if (m_ghostsExplodeSFX && m_fmodEngine) {
+                            if (m_fmodEngine->m_sfxVolume != 0) {
                                 static std::mt19937 rng(
-                                    (uint32_t)std::chrono::high_resolution_clock::now().time_since_epoch().count()
+                                    static_cast<uint32_t>(
+                                        std::chrono::high_resolution_clock::now()
+                                            .time_since_epoch()
+                                            .count()
+                                    )
                                 );
 
                                 std::string sfxPath;
@@ -7530,21 +7735,15 @@ private:
                                     }
                                 }
 
-                                // Fallback when custom disabled or folder empty
                                 if (sfxPath.empty()) {
                                     sfxPath = "explode_11.ogg"_spr;
                                 }
 
-                                g_explodeLimiter.play(sfxPath, /*volume*/ 1.f, /*pitch*/ 1.f);
+                                g_explodeLimiter.play(sfxPath, 1.f, 1.f);
                             }
                         }
-
                     }
-                        
-                    //ghost->m_spiderSprite->stopAnimations();
-                    //ghost->m_robotSprite->stopAnimations();
-                    // Need another name for these?
-                    eolFrozen = true;
+
                     countGhostTextDeathOnce_(a);
                 }
 
@@ -8574,7 +8773,7 @@ private:
     }
 
     void applyFrameAndClickToPlayerOverRange(bool isP1 = true) {
-        if (m_freezePlayerXAtEnd) return;
+        if (m_playingEndAnimation) return;
 
         // log::info("applyFrameAndClickToPlayerOverRange");
 

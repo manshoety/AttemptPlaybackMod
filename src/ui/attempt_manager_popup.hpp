@@ -136,6 +136,8 @@ private:
     bool m_uiTransitioning = false;
     bool m_manageRefreshQueued = false;
     bool m_manageRefreshReload = false;
+    bool m_initialBuildQueued = false;
+    bool m_enableTouchesQueued = false;
 
     cocos2d::CCNode* m_root = nullptr;
     cocos2d::CCNode* m_bodyLayer = nullptr;
@@ -322,6 +324,8 @@ private:
     void disableManageLayerTouches_(cocos2d::CCNode* layer);
     void queueRefreshManagePage_(bool reloadFromRuntime);
     void doQueuedRefreshManagePage_(float);
+    void doInitialBuild_(float);
+    void enablePopupTouches_(float);
 };
 
 cocos2d::CCLayer* CreateAttemptManagerPopup();
