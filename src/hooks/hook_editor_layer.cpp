@@ -10,7 +10,7 @@ class $modify(MyLevelEditorLayer, LevelEditorLayer) {
     bool init(GJGameLevel* level, bool noUI) {
         auto& G = Ghosts::I();
 
-        if (G.hasModAttachedToLevel()) {
+        if (G.hasStoredPlayLayerAttachment()) {
             G.clearPlayLayerGhostTextLabel();
             G.saveNewAttemptsForCurrentLevel();
             G.onQuit();

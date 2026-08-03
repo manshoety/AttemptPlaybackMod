@@ -31,19 +31,21 @@ class $modify(PLHook, PlayLayer) {
     }
     $override bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
-        Ghosts::I().updateModEnabled();
-        if (Ghosts::I().isModEnabled()) {
+        auto& G = Ghosts::I();
+        G.clearPlayLayerGhostTextLabel();
+        G.updateModEnabled();
+        if (G.isModEnabled()) {
             // log::info("Attaching to level");
             int lvlId = level ? level->m_levelID : 0;
-            Ghosts::I().prepareLevelPersistence(lvlId, this);
-            Ghosts::I().m_levelIDOnAttach = lvlId;
-            Ghosts::I().attach(this);
+            G.prepareLevelPersistence(lvlId, this);
+            G.m_levelIDOnAttach = lvlId;
+            G.attach(this);
             createGhostTextLabel_();
-            if (Ghosts::I().isRecording()) {
-                Ghosts::I().renumberCurrentAttemptIfFresh();
+            if (G.isRecording()) {
+                G.renumberCurrentAttemptIfFresh();
             }
 
-            Ghosts::I().stopReplay();
+            G.stopReplay();
         }
         
         return true;

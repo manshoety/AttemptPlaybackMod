@@ -87,6 +87,8 @@
 // Multiple people have said "on macOS only 64 attempts get loaded"
 // Someone said the random color button when in random mode wasn't coloring their icons randomly (maybe mod conflict or weird device specific thing idk)
 
+// On some resolutions, sliders can have their position offset weirdly
+
 
 using namespace geode::prelude;
 
@@ -602,7 +604,7 @@ public:
     }
 
     // Ghost text
-    cocos2d::CCLabelBMFont* m_playLayerGhostTextLabel = nullptr;
+    geode::Ref<cocos2d::CCLabelBMFont> m_playLayerGhostTextLabel = nullptr;
 
     bool m_showPlayLayerGhostText = false;
     std::string m_playLayerGhostText = "";
@@ -632,7 +634,7 @@ public:
         cocos2d::CCPoint p2{};
         bool hasP2 = false;
     };
-    cocos2d::CCDrawNode* m_deathMarkerDrawNode = nullptr;
+    geode::Ref<cocos2d::CCDrawNode> m_deathMarkerDrawNode = nullptr;
     std::unordered_map<int, DeathMarkerPositions> m_deathMarkerPositions;
 
     static void replaceAllGhostTextToken_(std::string& value, std::string const& token, std::string const& replacement) {
@@ -825,7 +827,7 @@ public:
     std::string getFormattedGhostText() const { return m_playLayerGhostText; }
         
     void updatePlayLayerGhostTextLabel_() {
-        auto* label = m_playLayerGhostTextLabel;
+        auto* label = m_playLayerGhostTextLabel.data();
         if (!label) return;
 
         const bool replayVisible = botActive || playback || showWhilePlaying;
@@ -1037,7 +1039,7 @@ public:
 
     void flashPlayLayerGhostTextRed(double fadeSeconds = 0.2) {
         if (!m_ghostTextFlashOnDeath) return;
-        auto* label = m_playLayerGhostTextLabel;
+        auto* label = m_playLayerGhostTextLabel.data();
         if (!label) return;
 
         label->stopActionByTag(m_ghostTextFlashActionTag);
@@ -2626,6 +2628,10 @@ public:
         return getPlayLayer() != nullptr;
     }
 
+    bool hasStoredPlayLayerAttachment() const {
+        return m_pl != nullptr;
+    }
+
     bool isAttachedPlayLayer(PlayLayer* pl) const {
         if (!pl || pl != m_pl) return false;
         auto* active = GJBaseGameLayer::get();
@@ -3586,6 +3592,8 @@ public:
     void attach(PlayLayer* pl) {
         //log::info("[Ghosts] attach(entry)");
 
+        clearPlayLayerGhostTextLabel();
+
         setdisablePlayerMove(false);
 
         onQuit();
@@ -3858,7 +3866,6 @@ public:
         buildGhostThatPassedPercentSerialList();
         getPreloadSortMode();
         setPreloadSortMode(m_preloadSortMode);
-        forceHidePlayLayerGhostTextLabelOnly();
     }
 
     void initBotAfterReset_() {
@@ -4205,6 +4212,17 @@ public:
     void onQuit() {
         m_is_quitting = true;
         g_disableUpdate = false;
+
+        clearPlayLayerGhostTextLabel();
+
+        m_preloadActive = false;
+        m_preloadTarget = 0;
+        m_preloadLoaded = 0;
+        m_preloadCursor = 0;
+        m_preloadOrder.clear();
+        m_initialAttemptsToSet.clear();
+        m_preloadQ.clear();
+        m_isPreloaded.clear();
 
         death_sound_preloaded = false;
         m_allowWaveHook = false;
