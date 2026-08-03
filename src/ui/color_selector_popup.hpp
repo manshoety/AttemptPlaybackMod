@@ -96,7 +96,7 @@ protected:
 
         m_mainLayer->setLayout(AnchorLayout::create());
 
-        loadMask_();
+        loadMasks_();
 
         CCSprite* gradient = createFullscreenGradient_();
 
@@ -130,6 +130,62 @@ protected:
                     .pos(-283.f, 158.f)
                     .scale(0.75f)
                     .scaleMult(0.8),
+
+                createTextButton_(
+                    this,
+                    "GJ_button_04.png",
+                    "Player 1",
+                    menu_selector(ColorSelectorPopup::onPlayer1Tab_),
+                    "player1-color-tab-base"_spr,
+                    {-65.f, 116.f},
+                    124.f,
+                    34.f,
+                    0.55f,
+                    0.29f,
+                    kPopupButtonSizeMult
+                ),
+
+                createTextButton_(
+                    this,
+                    "GJ_button_01.png",
+                    "Player 1",
+                    menu_selector(ColorSelectorPopup::onPlayer1Tab_),
+                    "player1-color-tab-selected"_spr,
+                    {-65.f, 112.f},
+                    124.f,
+                    34.f,
+                    0.55f,
+                    0.29f,
+                    kPopupButtonSizeMult
+                ),
+
+                createTextButton_(
+                    this,
+                    "GJ_button_04.png",
+                    "Player 2",
+                    menu_selector(ColorSelectorPopup::onPlayer2Tab_),
+                    "player2-color-tab-base"_spr,
+                    {65.f, 112.f},
+                    124.f,
+                    34.f,
+                    0.55f,
+                    0.29f,
+                    kPopupButtonSizeMult
+                ),
+
+                createTextButton_(
+                    this,
+                    "GJ_button_01.png",
+                    "Player 2",
+                    menu_selector(ColorSelectorPopup::onPlayer2Tab_),
+                    "player2-color-tab-selected"_spr,
+                    {65.f, 112.f},
+                    124.f,
+                    34.f,
+                    0.55f,
+                    0.29f,
+                    kPopupButtonSizeMult
+                ),
 
                 // I'll reorganize to something like this when I have time, less messy
 
@@ -191,18 +247,18 @@ protected:
                     ),
 
                 Build<CCLabelBMFont>::create("Colors used when Color Mode: Random", "bigFont.fnt")
-                    .pos(113.f, -116.f)
+                    .pos(113.f, -128.f)
                     .anchorPoint(0.5f, 0.5f)
                     .scale(0.325f),
 
                 Build<CCLabelBMFont>::create("Click to enable/disable a color", "bigFont.fnt")
-                    .pos(100.f, -130.f)
+                    .pos(100.f, -142.f)
                     .anchorPoint(0.5f, 0.5f)
                     .scale(0.325f),
 
                 Build<CCNode>::create()
                     .id("ColorButtonsNode"_spr)
-                    .pos(-216.f, 48.f)
+                    .pos(-216.f, 33.f)
                     .scale(1.1f)
                     .children(
                         Build<CCNode>::create().id("colorButtonsRow1"_spr).pos(0.f,  48.f),
@@ -226,15 +282,14 @@ protected:
 
         buildColorButtons_();
         refreshAllX_();
-
-        normalizePopupMenuTouchPriorities(m_mainLayer, -504);
+        refreshPlayerTabs_();
 
         m_mainLayer->updateLayout();
         return true;
     }
 
     void onClose(CCObject* sender) override {
-        saveMask_();
+        saveMasks_();
         Ghosts::I().m_randomColorMaskLoaded = false;
         Ghosts::I().updateAllColors();
         Popup::onClose(sender);
@@ -243,13 +298,15 @@ protected:
 private:
     CCMenu* m_uiRoot = nullptr;
 
-    std::bitset<kRandomColorSlots> m_allowed{};
+    std::bitset<kRandomColorSlots> m_allowedP1{};
+    std::bitset<kRandomColorSlots> m_allowedP2{};
+    bool m_editingPlayer1 = true;
     std::array<CCLabelBMFont*, kRandomColorSlots> m_xMark{};
 
     void scaleUIForThatOneTabletUser(float designWidth, float designHeight) {
         if (!m_mainLayer) return;
 
-        const auto size = fitPopupToWindow_(designWidth, designWidth);
+        const auto size = fitPopupToWindow_(designWidth, designHeight);
         const float scale = computeFitScale_(size.width, size.height, designWidth, designHeight);
 
         m_mainLayer->setScale(scale);
@@ -257,16 +314,55 @@ private:
 
     void onExit_(CCObject*) { this->onClose(nullptr); }
 
-    void onEnableAll_(CCObject*) {
-        m_allowed.set();
+    std::bitset<kRandomColorSlots>& activeMask_() {
+        return m_editingPlayer1 ? m_allowedP1 : m_allowedP2;
+    }
+
+    std::bitset<kRandomColorSlots> const& activeMask_() const {
+        return m_editingPlayer1 ? m_allowedP1 : m_allowedP2;
+    }
+
+    void onPlayer1Tab_(CCObject*) {
+        m_editingPlayer1 = true;
         refreshAllX_();
-        saveMask_();
+        refreshPlayerTabs_();
+    }
+
+    void onPlayer2Tab_(CCObject*) {
+        m_editingPlayer1 = false;
+        refreshAllX_();
+        refreshPlayerTabs_();
+    }
+
+    void setTabVariantVisible_(const char* nodeId, bool visible) {
+        if (!m_uiRoot) return;
+
+        auto* item = typeinfo_cast<CCMenuItemSpriteExtra*>(
+            m_uiRoot->getChildByIDRecursive(nodeId)
+        );
+        if (!item) return;
+
+        item->setVisible(visible);
+        item->setEnabled(visible);
+    }
+
+    void refreshPlayerTabs_() {
+        setTabVariantVisible_("player1-color-tab-base"_spr, !m_editingPlayer1);
+        setTabVariantVisible_("player1-color-tab-selected"_spr, m_editingPlayer1);
+        setTabVariantVisible_("player2-color-tab-base"_spr, m_editingPlayer1);
+        setTabVariantVisible_("player2-color-tab-selected"_spr, !m_editingPlayer1);
+    }
+
+    void onEnableAll_(CCObject*) {
+        activeMask_().set();
+        refreshAllX_();
+        saveMasks_();
     }
 
     void onDisableAll_(CCObject*) {
-        m_allowed.reset();
+        activeMask_().reset();
         refreshAllX_();
-        saveMask_();
+        saveMasks_();
     }
 
     void onPressColor_(CCObject* sender) {
@@ -276,39 +372,66 @@ private:
         int slot = item->getTag();
         if (slot < 0 || slot >= kRandomColorSlots) return;
 
-        m_allowed.flip((size_t)slot);
+        activeMask_().flip((size_t)slot);
         updateOneX_(slot);
-        saveMask_();
+        saveMasks_();
     }
 
-    void loadMask_() {
-        std::string s;
+    static bool isValidMaskString_(std::string const& s) {
+        if ((int)s.size() != kRandomColorSlots) return false;
+        return std::all_of(s.begin(), s.end(), [](char ch) { return ch == '0' || ch == '1'; });
+    }
 
-        if (Mod::get()->hasSavedValue(kGhostRandomColorsMaskKey)) {
-            s = Mod::get()->getSavedValue<std::string>(kGhostRandomColorsMaskKey);
-            normalizeMaskString_(s);
-        } else {
-            s = kDefaultRandomColorMask;
-            Mod::get()->setSavedValue(kGhostRandomColorsMaskKey, s);
-        }
+    static std::string readValidSavedMask_(const char* key) {
+        auto* mod = Mod::get();
+        if (!mod->hasSavedValue(key)) return {};
+        auto s = mod->getSavedValue<std::string>(key);
+        return isValidMaskString_(s) ? s : std::string{};
+    }
 
-        if ((int)s.size() != kRandomColorSlots) {
-            log::warn("[ColorSelectorPopup] saved mask invalid length (got {}, expected {}), using built-in default", s.size(), kRandomColorSlots);
-            s = kDefaultRandomColorMask;
-        }
-
-        m_allowed.reset();
+    static void maskFromString_(std::bitset<kRandomColorSlots>& mask, std::string const& s) {
+        mask.reset();
         for (int slot = 0; slot < kRandomColorSlots; ++slot) {
-            if (s[slot] == '1') m_allowed.set((size_t)slot);
+            if (s[slot] == '1') mask.set((size_t)slot);
         }
     }
 
-    void saveMask_() {
+    static std::string maskToString_(std::bitset<kRandomColorSlots> const& mask) {
         std::string s(kRandomColorSlots, '0');
         for (int slot = 0; slot < kRandomColorSlots; ++slot) {
-            s[slot] = m_allowed.test((size_t)slot) ? '1' : '0';
+            s[slot] = mask.test((size_t)slot) ? '1' : '0';
         }
-        Mod::get()->setSavedValue(kGhostRandomColorsMaskKey, s);
+        return s;
+    }
+
+    void loadMasks_() {
+        const std::string legacy = readValidSavedMask_(kGhostRandomColorsMaskKey);
+        std::string p1 = readValidSavedMask_(kGhostRandomColorsMaskP1Key);
+        std::string p2 = readValidSavedMask_(kGhostRandomColorsMaskP2Key);
+        const std::string fallback = kDefaultRandomColorMask;
+
+        // if old version with only one palette, duplicate to both players
+        if (p1.empty()) p1 = !legacy.empty() ? legacy : (!p2.empty() ? p2 : fallback);
+        if (p2.empty()) p2 = !legacy.empty() ? legacy : (!p1.empty() ? p1 : fallback);
+
+        maskFromString_(m_allowedP1, p1);
+        maskFromString_(m_allowedP2, p2);
+        saveMasks_();
+    }
+
+    void saveMasks_() {
+        const std::string p1 = maskToString_(m_allowedP1);
+        const std::string p2 = maskToString_(m_allowedP2);
+        std::string legacy(kRandomColorSlots, '0');
+
+        for (int slot = 0; slot < kRandomColorSlots; ++slot) {
+            legacy[slot] = (m_allowedP1.test((size_t)slot) || m_allowedP2.test((size_t)slot)) ? '1' : '0';
+        }
+
+        auto* mod = Mod::get();
+        mod->setSavedValue(kGhostRandomColorsMaskP1Key, p1);
+        mod->setSavedValue(kGhostRandomColorsMaskP2Key, p2);
+        mod->setSavedValue(kGhostRandomColorsMaskKey, legacy);
     }
 
     void refreshAllX_() {
@@ -318,7 +441,7 @@ private:
     void updateOneX_(int slot) {
         if (slot < 0 || slot >= kRandomColorSlots) return;
         if (!m_xMark[slot]) return;
-        m_xMark[slot]->setVisible(!m_allowed.test((size_t)slot));
+        m_xMark[slot]->setVisible(!activeMask_().test((size_t)slot));
     }
 
     void buildColorButtons_() {
@@ -402,7 +525,7 @@ private:
         item->setSizeMult(kPressSizeMult);
 
         m_xMark[slot] = x;
-        x->setVisible(!m_allowed.test((size_t)slot));
+        x->setVisible(!activeMask_().test((size_t)slot));
 
         return item;
     }
@@ -448,76 +571,157 @@ private:
         return opt;
     }
 
-    std::string buildMaskString_() const {
-        std::string s(kRandomColorSlots, '0');
+    static constexpr const char* kPresetFormatMarker = "APXCOLORSTWO";
+    static constexpr const char* kPresetP1Prefix = "PLAYERONE:";
+    static constexpr const char* kPresetP2Prefix = "PLAYERTWO:";
+
+    static std::string encodeMaskLetters_(std::bitset<kRandomColorSlots> const& mask) {
+        std::string out(kRandomColorSlots, 'A');
         for (int i = 0; i < kRandomColorSlots; ++i) {
-            s[i] = m_allowed.test((size_t)i) ? '1' : '0';
+            out[i] = mask.test((size_t)i) ? 'B' : 'A';
         }
-        return s;
+        return out;
     }
 
-    static void normalizeMaskString_(std::string& s) {
+    static bool decodeMaskLetters_(std::string const& encoded, std::bitset<kRandomColorSlots>& out) {
+        if ((int)encoded.size() != kRandomColorSlots) return false;
+        out.reset();
+        for (int i = 0; i < kRandomColorSlots; ++i) {
+            const char ch = encoded[i];
+            if (ch == 'B' || ch == 'b') out.set((size_t)i);
+            else if (ch != 'A' && ch != 'a') return false;
+        }
+        return true;
+    }
+
+    std::string buildPresetData_() const {
+        std::bitset<kRandomColorSlots> legacy = m_allowedP1 | m_allowedP2;
+        return maskToString_(legacy) + "\n" +
+            kPresetFormatMarker + "\n" +
+            kPresetP1Prefix + encodeMaskLetters_(m_allowedP1) + "\n" +
+            kPresetP2Prefix + encodeMaskLetters_(m_allowedP2) + "\n";
+    }
+
+    static void normalizeLegacyMaskString_(std::string& s) {
         s.erase(std::remove_if(s.begin(), s.end(), [](unsigned char ch) {
             return ch != '0' && ch != '1';
         }), s.end());
     }
 
-    bool applyMaskString_(std::string s) {
-        normalizeMaskString_(s);
+    static bool readPrefixedLine_(
+        std::string const& data,
+        const char* prefix,
+        std::string& out
+    ) {
+        const auto pos = data.find(prefix);
+        if (pos == std::string::npos) return false;
 
-        if ((int)s.size() != kRandomColorSlots) {
-            log::warn("[ColorPreset] invalid mask length: got {}, expected {}", s.size(), kRandomColorSlots);
-            return false;
-        }
+        const auto begin = pos + std::char_traits<char>::length(prefix);
 
-        m_allowed.reset();
-        for (int i = 0; i < kRandomColorSlots; ++i) {
-            if (s[i] == '1') m_allowed.set((size_t)i);
-        }
+        const auto end = data.find_first_of("\r\n", begin);
 
-        refreshAllX_();
-        saveMask_();
-
-        Ghosts::I().m_randomColorMaskLoaded = false;
-        Ghosts::I().updateAllColors();
+        out = data.substr(
+            begin,
+            end == std::string::npos
+                ? std::string::npos
+                : end - begin
+        );
 
         return true;
     }
 
-    void onSaveColorPreset_(cocos2d::CCObject*) {
-        saveMask_();
+    enum class PresetLoadKind {
+        Invalid,
+        LegacyConverted,
+        Current
+    };
 
-        const std::string data = buildMaskString_();
+    PresetLoadKind applyPresetData_(std::string const& data) {
+        std::bitset<kRandomColorSlots> p1;
+        std::bitset<kRandomColorSlots> p2;
+
+        if (data.find(kPresetFormatMarker) != std::string::npos) {
+            std::string p1Letters;
+            std::string p2Letters;
+            if (!readPrefixedLine_(data, kPresetP1Prefix, p1Letters) ||
+                !readPrefixedLine_(data, kPresetP2Prefix, p2Letters) ||
+                !decodeMaskLetters_(p1Letters, p1) ||
+                !decodeMaskLetters_(p2Letters, p2)) {
+                log::warn("[ColorPreset] malformed P1/P2 preset extension");
+                return PresetLoadKind::Invalid;
+            }
+        } else {
+            std::string legacy = data;
+            normalizeLegacyMaskString_(legacy);
+            if (!isValidMaskString_(legacy)) {
+                log::warn("[ColorPreset] invalid legacy mask length: got {}, expected {}", legacy.size(), kRandomColorSlots);
+                return PresetLoadKind::Invalid;
+            }
+            maskFromString_(p1, legacy);
+            p2 = p1;
+        }
+ 
+        m_allowedP1 = p1;
+        m_allowedP2 = p2;
+        refreshAllX_();
+        saveMasks_();
+ 
+        Ghosts::I().m_randomColorMaskLoaded = false;
+        Ghosts::I().updateAllColors();
+
+        return data.find(kPresetFormatMarker) != std::string::npos
+            ? PresetLoadKind::Current
+            : PresetLoadKind::LegacyConverted;
+    }
+
+    void onSaveColorPreset_(cocos2d::CCObject*) {
+        saveMasks_();
+
+        const std::string data = buildPresetData_();
         const auto dir = presetsDir_();
         const auto suggested = dir / kDefaultPresetName;
 
-        auto opt = presetPickOptions_(suggested, /*includeFilename=*/true);
+        auto opt = presetPickOptions_(suggested, true);
 
         async::spawn(
-            geode::utils::file::pick(geode::utils::file::PickMode::SaveFile, opt),
-            [this, data](geode::Result<std::optional<std::filesystem::path>> result) {
-
+            geode::utils::file::pick(
+                geode::utils::file::PickMode::SaveFile,
+                opt
+            ),
+            [data](
+                geode::Result<std::optional<std::filesystem::path>> result
+            ) {
                 if (result.isErr()) {
-                    log::info("[ColorPreset] Save cancelled / failed: {}", result.unwrapErr());
+                    result.inspectErr([](std::string const& error) {
+                        log::info(
+                            "[ColorPreset] Save cancelled / failed: {}",
+                            error
+                        );
+                    });
                     return;
                 }
 
-                auto optPath = result.unwrap();
+                std::optional<std::filesystem::path> selectedPath;
 
-                if (!optPath)
+                result.inspect(
+                    [&](std::optional<std::filesystem::path> const& value) {
+                        selectedPath = value;
+                    }
+                );
+
+                if (!selectedPath || selectedPath->empty()) {
                     return;
+                }
 
-                std::filesystem::path path = optPath.value();
-
-                if (path.empty())
-                    return;
+                std::filesystem::path path = *selectedPath;
 
                 if (!path.has_extension()) {
                     path.replace_extension(kPresetExt);
                 }
 
                 std::error_code ec;
-                auto parent = path.parent_path();
+                const auto parent = path.parent_path();
+
                 if (!parent.empty()) {
                     std::filesystem::create_directories(parent, ec);
 
@@ -533,11 +737,15 @@ private:
                 auto wr = geode::utils::file::writeStringSafe(path, data);
 
                 if (wr.isErr()) {
-                    log::error("[ColorPreset] Failed to write {}: {}", geode::utils::string::pathToString(path), wr.unwrapErr());
+                    wr.inspectErr([&](std::string const& error) {
+                        log::error(
+                            "[ColorPreset] Failed to write {}: {}",
+                            geode::utils::string::pathToString(path),
+                            error
+                        );
+                    });
                     return;
                 }
-
-                //log::info("[ColorPreset] Saved preset to {}", geode::utils::string::pathToString(path));
             }
         );
     }
@@ -550,31 +758,95 @@ private:
         self->retain();
 
         async::spawn(
-            geode::utils::file::pick(geode::utils::file::PickMode::OpenFile, opt),
-            [self](geode::Result<std::optional<std::filesystem::path>> result) {
-
+            geode::utils::file::pick(
+                geode::utils::file::PickMode::OpenFile,
+                opt
+            ),
+            [self](
+                geode::Result<std::optional<std::filesystem::path>> result
+            ) {
                 if (result.isErr()) {
-                    log::info("[ColorPreset] Load cancelled / failed: {}", result.unwrapErr());
+                    result.inspectErr([](std::string const& error) {
+                        log::info(
+                            "[ColorPreset] Load cancelled / failed: {}",
+                            error
+                        );
+                    });
+
                     self->release();
                     return;
                 }
 
-                auto optPath = result.unwrap();
-                if (!optPath || optPath->empty()) {
+                std::optional<std::filesystem::path> selectedPath;
+
+                result.inspect(
+                    [&](std::optional<std::filesystem::path> const& value) {
+                        selectedPath = value;
+                    }
+                );
+
+                if (!selectedPath || selectedPath->empty()) {
                     self->release();
                     return;
                 }
 
-                auto rd = geode::utils::file::readString(*optPath);
+                auto rd =
+                    geode::utils::file::readString(*selectedPath);
+
                 if (rd.isErr()) {
-                    log::error("[ColorPreset] Failed to read {}: {}",
-                        geode::utils::string::pathToString(*optPath), rd.unwrapErr());
+                    rd.inspectErr([&](std::string const& error) {
+                        log::error(
+                            "[ColorPreset] Failed to read {}: {}",
+                            geode::utils::string::pathToString(
+                                *selectedPath
+                            ),
+                            error
+                        );
+                    });
+
                     self->release();
                     return;
                 }
 
-                std::string s = rd.unwrap();
-                self->applyMaskString_(std::move(s));
+                std::string data;
+
+                rd.inspect([&](std::string const& value) {
+                    data = value;
+                });
+
+                const auto kind =
+                    self->applyPresetData_(data);
+
+                if (kind == PresetLoadKind::LegacyConverted) {
+                    auto wr =
+                        geode::utils::file::writeStringSafe(
+                            *selectedPath,
+                            self->buildPresetData_()
+                        );
+
+                    if (wr.isErr()) {
+                        wr.inspectErr(
+                            [](std::string const& error) {
+                                log::warn(
+                                    "[ColorPreset] Loaded old preset "
+                                    "but failed to rewrite it as "
+                                    "P1/P2 format: {}",
+                                    error
+                                );
+                            }
+                        );
+                    }
+                    else {
+                        log::info(
+                            "[ColorPreset] Converted old preset "
+                            "to P1/P2 format: {}",
+                            geode::utils::string::pathToString(
+                                *selectedPath
+                            )
+                        );
+                    }
+                }
+
                 self->release();
             }
         );

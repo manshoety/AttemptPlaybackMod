@@ -109,6 +109,7 @@ private:
     void onCycleGhostColors(cocos2d::CCObject*);
     void onOpenColorSelector(cocos2d::CCObject*);
     void onOpenGhostDistance(cocos2d::CCObject*);
+    void onOpenGhostSettings(cocos2d::CCObject*);
     void onOpenPlaybackSettings(cocos2d::CCObject*);
     void onFreeRobux(cocos2d::CCObject*);
     void onExitButton(cocos2d::CCObject*);

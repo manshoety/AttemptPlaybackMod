@@ -45,8 +45,6 @@ bool GhostDistancePopup::init(float width, float height) {
     updateValueLabel_();
     layoutPreview_();
 
-    normalizePopupMenuTouchPriorities(m_mainLayer, -504);
-
     return true;
 }
 

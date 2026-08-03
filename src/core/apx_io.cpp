@@ -908,7 +908,8 @@ static bool rewriteAPXFileToCurrent_(
 bool loadAPXFileWithMigration(
     std::filesystem::path const& path,
     std::vector<Attempt>& attemptsOut,
-    PracticePath& practicePathOut
+    PracticePath& practicePathOut,
+    bool rewriteLegacy
 ) {
     attemptsOut.clear();
     practicePathOut.clear();
@@ -1072,7 +1073,7 @@ bool loadAPXFileWithMigration(
         loadedLegacy = true;
     }
 
-    if (loadedLegacy) {
+    if (loadedLegacy && rewriteLegacy) {
         if (!rewriteAPXFileToCurrent_(path, attemptsOut, practicePathOut)) {
             log::warn(
                 "[SAVE FILE] loaded legacy file but failed to rewrite it to current format: {}",

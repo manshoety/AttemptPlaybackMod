@@ -21,16 +21,7 @@ class $modify(MyPlayerObject, PlayerObject) {
         auto& G = Ghosts::I();
 
         auto* pl = G.getPlayLayer();
-        if (!pl) return nullptr;
-
-        auto* scene = cocos2d::CCDirector::sharedDirector()->getRunningScene();
-        if (!scene) return nullptr;
-
-        // Avoid using a cached PlayLayer after scene switches
-        if (!pl->getParent()) return nullptr;
-        if (!scene->isRunning()) return nullptr;
-
-        if (!G.shouldHandlePlayLayer(pl)) return nullptr;
+        if (!pl || !G.shouldHandlePlayLayer(pl)) return nullptr;
 
         auto* p1 = pl->m_player1;
         auto* p2 = pl->m_player2;

@@ -1,3 +1,25 @@
+# 1.5.0
+FIXES: 
+- Counted attempt as noclip if it passed through a spike during end animation (which was wrong)
+- Crash when changing to fullscreen
+- Click replay offset issue
+- Wave trail visuals (CBF still makes it weird)
+- Hopefully fixed some weirdness with the Attempt Manager but who knows
+- Dual player 2 visible before it should be
+- Reverse wave not recording points correctly
+- Don't let user delete session while recording it
+- Dual wave visual trail bug when teleporting
+- Player 2 plays death effect too
+ADDITIONS:
+- Separate custom colors for player 1 and 2
+- On screen text counting deaths, alive attempts, or custom text
+- Death markers (Red X where each attempt died during playback)
+- Import/Export and merge ability for attempt saves (APX files)
+- Cheat detection changes and compatibility
+CHANGES:
+- Using custom scroll implementation instead of a package for the Attempt Manager
+- Safer PlayerObject creation optimization
+- Stable ID for custom levels (instead of name based)
 # 1.4.62
 - FIX: Crash fixes
 - FIX: Ghost offset fix

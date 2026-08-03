@@ -12,7 +12,7 @@ bool readAPXPracticePath(std::istream& in, uint32_t chunkSize, PracticePath& pat
 bool writeAPXAttemptCompact(std::ostream& out, Attempt const& attempt);
 bool readAPXAttemptCompact(std::istream& in, uint32_t chunkSize, Attempt& attempt, bool* outUsedLegacy = nullptr);
 
-bool loadAPXFileWithMigration(std::filesystem::path const& path, std::vector<Attempt>& attemptsOut, PracticePath& practicePathOut);
+bool loadAPXFileWithMigration(std::filesystem::path const& path, std::vector<Attempt>& attemptsOut, PracticePath& practicePathOut, bool rewriteLegacy = true);
 bool saveAPXFileCurrent(std::filesystem::path const& path, std::vector<Attempt> const& attempts, PracticePath const& practicePath);
 
 bool scanAPXFileCatalog(std::filesystem::path const& path, APXCatalogScanResult& out);

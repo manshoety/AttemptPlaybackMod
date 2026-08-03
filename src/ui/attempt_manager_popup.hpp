@@ -12,16 +12,13 @@
 #include <Geode/cocos/extensions/GUI/CCControlExtension/CCScale9Sprite.h>
 
 #include "../core/ghost_manager.hpp"
+#include "../utils/attempt_scroll.hpp"
 
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <string>
-
-namespace alpha::ui {
-    class AdvancedScrollLayer;
-    class AdvancedScrollBar;
-}
+#include <filesystem>
 
 class AttemptManagerPopup : public geode::Popup {
 public:
@@ -154,8 +151,7 @@ private:
     cocos2d::CCMenu* m_rowsMenu = nullptr;
     cocos2d::CCMenu* m_actionMenu = nullptr;
 
-    alpha::ui::AdvancedScrollLayer* m_rowsScrollLayer = nullptr;
-    alpha::ui::AdvancedScrollBar* m_rowsScrollBar = nullptr;
+    attemptplayback::ui::AttemptScrollView* m_rowsScrollLayer = nullptr;
 
     float m_savedRowsScrollY = 0.f;
 
@@ -202,13 +198,14 @@ private:
     void rebuildDetails_();
     void refreshManagePage_(bool reloadFromRuntime);
     void rebuildBlankTab_(cocos2d::CCNode* layer, char const* title);
+    void rebuildExportPage_(cocos2d::CCNode* layer);
+    void rebuildImportPage_(cocos2d::CCNode* layer);
 
     void resetPageWidgets_();
     void setupRowsScroll_(cocos2d::CCNode* layer);
     void rebuildRows_();
     void scrollRowsPageToTop_();
     void setRowsScrollEnabled_(bool enabled);
-    void ensureRowsScrollBar_(bool enabled);
     void buildRowSlots_();
     void setRowSlotVisible_(RowSlot& slot, bool visible);
     void updateAttemptRowSlot_(RowSlot& slot, APXAttemptDiskInfo const& a, int row, float contentH);
@@ -288,6 +285,19 @@ private:
     void onNormalInfo(cocos2d::CCObject* sender);
     void onPracticeInfo(cocos2d::CCObject* sender);
     void onRefresh(cocos2d::CCObject* sender);
+    void onExportFullFile(cocos2d::CCObject* sender);
+    void onExportBestNormal(cocos2d::CCObject* sender);
+    void onExportBestPractice(cocos2d::CCObject* sender);
+    void onImportReplace(cocos2d::CCObject* sender);
+    void onImportMerge(cocos2d::CCObject* sender);
+
+    void beginExport_(Ghosts::AttemptFileExportMode mode);
+    void beginImport_(Ghosts::AttemptFileImportMode mode);
+    void showImportConfirm_(
+        std::filesystem::path const& source,
+        Ghosts::AttemptFileImportMode mode,
+        Ghosts::AttemptFileImportPreview const& preview
+    );
 
     bool deleteAttemptBySerial_(int serial);
     bool deleteSelectedAttempts_();

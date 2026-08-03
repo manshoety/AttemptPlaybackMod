@@ -6,6 +6,8 @@
 #include <Geode/ui/BasedButtonSprite.hpp>
 #include <Geode/ui/General.hpp>
 #include <Geode/ui/Layout.hpp>
+#include <Geode/utils/file.hpp>
+#include <Geode/utils/async.hpp>
 
 #include <Geode/binding/ButtonSprite.hpp>
 #include <Geode/binding/CCMenuItemSpriteExtra.hpp>
@@ -17,7 +19,6 @@
 #include <Geode/cocos/extensions/GUI/CCControlExtension/CCScale9Sprite.h>
 
 #include <UIBuilder.hpp>
-#include <alphalaneous.alphas-ui-pack/include/API.hpp>
 #include "../utils/ui_utils.hpp"
 #include "color_selector_popup.hpp"
 
@@ -31,9 +32,14 @@
 using namespace geode::prelude;
 using namespace cocos2d;
 using namespace cocos2d::extension;
-using namespace alpha::prelude;
 
 namespace {
+    int currentPopupTouchPriority_() {
+        auto* director = CCDirector::sharedDirector();
+        auto* dispatcher = director ? director->getTouchDispatcher() : nullptr;
+        return dispatcher ? dispatcher->getTargetPrio() : -500;
+    }
+
     constexpr float kPopupW = 700.f;
     constexpr float kPopupH = 380.f;
 
@@ -270,6 +276,36 @@ namespace {
         item->setVisible(true);
         item->setEnabled(true);
     }
+
+    geode::utils::file::FilePickOptions attemptFilePickOptions_(std::filesystem::path const& defaultPath) {
+        geode::utils::file::FilePickOptions opt;
+        opt.defaultPath = defaultPath;
+
+        geode::utils::file::FilePickOptions::Filter apx;
+        apx.description = "AttemptPlayback Files (*.apx)";
+        apx.files = { "*.apx" };
+
+        geode::utils::file::FilePickOptions::Filter all;
+        all.description = "All files (*.*)";
+        all.files = { "*.*" };
+
+        opt.filters = { apx, all };
+        return opt;
+    }
+
+    std::filesystem::path ensureApxExtension_(std::filesystem::path path) {
+        std::string ext = geode::utils::string::pathToString(path.extension());
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        if (ext != ".apx") path.replace_extension(".apx");
+        return path;
+    }
+
+    std::string importFileName_(std::filesystem::path const& path) {
+        const auto filename = geode::utils::string::pathToString(path.filename());
+        return filename.empty() ? std::string("selected APX file") : filename;
+    }
 }
 
 AttemptManagerPopup* AttemptManagerPopup::create() {
@@ -342,11 +378,7 @@ void AttemptManagerPopup::disableManageLayerTouches_(CCNode* layer) {
     if (!layer) return;
 
     if (m_rowsScrollLayer && m_rowsScrollLayer->getParent()) {
-        m_rowsScrollLayer->setVerticalScroll(false);
-        m_rowsScrollLayer->setVerticalScrollWheel(false);
-        m_rowsScrollLayer->setDraggingEnabled(false);
-        m_rowsScrollLayer->blockTouchBehind(false);
-        m_rowsScrollLayer->allowEmptyClickThrough(true);
+        m_rowsScrollLayer->setScrollEnabled(false);
     }
 
     if (m_rowsMenu) m_rowsMenu->setEnabled(false);
@@ -357,11 +389,7 @@ void AttemptManagerPopup::disableManageLayerTouches_(CCNode* layer) {
 
 void AttemptManagerPopup::onClose(CCObject* sender) {
     if (m_rowsScrollLayer && m_rowsScrollLayer->getParent()) {
-        m_rowsScrollLayer->setVerticalScroll(false);
-        m_rowsScrollLayer->setVerticalScrollWheel(false);
-        m_rowsScrollLayer->setDraggingEnabled(false);
-        m_rowsScrollLayer->blockTouchBehind(false);
-        m_rowsScrollLayer->allowEmptyClickThrough(true);
+        m_rowsScrollLayer->setScrollEnabled(false);
     }
     if (m_confirmOpen || m_destructiveActionBusy || m_uiTransitioning || m_rebuildQueued) {
         return;
@@ -387,11 +415,7 @@ void AttemptManagerPopup::onClose(CCObject* sender) {
     m_manageRefreshReload = false;
 
     if (m_rowsScrollLayer && m_rowsScrollLayer->getParent()) {
-        m_rowsScrollLayer->setVerticalScroll(false);
-        m_rowsScrollLayer->setVerticalScrollWheel(false);
-        m_rowsScrollLayer->setDraggingEnabled(false);
-        m_rowsScrollLayer->blockTouchBehind(false);
-        m_rowsScrollLayer->allowEmptyClickThrough(true);
+        m_rowsScrollLayer->setScrollEnabled(false);
     }
 
     m_rowBgBySerial.clear();
@@ -539,7 +563,6 @@ void AttemptManagerPopup::rebuild_() {
     closeMenu->addChild(closeBtn);
 
     scaleUIForThatOneTabletUser(kPopupW, kPopupH);
-    normalizePopupMenuTouchPriorities(m_mainLayer, -504);
 }
 
 void AttemptManagerPopup::scaleUIForThatOneTabletUser(float designWidth, float designHeight) {
@@ -570,13 +593,13 @@ void AttemptManagerPopup::rebuildBody_() {
     if (!m_exportLayer) {
         m_exportLayer = CCNode::create();
         m_bodyLayer->addChild(m_exportLayer);
-        rebuildBlankTab_(m_exportLayer, "Export Attempts");
+        rebuildExportPage_(m_exportLayer);
     }
 
     if (!m_importLayer) {
         m_importLayer = CCNode::create();
         m_bodyLayer->addChild(m_importLayer);
-        rebuildBlankTab_(m_importLayer, "Import Attempts");
+        rebuildImportPage_(m_importLayer);
     }
 
     const bool showNormal   = m_tab == Tab::Manage;
@@ -615,20 +638,87 @@ void AttemptManagerPopup::rebuildBody_() {
     refreshTabButtons_();
 }
 
-void AttemptManagerPopup::rebuildBlankTab_(CCNode* layer, char const* title) {
+void AttemptManagerPopup::rebuildExportPage_(CCNode* layer) {
     if (!layer) return;
 
     layer->removeAllChildrenWithCleanup(true);
     makePanel_(0.f, -16.f, 625.f, 238.f, layer, 76);
-    makeLabel_(title, 0.f, 48.f, 0.68f, layer, {255, 220, 80});
-    makeLabel_("I will add this in a later update.", 0.f, 8.f, 0.40f, layer, {190, 200, 255});
-    makeLabel_("If you have any ideas for stuff to add, please let me know in the discord (link on mod page).", 0.f, -20.f, 0.32f, layer, {160, 170, 215});
+    makeLabel_("Export Attempts", 0.f, 78.f, 0.62f, layer, {255, 220, 80});
+
+    auto* menu = CCMenu::create();
+    menu->setPosition({0.f, 0.f});
+    layer->addChild(menu, 20);
+
+    CCLabelBMFont* fullLabel = nullptr;
+    auto* full = makeSmallTextButton_(
+        this, menu_selector(AttemptManagerPopup::onExportFullFile),
+        "Export Full File", "GJ_button_01.png",
+        -155.f, 18.f, 220.f, 34.f, "export-full-file"_spr, 1.f, &fullLabel);
+    
+    CCLabelBMFont* normalLabel = nullptr;
+    auto* normal = makeSmallTextButton_(
+        this, menu_selector(AttemptManagerPopup::onExportBestNormal),
+        "Export Best Normal", "GJ_button_01.png",
+        -155.f, -35.f, 220.f, 34.f, "export-best-normal"_spr, 1.f, &normalLabel);
+    
+    CCLabelBMFont* practiceLabel = nullptr;
+    auto* practice = makeSmallTextButton_(
+        this, menu_selector(AttemptManagerPopup::onExportBestPractice),
+        "Export Best Practice", "GJ_button_01.png",
+        -155.f, -88.f, 220.f, 34.f, "export-best-practice"_spr, 1.f, &practiceLabel);
+
+    if (fullLabel) fullLabel->setScale(fullLabel->getScale() * 2.f);
+    if (normalLabel) normalLabel->setScale(normalLabel->getScale() * 2.f);
+    if (practiceLabel) practiceLabel->setScale(practiceLabel->getScale() * 2.f);
+
+    menu->addChild(full);
+    menu->addChild(normal);
+    menu->addChild(practice);
+
+    makeLabel_("Everything in this level's save file.", -18.f, 18.f, 0.28f, layer, {215, 220, 255}, {0.f, 0.5f});
+    makeLabel_("Only the single best normal-mode attempt.", -18.f, -35.f, 0.28f, layer, {215, 220, 255}, {0.f, 0.5f});
+    makeLabel_("Only the best practice replay path and the attempts it uses.", -18.f, -88.f, 0.25f, layer, {215, 220, 255}, {0.f, 0.5f});
+}
+
+void AttemptManagerPopup::rebuildImportPage_(CCNode* layer) {
+    if (!layer) return;
+
+    layer->removeAllChildrenWithCleanup(true);
+    makePanel_(0.f, -16.f, 625.f, 238.f, layer, 76);
+    makeLabel_("Import Attempts", 0.f, 72.f, 0.62f, layer, {255, 220, 80});
+
+    auto* menu = CCMenu::create();
+    menu->setPosition({0.f, 0.f});
+    layer->addChild(menu, 20);
+
+    CCLabelBMFont* replaceLabel = nullptr;
+    auto* replace = makeSmallTextButton_(
+        this, menu_selector(AttemptManagerPopup::onImportReplace),
+        "Replace Current File", "GJ_button_06.png",
+        -150.f, 5.f, 230.f, 36.f, "import-replace"_spr, 1.f, &replaceLabel);
+    
+    CCLabelBMFont* mergeLabel = nullptr;
+    auto* merge = makeSmallTextButton_(
+        this, menu_selector(AttemptManagerPopup::onImportMerge),
+        "Merge With Current Save", "GJ_button_01.png",
+        -150.f, -65.f, 230.f, 36.f, "import-merge"_spr, 1.f, &mergeLabel);
+
+    if (replaceLabel) replaceLabel->setScale(replaceLabel->getScale() * 1.5f);
+    if (mergeLabel) mergeLabel->setScale(mergeLabel->getScale() * 1.5f);
+
+    menu->addChild(replace);
+    menu->addChild(merge);
+
+    makeLabel_("Overwrites this level's current attempts save.", -8.f, 10.f, 0.27f, layer, {255, 205, 205}, {0.f, 0.5f});
+    makeLabel_("Backup before doing this if you care about the current save.", -8.f, -8.f, 0.23f, layer, {220, 185, 185}, {0.f, 0.5f});
+
+    makeLabel_("Keeps current data and adds the imported data.", -8.f, -60.f, 0.27f, layer, {215, 220, 255}, {0.f, 0.5f});
+    makeLabel_("Conflicting IDs are remapped so neither save overwrites the other.", -8.f, -78.f, 0.23f, layer, {185, 195, 235}, {0.f, 0.5f});
 }
 
 void AttemptManagerPopup::resetPageWidgets_() {
     // I love eating nullptrs
     m_rowsScrollLayer = nullptr;
-    m_rowsScrollBar = nullptr;
     m_rowsLayer = nullptr;
     m_rowsMenu = nullptr;
     m_detailsLayer = nullptr;
@@ -871,40 +961,32 @@ void AttemptManagerPopup::rebuildManagePage_() {
 }
 
 void AttemptManagerPopup::setupRowsScroll_(CCNode* layer) {
-    m_rowsScrollLayer = AdvancedScrollLayer::create({ kRowsViewW, kRowsViewH });
+    m_rowsScrollLayer = attemptplayback::ui::AttemptScrollView::create({ kRowsViewW, kRowsViewH });
+    if (!m_rowsScrollLayer) return;
+
     m_rowsScrollLayer->setPosition({ kRowsViewX, kRowsViewY });
     m_rowsScrollLayer->setID("attempt-manager-rows-scroll"_spr);
 
-    m_rowsScrollLayer->setVerticalScroll(true);
-    m_rowsScrollLayer->setHorizontalScroll(false);
-    m_rowsScrollLayer->setVerticalScrollWheel(true);
-    m_rowsScrollLayer->setHorizontalScrollWheel(false);
-    m_rowsScrollLayer->setVerticalScrollForHorizontal(true);
-
-    m_rowsScrollLayer->setDraggingEnabled(true);
-    m_rowsScrollLayer->blockTouchBehind(false);
-    m_rowsScrollLayer->allowEmptyClickThrough(true);
-
-    m_rowsScrollLayer->setScrollDelta(kRowH);
-    m_rowsScrollLayer->setOvershoot(16.f);
-    m_rowsScrollLayer->setFriction(0.82f);
-    m_rowsScrollLayer->setMinVelocity(0.05f);
+    m_rowsScrollLayer->setTouchPriority(currentPopupTouchPriority_());
 
     layer->addChild(m_rowsScrollLayer, 5);
+
+    auto* contentLayer = m_rowsScrollLayer->getContentLayer();
+    if (!contentLayer) return;
 
     m_rowsLayer = CCNode::create();
     m_rowsLayer->setAnchorPoint({0.f, 0.f});
     m_rowsLayer->setPosition({0.f, 0.f});
     m_rowsLayer->setContentSize({kRowsViewW, kRowsViewH});
     m_rowsLayer->setID("attempt-manager-rows-layer"_spr);
-    m_rowsScrollLayer->getContentLayer()->addChild(m_rowsLayer, 5);
+    contentLayer->addChild(m_rowsLayer, 5);;
 
     m_rowsMenu = CCMenu::create();
     m_rowsMenu->setAnchorPoint({0.f, 0.f});
     m_rowsMenu->setPosition({0.f, 0.f});
     m_rowsMenu->setContentSize({kRowsViewW, kRowsViewH});
     m_rowsMenu->setID("attempt-manager-rows-menu"_spr);
-    m_rowsScrollLayer->getContentLayer()->addChild(m_rowsMenu, 10);
+    contentLayer->addChild(m_rowsMenu, 10);
 
     buildRowSlots_();
     buildListSlots_();
@@ -918,43 +1000,12 @@ void AttemptManagerPopup::setupRowsScroll_(CCNode* layer) {
     setRowsScrollEnabled_(false);
 }
 
-void AttemptManagerPopup::ensureRowsScrollBar_(bool enabled) {
-    if (!m_rowsScrollLayer) return;
-
-    if (!m_rowsScrollBar) {
-        m_rowsScrollBar = AdvancedScrollBar::create(m_rowsScrollLayer, ScrollOrientation::VERTICAL);
-        m_rowsScrollBar->setPosition({ kRowsViewX + kRowsViewW * 0.5f + 8.f, kRowsViewY });
-        m_rowsScrollBar->setContentSize({ 12.f, kRowsViewH });
-        m_rowsScrollBar->setID("attempt-manager-rows-scrollbar"_spr);
-        m_rowsScrollBar->lockToScrollLayer(true);
-
-        auto* parent = m_tab == Tab::Practice ? m_managePracticeLayer : m_manageNormalLayer;
-        if (parent) parent->addChild(m_rowsScrollBar, 6);
-    }
-
-    m_rowsScrollBar->setVisible(enabled);
-}
-
 void AttemptManagerPopup::setRowsScrollEnabled_(bool enabled) {
-    if (!m_rowsScrollLayer) return;
-
-    m_rowsScrollLayer->setVerticalScroll(enabled);
-    m_rowsScrollLayer->setVerticalScrollWheel(enabled);
-    m_rowsScrollLayer->setDraggingEnabled(enabled);
-
-    m_rowsScrollLayer->blockTouchBehind(enabled);
-    m_rowsScrollLayer->allowEmptyClickThrough(true);
-
-    if (!enabled) {
-        m_rowsScrollLayer->setScrollY(0.f, false);
-    }
-
-    ensureRowsScrollBar_(enabled);
+    if (m_rowsScrollLayer) m_rowsScrollLayer->setScrollEnabled(enabled);
 }
 
 void AttemptManagerPopup::scrollRowsPageToTop_() {
-    if (!m_rowsScrollLayer) return;
-    m_rowsScrollLayer->setScrollY(0.f, false);
+    if (m_rowsScrollLayer) m_rowsScrollLayer->scrollToTop();
 }
 
 void AttemptManagerPopup::setRowSlotVisible_(RowSlot& slot, bool visible) {
@@ -1264,6 +1315,12 @@ void AttemptManagerPopup::updatePracticeSessionSlot_(ListSlot& slot, int itemInd
     setListSlotVisible_(slot, true);
 
     showMenuItem_(slot.trash, kRowsDeleteX, y, session.sessionId);
+    if (Ghosts::I().isPracticeSessionBeingRecorded(session.sessionId)) {
+        parkMenuItem_(slot.trash);
+    }
+    else {
+        showMenuItem_(slot.trash, kRowsDeleteX, y, session.sessionId);
+    }
 
     parkMenuItem_(slot.info);
 }
@@ -1402,6 +1459,10 @@ void AttemptManagerPopup::rebuildDetails_() {
             m_actionMenu->addChild(makeSmallTextButton_(this, menu_selector(AttemptManagerPopup::onSelectAllInRun), "Select Deletable", "GJ_button_01.png", kRightPanelX, 33.f, 116.f, 24.f, "select-deletable"_spr));
             auto* deleteSessionBtn = makeSmallTextButton_(this, menu_selector(AttemptManagerPopup::onDeletePracticeSession), "Delete Session", "GJ_button_05.png", kRightPanelX, 0.f, 112.f, 23.f, "delete-session"_spr);
             deleteSessionBtn->setTag(m_selectedPracticeSessionId);
+            if (Ghosts::I().isPracticeSessionBeingRecorded(m_selectedPracticeSessionId)) {
+                deleteSessionBtn->setEnabled(false);
+                deleteSessionBtn->setOpacity(90);
+            }
             m_actionMenu->addChild(deleteSessionBtn);
         }
         return;
@@ -1451,7 +1512,14 @@ void AttemptManagerPopup::refreshManagePage_(bool reloadFromRuntime) {
     rebuildDetails_();
     refreshTopLabels_();
     m_destructiveActionBusy = false;
+    if (m_sortMenu) m_sortMenu->setEnabled(true);
+    if (m_pageMenu) m_pageMenu->setEnabled(true);
+    if (m_rowsMenu) m_rowsMenu->setEnabled(true);
+    if (m_actionMenu) m_actionMenu->setEnabled(true);
+
+    refreshTabButtons_();
     refreshPagingButtons_();
+    refreshTopControls_();
 }
 
 void AttemptManagerPopup::buildStartPosGroups_() {
@@ -2179,11 +2247,7 @@ void AttemptManagerPopup::queueRebuildBody_() {
     if (m_actionMenu) m_actionMenu->setEnabled(false);
 
     if (m_rowsScrollLayer && m_rowsScrollLayer->getParent()) {
-        m_rowsScrollLayer->setVerticalScroll(false);
-        m_rowsScrollLayer->setVerticalScrollWheel(false);
-        m_rowsScrollLayer->setDraggingEnabled(false);
-        m_rowsScrollLayer->blockTouchBehind(false);
-        m_rowsScrollLayer->allowEmptyClickThrough(true);
+        m_rowsScrollLayer->setScrollEnabled(false);
     }
 
     this->scheduleOnce(
@@ -2428,6 +2492,15 @@ void AttemptManagerPopup::onDeletePracticeSession(CCObject* sender) {
     const int sessionId = node ? node->getTag() : m_selectedPracticeSessionId;
     if (sessionId <= 0) return;
 
+    if (Ghosts::I().isPracticeSessionBeingRecorded(sessionId)) {
+        FLAlertLayer::create(
+            "Practice Run Is Recording",
+            "You cannot delete the practice session that is currently being recorded. Finish or leave that run first.",
+            "OK"
+        )->show();
+        return;
+    }
+
     showDeletePracticeSessionConfirm_(sessionId);
 }
 
@@ -2446,6 +2519,239 @@ void AttemptManagerPopup::onPracticeInfo(CCObject*) {
 void AttemptManagerPopup::onRefresh(CCObject*) {
     if (m_destructiveActionBusy || m_confirmOpen || m_uiTransitioning || m_rebuildQueued) return;
     queueRefreshManagePage_(true);
+}
+
+void AttemptManagerPopup::onExportFullFile(CCObject*) {
+    beginExport_(Ghosts::AttemptFileExportMode::FullFile);
+}
+
+void AttemptManagerPopup::onExportBestNormal(CCObject*) {
+    beginExport_(Ghosts::AttemptFileExportMode::BestNormalAttempt);
+}
+
+void AttemptManagerPopup::onExportBestPractice(CCObject*) {
+    beginExport_(Ghosts::AttemptFileExportMode::BestPracticePath);
+}
+
+void AttemptManagerPopup::onImportReplace(CCObject*) {
+    beginImport_(Ghosts::AttemptFileImportMode::ReplaceCurrent);
+}
+
+void AttemptManagerPopup::onImportMerge(CCObject*) {
+    beginImport_(Ghosts::AttemptFileImportMode::MergeWithCurrent);
+}
+
+void AttemptManagerPopup::beginExport_(Ghosts::AttemptFileExportMode mode) {
+    if (m_confirmOpen || m_destructiveActionBusy || m_uiTransitioning || m_rebuildQueued) return;
+
+    auto& G = Ghosts::I();
+    if (!G.hasModAttachedToLevel()) {
+        FLAlertLayer::create("Export Failed", "You must be inside a level to export its attempts.", "OK")->show();
+        return;
+    }
+
+    std::string base = geode::utils::string::pathToString(G.getCurrentLevelSavePath().stem());
+    if (base.empty()) base = "attempts";
+
+    std::string suffix;
+    switch (mode) {
+        case Ghosts::AttemptFileExportMode::FullFile:
+            suffix = "_full.apx";
+            break;
+        case Ghosts::AttemptFileExportMode::BestNormalAttempt:
+            suffix = "_best-normal.apx";
+            break;
+        case Ghosts::AttemptFileExportMode::BestPracticePath:
+            suffix = "_best-practice.apx";
+            break;
+    }
+
+    const auto suggested = G.getAttemptExportsDir() / (base + suffix);
+    auto opt = attemptFilePickOptions_(suggested);
+
+    auto* self = this;
+    self->retain();
+
+    async::spawn(
+        geode::utils::file::pick(geode::utils::file::PickMode::SaveFile, opt),
+        [self, mode](geode::Result<std::optional<std::filesystem::path>> result) {
+            if (result.isErr()) {
+                result.inspectErr([](std::string const& error) {
+                    log::info("[APX export] picker cancelled / failed: {}", error);
+                });
+                self->release();
+                return;
+            }
+
+            std::optional<std::filesystem::path> selectedPath;
+            result.inspect([&](std::optional<std::filesystem::path> const& value) {
+                selectedPath = value;
+            });
+
+            if (!selectedPath || selectedPath->empty()) {
+                self->release();
+                return;
+            }
+
+            const auto destination = ensureApxExtension_(*selectedPath);
+            std::string error;
+            if (!Ghosts::I().exportCurrentLevelAttempts(destination, mode, &error)) {
+                const std::string message = error.empty()
+                    ? "The APX export failed. Check the logs for details."
+                    : error;
+                FLAlertLayer::create("Export Failed", gd::string(message.c_str()), "OK")->show();
+                self->release();
+                return;
+            }
+
+            const std::string name = importFileName_(destination);
+            const std::string message = "Exported successfully as:\n<cy>" + name + "</c>";
+            FLAlertLayer::create("Export Complete", gd::string(message.c_str()), "OK")->show();
+            self->release();
+        }
+    );
+}
+
+void AttemptManagerPopup::beginImport_(Ghosts::AttemptFileImportMode mode) {
+    if (m_confirmOpen || m_destructiveActionBusy || m_uiTransitioning || m_rebuildQueued) return;
+
+    auto& G = Ghosts::I();
+    if (!G.hasModAttachedToLevel()) {
+        FLAlertLayer::create("Import Failed", "You must be inside a level to import attempts into it.", "OK")->show();
+        return;
+    }
+
+    auto opt = attemptFilePickOptions_(G.getAttemptExportsDir());
+    auto* self = this;
+    self->retain();
+
+    async::spawn(
+        geode::utils::file::pick(geode::utils::file::PickMode::OpenFile, opt),
+        [self, mode](geode::Result<std::optional<std::filesystem::path>> result) {
+            if (result.isErr()) {
+                result.inspectErr([](std::string const& error) {
+                    log::info("[APX import] picker cancelled / failed: {}", error);
+                });
+                self->release();
+                return;
+            }
+
+            std::optional<std::filesystem::path> selectedPath;
+            result.inspect([&](std::optional<std::filesystem::path> const& value) {
+                selectedPath = value;
+            });
+
+            if (!selectedPath || selectedPath->empty()) {
+                self->release();
+                return;
+            }
+
+            auto preview = Ghosts::I().inspectAttemptImportFile(*selectedPath);
+            if (!preview.valid) {
+                const std::string message = preview.error.empty()
+                    ? "The selected file is not a valid APX save."
+                    : preview.error;
+                FLAlertLayer::create("Import Failed", gd::string(message.c_str()), "OK")->show();
+                self->release();
+                return;
+            }
+
+            self->showImportConfirm_(*selectedPath, mode, preview);
+            self->release();
+        }
+    );
+}
+
+void AttemptManagerPopup::showImportConfirm_(
+    std::filesystem::path const& source,
+    Ghosts::AttemptFileImportMode mode,
+    Ghosts::AttemptFileImportPreview const& preview
+) {
+    if (m_confirmOpen || m_destructiveActionBusy) return;
+
+    m_confirmOpen = true;
+    refreshPagingButtons_();
+    refreshTabButtons_();
+
+    std::ostringstream ss;
+    ss << "File: <cy>" << importFileName_(source) << "</c>\n";
+    ss << "Current: <cy>" << preview.currentAttempts << " attempts / "
+       << preview.currentPracticeSessions << " practice runs</c>\n";
+    ss << "Import: <cy>" << preview.incomingAttempts << " attempts / "
+       << preview.incomingPracticeSessions << " practice runs</c>\n\n";
+
+    std::string title;
+    std::string confirmText;
+
+    if (mode == Ghosts::AttemptFileImportMode::ReplaceCurrent) {
+        title = "Replace Current Save?";
+        confirmText = "Replace";
+        ss << "<cr>WARNING: This overwrites the current APX save.</c>\n";
+        ss << "Data missing from the import will be deleted.\n";
+        ss << "If you care about this save, please make a backup first.";
+    }
+    else {
+        title = "Merge APX Saves?";
+        confirmText = "Merge";
+        ss << "Current data stays; imported data is added.\n";
+        ss << "ID conflicts: <cy>" << preview.attemptSerialConflicts << " attempts / "
+           << preview.practiceSessionIdConflicts << " practice runs</c>\n";
+        ss << "Imported IDs are remapped. Duplicate runs are kept.";
+    }
+
+    this->retain();
+    createQuickPopup(
+        title.c_str(),
+        gd::string(ss.str().c_str()),
+        "Cancel",
+        confirmText.c_str(),
+        [this, source, mode](FLAlertLayer*, bool btn2) {
+            m_confirmOpen = false;
+
+            if (!btn2 || m_destructiveActionBusy) {
+                refreshPagingButtons_();
+                refreshTabButtons_();
+                this->release();
+                return;
+            }
+
+            m_destructiveActionBusy = true;
+            refreshPagingButtons_();
+            refreshTabButtons_();
+
+            std::string error;
+            const bool ok = Ghosts::I().importAttemptFile(source, mode, &error);
+
+            m_destructiveActionBusy = false;
+            refreshPagingButtons_();
+            refreshTabButtons_();
+
+            if (!ok) {
+                const std::string message = error.empty()
+                    ? "The APX import failed. Check the logs for details."
+                    : error;
+                FLAlertLayer::create("Import Failed", gd::string(message.c_str()), "OK")->show();
+                this->release();
+                return;
+            }
+
+            m_selectedSerials.clear();
+            m_selectedSerial = -1;
+            m_selectedRunGroupId = -1;
+            m_selectedPracticeSessionId = 0;
+            m_normalView = NormalView::Runs;
+            m_practiceView = PracticeView::Sessions;
+            m_runFilter = RunFilter::All;
+            m_page = 0;
+            loadAttemptsFromRuntime_();
+
+            const char* message = mode == Ghosts::AttemptFileImportMode::ReplaceCurrent
+                ? "The current APX save was replaced successfully.\n\nRecording has been restarted."
+                : "The APX saves were merged successfully.\n\nImported IDs were remapped and recording has been restarted.";
+            FLAlertLayer::create("Import Complete", gd::string(message), "OK")->show();
+            this->release();
+        }
+    );
 }
 
 bool AttemptManagerPopup::deleteAttemptBySerial_(int serial) {
@@ -2513,7 +2819,8 @@ float AttemptManagerPopup::sanitizePercentInput_(TextInput* input, float fallbac
     }
 
     auto parsed = geode::utils::numFromString<float>(clean);
-    float v = parsed.isOk() ? parsed.unwrap() : fallback;
+    float v = fallback;
+    if (auto value = parsed.ok()) v = *value;
     v = std::clamp(v, 0.f, 100.f);
 
     std::string formatted = formatPercent_(v);
@@ -2826,6 +3133,15 @@ void AttemptManagerPopup::showDeleteNormalRunConfirm_(int groupId) {
 
 void AttemptManagerPopup::showDeletePracticeSessionConfirm_(int sessionId) {
     if (m_confirmOpen) return;
+
+    if (Ghosts::I().isPracticeSessionBeingRecorded(sessionId)) {
+        FLAlertLayer::create(
+            "Practice Run Is Recording",
+            "You cannot delete the practice session that is currently being recorded. Finish or leave that run first.",
+            "OK"
+        )->show();
+        return;
+    }
 
     auto const* session = findPracticeSession_(sessionId);
     if (!session) return;

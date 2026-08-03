@@ -24,6 +24,7 @@
 #include <UIBuilder.hpp>
 #include "ghost_distance_popup.hpp"
 #include "color_selector_popup.hpp"
+#include "ghost_settings_popup.hpp"
 #include "attempt_manager_popup.hpp"
 #include "../core/types.hpp"
 #include "../utils/ui_utils.hpp"
@@ -341,29 +342,6 @@ void PlaybackModMenu::buildTemplateUI_() {
                 .anchorPoint(0.f, 0.5f)
                 .scale(0.475f),
 
-            Build<EditorButtonSprite>::create(
-                        Build<CCSprite>::createSpriteName("geode.loader/settings.png"),
-                        EditorBaseColor::Gray,
-                        EditorBaseSize::Normal
-                    )
-                        .intoMenuItem(this, menu_selector(PlaybackModMenu::onOpenPlaybackSettings))
-                        .ignoreAnchorPointForPos(false)
-                        .anchorPoint(0.5f, 0.5f)
-                        .pos(-260.f, -118.f)
-                        .scale(0.8f)/*not sure how to fix base scale being wrong when unpressed*/
-                        .scaleMult(kPopupButtonSizeMult)
-                        .layoutOpts(Build<AxisLayoutOptions>::create()
-                            .crossAlign(AxisAlignment::Start)
-                        )
-                        .id("PlaybackSettingsButton"_spr)
-                        .children(
-                            Build<CCLabelBMFont>::create("Playback\nSettings", "bigFont.fnt")
-                                .alignment(kCCTextAlignmentCenter)
-                                .pos(35.f, 17.f)
-                                .anchorPoint(0.f, 0.5f)
-                                .scale(0.625f)
-                        ),
-
             Build<CCMenu>::create()
                 .id("MoreOptionsColumn"_spr)
                 .pos(168.f, -149.f)
@@ -403,44 +381,43 @@ void PlaybackModMenu::buildTemplateUI_() {
                         EditorBaseColor::LightBlue,
                         EditorBaseSize::Normal
                     )
-                        .intoMenuItem(this, menu_selector(PlaybackModMenu::onOpenColorSelector))
+                        .intoMenuItem(this, menu_selector(PlaybackModMenu::onOpenGhostSettings))
                         .ignoreAnchorPointForPos(false)
                         .anchorPoint(0.5f, 0.5f)
                         .scaleMult(kPopupButtonSizeMult)
                         .layoutOpts(Build<AxisLayoutOptions>::create()
                             .crossAlign(AxisAlignment::Start)
                         )
-                        .id("AllowedRandomColorsButton"_spr)
+                        .id("GhostSettingsButton"_spr)
                         .children(
-                            Build<CCLabelBMFont>::create("Color Selector", "bigFont.fnt")
-                                .alignment(kCCTextAlignmentCenter)
-                                .pos(35.f, 17.f)
-                                .anchorPoint(0.f, 0.5f)
-                                .scale(0.625f)
-                        ),
-                    Build<EditorButtonSprite>::create(
-                        Build<CCSprite>::createSpriteName("geode.loader/settings.png"),
-                        EditorBaseColor::LightBlue,
-                        EditorBaseSize::Normal
-                    )
-                        .intoMenuItem(this, menu_selector(PlaybackModMenu::onOpenGhostDistance))
-                        .ignoreAnchorPointForPos(false)
-                        .anchorPoint(0.5f, 0.5f)
-                        .scaleMult(kPopupButtonSizeMult)
-                        .pos(-100.f, 0)
-                        .layoutOpts(Build<AxisLayoutOptions>::create()
-                            .crossAlign(AxisAlignment::Start)
-                        )
-                        .id("GhostDistanceButton"_spr)
-                        .children(
-                            Build<CCLabelBMFont>::create("Ghost Distance", "bigFont.fnt")
+                            Build<CCLabelBMFont>::create("Ghost Settings", "bigFont.fnt")
                                 .alignment(kCCTextAlignmentCenter)
                                 .pos(35.f, 17.f)
                                 .anchorPoint(0.f, 0.5f)
                                 .scale(0.625f)
                         ),
 
-                    
+                    Build<EditorButtonSprite>::create(
+                        Build<CCSprite>::createSpriteName("geode.loader/settings.png"),
+                        EditorBaseColor::LightBlue,
+                        EditorBaseSize::Normal
+                    )
+                        .intoMenuItem(this, menu_selector(PlaybackModMenu::onOpenPlaybackSettings))
+                        .ignoreAnchorPointForPos(false)
+                        .anchorPoint(0.5f, 0.5f)
+                        .scaleMult(kPopupButtonSizeMult)
+                        .layoutOpts(Build<AxisLayoutOptions>::create()
+                            .crossAlign(AxisAlignment::Start)
+                        )
+                        .id("PlaybackSettingsButton"_spr)
+                        .children(
+                            Build<CCLabelBMFont>::create("Playback Settings", "bigFont.fnt")
+                                .alignment(kCCTextAlignmentCenter)
+                                .pos(35.f, 17.f)
+                                .anchorPoint(0.f, 0.5f)
+                                .scale(0.625f)
+                        ),
+
                     Build<CCSprite>::createSpriteName("geode.loader/tag-paid.png")
                         .scale(0.775f)
                         .intoMenuItem(this, menu_selector(PlaybackModMenu::onFreeRobux))
@@ -502,10 +479,16 @@ void PlaybackModMenu::buildTemplateUI_() {
         .collect();
 
         scaleUIForThatOneTabletUser(kPopupW, kPopupH);
-        normalizePopupMenuTouchPriorities(m_mainLayer, -504);
 
         cacheReplayButtons_();
         refreshReplayButtons_();
+}
+
+void PlaybackModMenu::onOpenGhostSettings(CCObject*) {
+    if (auto* p = GhostSettingsPopup::create()) {
+        p->m_noElasticity = true;
+        p->show();
+    }
 }
 
 void PlaybackModMenu::scaleUIForThatOneTabletUser(float designWidth, float designHeight) {
@@ -724,6 +707,13 @@ void PlaybackModMenu::onToggleReplayPreventCompletion(CCObject*) {
 void PlaybackModMenu::onCycleGhostColors(CCObject*) {
     static std::vector<std::string> modes{ "PlayerColors", "Random", "White", "Black" };
     auto cur = Mod::get()->getSavedValue<std::string>("ghost-colors");
+    std::string curLower = cur;
+    std::transform(curLower.begin(), curLower.end(), curLower.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (curLower == "random") cur = "Random";
+    else if (curLower == "white") cur = "White";
+    else if (curLower == "black") cur = "Black";
+    else if (curLower == "playercolors" || curLower == "player-colors") cur = "PlayerColors";
     auto it = std::find(modes.begin(), modes.end(), cur);
     size_t i = (it == modes.end()) ? 0 : (size_t(it - modes.begin()) + 1) % modes.size();
     auto next = modes[i];
@@ -1049,8 +1039,6 @@ bool PreloadAttemptsPopup::init(float width, float height) {
     refreshInfoLabels_(startVal);
     // setPreloadValue_(); I don't use this now and reset preload on each click of the load buttons
 
-    normalizePopupMenuTouchPriorities(m_mainLayer, -504);
-
     this->scheduleUpdate();
     return true;
 }
@@ -1099,11 +1087,8 @@ int PreloadAttemptsPopup::sanitizeParseClamp_() {
     long long v = 0;
 
     auto parsed = geode::utils::numFromString<long long>(digits);
-    if (parsed.isOk()) {
-        v = parsed.unwrap();
-    }
-    else {
-        v = 0;
+    if (auto value = parsed.ok()) {
+        v = *value;
     }
 
     if (v < 0) v = 0;
@@ -1233,7 +1218,7 @@ void PreloadAttemptsPopup::beginLoading_(int clampedN) {
 }
 
 void PreloadAttemptsPopup::tickLoading_() {
-    int loaded = 0;
+    int loaded = Ghosts::I().getPreloadLoadedCount();
     int realPO = getSettingIntOrDefault_(Mod::get(), "real-player-objects", 1000);
     if (Ghosts::I().isPreloadingAttempts()) {
         // Load 64 per frame for the first ones with real player objects (slow), then speed up a ton for the rest since they're fast
@@ -1241,8 +1226,6 @@ void PreloadAttemptsPopup::tickLoading_() {
         else Ghosts::I().preloadStep(1000);
         loaded = Ghosts::I().getPreloadLoadedCount();
     }
-
-    loaded = Ghosts::I().getPreloadLoadedCount();
     const int target = Ghosts::I().getPreloadTargetCount();
 
     if (m_numAttemptsLoadingLabel) {
@@ -1424,7 +1407,6 @@ bool PlaybackSettingsPopup::init(float width, float height) {
 
     // Enforce dependent visibility/enable state
     refreshDependentVisibility_();
-    normalizePopupMenuTouchPriorities(m_mainLayer, -504);
 
     this->scheduleUpdate();
     return true;
@@ -1608,11 +1590,8 @@ float PlaybackSettingsPopup::sanitizeParseClampPercent_() {
 
     double v = 0.0;
     auto parsed = geode::utils::numFromString<double>(s);
-    if (parsed.isOk()) {
-        v = parsed.unwrap();
-    }
-    else {
-        v = 0.0;
+    if (auto value = parsed.ok()) {
+        v = *value;
     }
 
     const double clamped = std::clamp(v, 0.0, 100.0);
@@ -1661,11 +1640,8 @@ int PlaybackSettingsPopup::sanitizeParseClampMaxVisible_() {
 
     long long v = 0;
     auto parsed = geode::utils::numFromString<long long>(digits);
-    if (parsed.isOk()) {
-        v = parsed.unwrap();
-    }
-    else {
-        v = 0;
+    if (auto value = parsed.ok()) {
+        v = *value;
     }
 
     if (v < 0) v = 0;

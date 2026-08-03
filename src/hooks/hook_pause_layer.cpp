@@ -13,8 +13,11 @@ using namespace attemptplayback;
 
 class $modify(MyPauseLayer, PauseLayer) {
     static void onModify(auto& self) {
-        if (auto res = self.setHookPriorityPost("PauseLayer::customSetup", Priority::Last); !res) {
-            geode::log::warn("Failed to set hook priority: {}", res.unwrapErr());
+        if (!self.setHookPriorityPost(
+            "PauseLayer::customSetup",
+            Priority::Last
+        )) {
+            geode::log::warn("Failed to set PauseLayer::customSetup hook priority");
         }
     }
 

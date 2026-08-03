@@ -22,6 +22,7 @@
 #include <Geode/cocos/sprite_nodes/CCSprite.h>
 #include <Geode/cocos/cocoa/CCArray.h>
 #include <Geode/cocos/misc_nodes/CCMotionStreak.h>
+#include <Geode/cocos/draw_nodes/CCDrawNode.h>
 
 #include <Geode/loader/Loader.hpp>
 #include <Geode/loader/Mod.hpp>
@@ -43,12 +44,20 @@
 #include <fstream>
 #include <functional>
 #include <numeric>
+#include <cctype>
 
 #include "../core/dashing_args.hpp"
 #include "../core/apx_io.hpp"
 #include "../core/apx_format.hpp"
 #include "./globals.hpp"
 #include <legowiifun.cheat_api/include/cheatAPI.hpp>
+#ifdef MY_MOD_ID
+#undef MY_MOD_ID
+#endif
+#include <cvolton.level-id-api/include/EditorIDs.hpp>
+#ifdef MY_MOD_ID
+#undef MY_MOD_ID
+#endif
 #include "../core/random_color_ids.hpp"
 #include "../core/types.hpp"
 #include "../core/ghost_pool.hpp"
@@ -58,53 +67,25 @@
 #include "../core/preload_memory_estimator.hpp"
 // #include "../core/seed_utils.hpp"
 
-// Current visual bugs:
-// Wave trail wackyness when turning off (only show past percent) when replaying with waves at the start
-
 // Features I'll (maybe) add:
 // Ability to only replay one practice session or multiple (maybe even name them and save names as a different file). This would be it's own UI. Also have ability to delete certain sessions and maybe even export and import sessions (practice and normal). It would be cool to be able to export your best attempt, and be able to import the best attempt of several people and replay the at the same time, and have the icons maybe exported and imported too? A lot of work but would be cool to have eventually.
 // Simple first addition would be to allow replay of all start positions (it would just load all normal mode attempts and skip the start pos check)
 // Platformer mode isn't implimented when there are checkpoints yet (practice mode works but not normal)
-// Ability to load and export attempt files so you can send them to people
-// Add back the limit ghost updates per frame feature for low end devices
-// Once dead, allow new allocation to remove the ghost early
-// Make glow work on ghosts
-// Make the mod work with mods that add extra icons
-// Massively optimize Attempts class to be way smaller (lot of uneeded bools from the early versions of this mod)
-// Camera pans when teleporting large y (sort of partially fixed by speeding up the camera when teleporting, but still buggy)
 
 // Fix:
 // wave trail color when reverse color selected
-// Player frame when dual has separate icons (I did the colors and glow already)
-// If wave trail larger maybe set the ghost trail larger, but be careful of weird values that aren't reflecting the actual wave trail people see on screen
-// Wave trail sometimes vanishes for some reason on real player, so ensure that is visible (player 2 teleported which stopped and started p2 wave trail, then p2 teleported and had no wave trail)
-// Ensure this doesn't conflict with the wave trail draw fix mod on Geode
+
 // Player rotation is set by the game after I set it, so slightly wrong (ensure overriding this doesn't break follow player rotation objects)
 // On every ghost death it turns on and off auto-deafen
-// Ensure after an owner has been used, we release it so it can be a ghost
-// Robot while dashing shouldn't be walking animation?
-// For some reason replay of the player on second time becoming dual doesn't replay the dual?
 
-
-// Ensure the real spider and robot does the jump effect (teleport thing and junp fire)
-// Fix wave trail missalignment with the (gravity change fix) for click set point state
 // Robot ghost sliding up slope doesn't play the walk animation (not really issue if I don't fix)
-// Miniwave has weird point setting when going up and it like places two and one is behind the line it was drawing or something? Idk. Wave wacky. (might be weird practice mode thing)
-// Add cheat detection thing where it like changes the end screen by some ratio or something like xbot did
 
-// Make it so that when we run out of player objects, we allow half of them to be reused and keep the rest dead, but ensure once reused, we don't just spam reuse those and cause none to stay dead
-// Is second dual still not visible sometimes? test with bloodbath full run
-
-// Make the real player play the death effect (but not technically die) when "ghosst explode" is enabled
-
-// Wave safety thing makes it not record wave points when in reverse mode (negative x direction)
 // CBF shows maybe I should check 2 frames ahead and behind for a real wave point instead of 1?
-// Separate the player 1 and player 2 colors in the color selector thing. Make the files compatible with the old format, and new format. Autoconvert would be replicating the base player colors to both player 1 and player 2.
-// Add little X on top layer that shows up when an attempt dies (optional) (size, opacity settings)
 // Wave ghosts are very laggy, see if I can improve them
-// player2 should play death effect too
-// Dual wave has the teleport wave trail vertical issue (that I fixed for the real player). test on level "want u: 128189958"
-// DO NOT LET THE USER DELETE A PRACTICE RUN WHILE RECORDING THAT RUN (VERY BAD)
+
+// Check if fixed after overhaul:
+// Multiple people have said "on macOS only 64 attempts get loaded"
+// Someone said the random color button when in random mode wasn't coloring their icons randomly (maybe mod conflict or weird device specific thing idk)
 
 
 using namespace geode::prelude;
@@ -176,7 +157,7 @@ static int randomIconFrame(IconType t, uint32_t seed) {
     }
 }
 
-static FORCE_INLINE void forceMode(PlayerObject* p, IconType mode, bool isRealPlayer=false) {
+static FORCE_INLINE void forceMode(PlayerObject* p, IconType mode, bool isRealPlayer = false) {
     if (!p) return;
     if (!isRealPlayer) g_disableUpdate = true;
     p->toggleFlyMode(false, false);
@@ -259,20 +240,35 @@ public:
     bool isNoclipDetected = false;
     bool setFalseIfPlayerWasDestroyedCheck = false;
 
-    void beginPlayerDestroyedCheck() { setFalseIfPlayerWasDestroyedCheck = true; }
+    bool shouldIgnoreNoclipDetection_() const {
+        // can go through spikes during end animation but that shouldn't count
+        return m_playingEndAnimation || (m_pl && m_pl->m_hasCompletedLevel);
+    }
+    void beginPlayerDestroyedCheck() {
+        if (shouldIgnoreNoclipDetection_()) return;
+        setFalseIfPlayerWasDestroyedCheck = true;
+    }
     void endPlayerDestroyedCheck(bool playerDied) {
-        if (!isNoclipDetected) {
-            if (setFalseIfPlayerWasDestroyedCheck) isNoclipDetected = !playerDied;
+        if (shouldIgnoreNoclipDetection_()) {
+            isNoclipDetected = false;
+            setFalseIfPlayerWasDestroyedCheck = false;
+            return;
         }
+
+         if (!isNoclipDetected) {
+             if (setFalseIfPlayerWasDestroyedCheck) isNoclipDetected = !playerDied;
+         }
     }
     bool didAttemptUseNoclip() {
+        if (shouldIgnoreNoclipDetection_()) return m_currentDidNoclip;
         return (setFalseIfPlayerWasDestroyedCheck || isNoclipDetected);
-    }
+     }
     void resetNoclipDetectedFlag() { 
         isNoclipDetected = false;
         setFalseIfPlayerWasDestroyedCheck = false;
     }
     void updateCurrentAttemptNoclipState() {
+        if (shouldIgnoreNoclipDetection_()) return;
         if (!m_currentDidNoclip) m_currentDidNoclip = didAttemptUseNoclip();
     }
     void armFreshRecordingAfterDeleteRestart_() {
@@ -358,6 +354,18 @@ public:
         return deletePracticeAttemptsBySerialSet_(deleteSet, false);
     }
 
+    bool isPracticeSessionBeingRecorded(int sessionId) const {
+        if (sessionId <= 0) return false;
+        if (!m_pl || !m_pl->m_isPracticeMode) return false;
+        if (!recording || recordingBlocked || !recordInPractice) return false;
+
+        auto const& path = m_checkpointMgr.getPath();
+        if (path.frozen || path.activeSessionId != sessionId) return false;
+
+        auto const* session = path.activeSession();
+        return session && !session->frozen;
+    }
+
     bool deleteAttemptsByEndPercent(float minPercent, float maxPercent) {
         if (minPercent > maxPercent) std::swap(minPercent, maxPercent);
 
@@ -384,6 +392,14 @@ public:
     bool deletePracticeSessionById(int sessionId) {
         if (sessionId <= 0) return false;
         if (!hasCurrentPersistenceTarget_()) return false;
+
+        if (isPracticeSessionBeingRecorded(sessionId)) {
+            log::warn(
+                "[APX delete] refusing to delete active practice session {} while it is being recorded",
+                sessionId
+            );
+            return false;
+        }
 
         if (!refreshAttemptCatalogForCurrentLevel_(true, true)) {
             return false;
@@ -508,6 +524,41 @@ public:
         if (deleteSet.empty()) return false;
         if (!hasCurrentPersistenceTarget_()) return false;
 
+        if (m_pl && m_pl->m_isPracticeMode && recording && !recordingBlocked && recordInPractice) {
+            auto const& path = m_checkpointMgr.getPath();
+            auto const* active = path.activeSession();
+
+            if (active && !path.frozen && !active->frozen) {
+                bool touchesActiveSession = deleteSet.count(m_current.serial) != 0;
+
+                if (!touchesActiveSession) {
+                    for (int serial : active->allAttemptSerials) {
+                        if (deleteSet.count(serial) != 0) {
+                            touchesActiveSession = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!touchesActiveSession) {
+                    for (auto const& seg : active->segments) {
+                        if (deleteSet.count(seg.ownerSerial) != 0) {
+                            touchesActiveSession = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (touchesActiveSession) {
+                    log::warn(
+                        "[APX delete] refusing to delete attempts from active practice session {} while it is being recorded",
+                        active->sessionId
+                    );
+                    return false;
+                }
+            }
+        }
+
         if (!refreshAttemptCatalogForCurrentLevel_(true, true)) {
             return false;
         }
@@ -550,27 +601,147 @@ public:
         return rewriteAttemptsAndPracticePathAfterDeletion_(deleteSet, keptPath, "practice-attempt");
     }
 
+    // Ghost text
     cocos2d::CCLabelBMFont* m_playLayerGhostTextLabel = nullptr;
 
     bool m_showPlayLayerGhostText = false;
     std::string m_playLayerGhostText = "";
-    cocos2d::CCPoint m_playLayerGhostTextPos = { 140.f, 280.f };
+    std::string m_ghostTextCustomFormat = "{alive}/{total} attempts remain";
+    cocos2d::CCPoint m_playLayerGhostTextPos = { 2.f, 310.f };
     float m_playLayerGhostTextScale = 0.45f;
     uint8_t m_playLayerGhostTextOpacity = 180;
+    bool m_ghostTextFlashOnDeath = true;
     size_t m_numDeadGhosts = 0;
     size_t m_numAliveGhosts = 0;
+    size_t m_numTotalGhosts = 0;
     int m_ghostTextFlashActionTag = 812345;
     GhostTextPreset m_ghostTextMode = GhostTextPreset::DeadAttempts;
 
     std::string m_lastAppliedPlayLayerGhostText = "";
     bool m_lastAppliedPlayLayerGhostTextVisible = false;
+    bool m_ghostTextPositionPreview = false;
 
     std::unordered_set<int> m_ghostTextCountedDeadSerials;
+
+    bool m_showDeathMarkers = false;
+    float m_deathMarkerSize = 25.f;
+    float m_deathMarkerThickness = 5.f;
+    uint8_t m_deathMarkerOpacity = 255;
+    struct DeathMarkerPositions {
+        cocos2d::CCPoint p1{};
+        cocos2d::CCPoint p2{};
+        bool hasP2 = false;
+    };
+    cocos2d::CCDrawNode* m_deathMarkerDrawNode = nullptr;
+    std::unordered_map<int, DeathMarkerPositions> m_deathMarkerPositions;
+
+    static void replaceAllGhostTextToken_(std::string& value, std::string const& token, std::string const& replacement) {
+        size_t pos = 0;
+        while ((pos = value.find(token, pos)) != std::string::npos) {
+            value.replace(pos, token.size(), replacement);
+            pos += replacement.size();
+        }
+    }
+
+    std::string formatCustomGhostText_() const {
+        std::string out = m_ghostTextCustomFormat.empty()
+            ? std::string("{alive}/{total} attempts remain")
+            : m_ghostTextCustomFormat;
+
+        const double alivePct = m_numTotalGhosts > 0
+            ? (100.0 * static_cast<double>(m_numAliveGhosts) / static_cast<double>(m_numTotalGhosts))
+            : 0.0;
+        const double deadPct = m_numTotalGhosts > 0
+            ? (100.0 * static_cast<double>(m_numDeadGhosts) / static_cast<double>(m_numTotalGhosts))
+            : 0.0;
+
+        replaceAllGhostTextToken_(out, "{alive}", std::to_string(m_numAliveGhosts));
+        replaceAllGhostTextToken_(out, "{Alive}", std::to_string(m_numAliveGhosts));
+        replaceAllGhostTextToken_(out, "{dead}", std::to_string(m_numDeadGhosts));
+        replaceAllGhostTextToken_(out, "{Dead}", std::to_string(m_numDeadGhosts));
+        replaceAllGhostTextToken_(out, "{total}", std::to_string(m_numTotalGhosts));
+        replaceAllGhostTextToken_(out, "{Total}", std::to_string(m_numTotalGhosts));
+        replaceAllGhostTextToken_(out, "{percent_alive}", fmt::format("{:.0f}", alivePct));
+        replaceAllGhostTextToken_(out, "{percent_dead}", fmt::format("{:.0f}", deadPct));
+        return out;
+    }
+
+    void rebuildGhostTextString_() {
+        switch (m_ghostTextMode) {
+            case GhostTextPreset::DeadAttempts:
+                m_playLayerGhostText = fmt::format("Dead Attempts: {}", m_numDeadGhosts);
+                break;
+            case GhostTextPreset::AliveAttempts:
+                m_playLayerGhostText = fmt::format("Alive Attempts: {}", m_numAliveGhosts);
+                break;
+            case GhostTextPreset::Custom:
+                m_playLayerGhostText = formatCustomGhostText_();
+                break;
+        }
+        m_lastAppliedPlayLayerGhostText.clear();
+    }
+
+    void syncGhostUiSettingsFromSaved_() {
+        auto* mod = Mod::get();
+        if (!mod) return;
+
+        m_showPlayLayerGhostText = mod->hasSavedValue("ghost-text-enabled")
+            ? mod->getSavedValue<bool>("ghost-text-enabled") : false;
+
+        int mode = mod->hasSavedValue("ghost-text-mode")
+            ? static_cast<int>(mod->getSavedValue<int64_t>("ghost-text-mode")) : 0;
+        mode = std::clamp(mode, 0, 2);
+        m_ghostTextMode = static_cast<GhostTextPreset>(mode);
+
+        m_ghostTextCustomFormat = mod->hasSavedValue("ghost-text-custom")
+            ? mod->getSavedValue<std::string>("ghost-text-custom")
+            : std::string("{alive}/{total} attempts remain");
+        if (m_ghostTextCustomFormat.empty()) m_ghostTextCustomFormat = "{alive}/{total} attempts remain";
+
+        const int x = mod->hasSavedValue("ghost-text-x")
+            ? static_cast<int>(mod->getSavedValue<int64_t>("ghost-text-x")) : 20;
+        const int y = mod->hasSavedValue("ghost-text-y")
+            ? static_cast<int>(mod->getSavedValue<int64_t>("ghost-text-y")) : 280;
+        m_playLayerGhostTextPos.x = static_cast<float>(x);
+        m_playLayerGhostTextPos.y = static_cast<float>(y);
+
+        const int scalePercent = mod->hasSavedValue("ghost-text-scale-percent")
+            ? static_cast<int>(mod->getSavedValue<int64_t>("ghost-text-scale-percent")) : 45;
+        m_playLayerGhostTextScale = std::clamp(scalePercent / 100.f, 0.15f, 1.25f);
+
+        const int textOpacity = mod->hasSavedValue("ghost-text-opacity")
+            ? static_cast<int>(mod->getSavedValue<int64_t>("ghost-text-opacity")) : 180;
+        m_playLayerGhostTextOpacity = static_cast<uint8_t>(std::clamp(textOpacity, 0, 255));
+
+        m_ghostTextFlashOnDeath = mod->hasSavedValue("ghost-text-flash-on-death")
+            ? mod->getSavedValue<bool>("ghost-text-flash-on-death") : true;
+
+        m_showDeathMarkers = mod->hasSavedValue("death-markers-enabled")
+            ? mod->getSavedValue<bool>("death-markers-enabled") : false;
+        const int markerSize = mod->hasSavedValue("death-marker-size")
+            ? static_cast<int>(mod->getSavedValue<int64_t>("death-marker-size")) : 25;
+        m_deathMarkerSize = static_cast<float>(std::clamp(markerSize, 4, 40));
+        if (mod->hasSavedValue("death-marker-thickness-tenths")) {
+            const int thicknessTenths = static_cast<int>(
+                mod->getSavedValue<int64_t>("death-marker-thickness-tenths")
+            );
+            m_deathMarkerThickness = std::clamp(thicknessTenths / 10.f, 1.f, 8.f);
+        } else {
+            m_deathMarkerThickness = 5.f;
+        }
+
+        const int markerOpacity = mod->hasSavedValue("death-marker-opacity")
+            ? static_cast<int>(mod->getSavedValue<int64_t>("death-marker-opacity")) : 255;
+        m_deathMarkerOpacity = static_cast<uint8_t>(std::clamp(markerOpacity, 0, 255));
+
+        rebuildGhostTextString_();
+    }
 
     void setPlayLayerGhostTextLabel(cocos2d::CCLabelBMFont* label) {
         m_playLayerGhostTextLabel = label;
         m_lastAppliedPlayLayerGhostText.clear();
         m_lastAppliedPlayLayerGhostTextVisible = false;
+        updatePlayLayerGhostTextLabel_();
     }
 
     void clearPlayLayerGhostTextLabel() {
@@ -581,25 +752,87 @@ public:
 
     void setPlayLayerGhostTextEnabled(bool enabled) {
         m_showPlayLayerGhostText = enabled;
+        Mod::get()->setSavedValue("ghost-text-enabled", enabled);
+        updatePlayLayerGhostTextLabel_();
     }
+
+    bool isPlayLayerGhostTextEnabled() const { return m_showPlayLayerGhostText; }
+
+    void setGhostTextPositionPreview(bool enabled) {
+        m_ghostTextPositionPreview = enabled;
+        m_lastAppliedPlayLayerGhostText.clear();
+        m_lastAppliedPlayLayerGhostTextVisible = !enabled;
+        updatePlayLayerGhostTextLabel_();
+    }
+
+    bool isGhostTextPositionPreviewActive() const {
+        return m_ghostTextPositionPreview;
+    }
+
+    void setGhostTextMode(GhostTextPreset mode) {
+        m_ghostTextMode = mode;
+        Mod::get()->setSavedValue("ghost-text-mode", static_cast<int64_t>(mode));
+        rebuildGhostTextString_();
+        updatePlayLayerGhostTextLabel_();
+    }
+    GhostTextPreset getGhostTextMode() const { return m_ghostTextMode; }
+
+    void setGhostTextCustomFormat(std::string text) {
+        if (text.empty()) text = "{alive}/{total} attempts remain";
+        m_ghostTextCustomFormat = std::move(text);
+        Mod::get()->setSavedValue("ghost-text-custom", m_ghostTextCustomFormat);
+        rebuildGhostTextString_();
+        updatePlayLayerGhostTextLabel_();
+     }
+    std::string const& getGhostTextCustomFormat() const { return m_ghostTextCustomFormat; }
 
     void setPlayLayerGhostText(std::string text) {
         m_playLayerGhostText = std::move(text);
+        m_lastAppliedPlayLayerGhostText.clear();
     }
 
     void setPlayLayerGhostTextPos(cocos2d::CCPoint pos) {
         m_playLayerGhostTextPos = pos;
+        Mod::get()->setSavedValue("ghost-text-x", static_cast<int64_t>(std::lround(pos.x)));
+        Mod::get()->setSavedValue("ghost-text-y", static_cast<int64_t>(std::lround(pos.y)));
+        updatePlayLayerGhostTextLabel_();
     }
+    cocos2d::CCPoint getPlayLayerGhostTextPos() const { return m_playLayerGhostTextPos; }
 
     void setPlayLayerGhostTextScale(float scale) {
-        m_playLayerGhostTextScale = scale;
+        m_playLayerGhostTextScale = std::clamp(scale, 0.15f, 1.25f);
+        Mod::get()->setSavedValue("ghost-text-scale-percent", static_cast<int64_t>(std::lround(m_playLayerGhostTextScale * 100.f)));
+        updatePlayLayerGhostTextLabel_();
     }
+    float getPlayLayerGhostTextScale() const { return m_playLayerGhostTextScale; }
 
+    void setPlayLayerGhostTextOpacity(int opacityValue) {
+        m_playLayerGhostTextOpacity = static_cast<uint8_t>(std::clamp(opacityValue, 0, 255));
+        Mod::get()->setSavedValue("ghost-text-opacity", static_cast<int64_t>(m_playLayerGhostTextOpacity));
+        updatePlayLayerGhostTextLabel_();
+     }
+    int getPlayLayerGhostTextOpacity() const { return static_cast<int>(m_playLayerGhostTextOpacity); }
+
+    void setGhostTextFlashOnDeath(bool enabled) {
+        m_ghostTextFlashOnDeath = enabled;
+        Mod::get()->setSavedValue("ghost-text-flash-on-death", enabled);
+    }
+    bool isGhostTextFlashOnDeath() const { return m_ghostTextFlashOnDeath; }
+
+    size_t getGhostTextAliveCount() const { return m_numAliveGhosts; }
+    size_t getGhostTextDeadCount() const { return m_numDeadGhosts; }
+    size_t getGhostTextTotalCount() const { return m_numTotalGhosts; }
+    std::string getFormattedGhostText() const { return m_playLayerGhostText; }
+        
     void updatePlayLayerGhostTextLabel_() {
         auto* label = m_playLayerGhostTextLabel;
         if (!label) return;
 
-        const bool show = isModEnabled() && m_showPlayLayerGhostText && botActive;
+        const bool replayVisible = botActive || playback || showWhilePlaying;
+        const bool show = isModEnabled() && (
+            m_ghostTextPositionPreview ||
+            (m_showPlayLayerGhostText && replayVisible)
+        );
 
         if (show != m_lastAppliedPlayLayerGhostTextVisible) {
             label->setVisible(show);
@@ -626,6 +859,134 @@ public:
         m_lastAppliedPlayLayerGhostTextVisible = false;
     }
 
+    void ensureDeathMarkerLayer_() {
+        if (m_deathMarkerDrawNode || !m_ghostRoot) return;
+        auto* worldParent = m_ghostRoot->getParent();
+        if (!worldParent) return;
+        m_deathMarkerDrawNode = cocos2d::CCDrawNode::create();
+        if (!m_deathMarkerDrawNode) return;
+        worldParent->addChild(m_deathMarkerDrawNode, 9999);
+    }
+
+    void drawDeathMarkerAt_(cocos2d::CCPoint const& p) {
+        if (!m_deathMarkerDrawNode || !m_showDeathMarkers) return;
+
+        const float half = std::max(2.f, m_deathMarkerSize * 0.5f);
+        const float radius = std::max(
+            0.25f,
+            m_deathMarkerThickness * 0.5f
+        );
+
+        const float alpha =
+            static_cast<float>(m_deathMarkerOpacity) / 255.f;
+        if (alpha <= 0.f) return;
+
+        const auto color = cocos2d::ccc4f(
+            alpha,
+            0.08f * alpha,
+            0.08f * alpha,
+            alpha
+        );
+
+        m_deathMarkerDrawNode->drawSegment(
+            { p.x - half, p.y - half },
+            { p.x + half, p.y + half },
+            radius,
+            color
+        );
+
+        m_deathMarkerDrawNode->drawSegment(
+            { p.x - half, p.y + half },
+            { p.x + half, p.y - half },
+            radius,
+            color
+        );
+    }
+
+    static bool hasDistinctP2DeathMarker_(DeathMarkerPositions const& positions) {
+        if (!positions.hasP2) return false;
+
+        const float dx = positions.p2.x - positions.p1.x;
+        const float dy = positions.p2.y - positions.p1.y;
+        return dx * dx + dy * dy > 0.01f;
+    }
+
+    void drawDeathMarkersForAttempt_(DeathMarkerPositions const& positions) {
+        drawDeathMarkerAt_(positions.p1);
+        if (hasDistinctP2DeathMarker_(positions)) {
+            drawDeathMarkerAt_(positions.p2);
+        }
+    }
+
+    void redrawDeathMarkers_() {
+        if (!m_deathMarkerDrawNode) return;
+        m_deathMarkerDrawNode->clear();
+        if (!m_showDeathMarkers) return;
+        for (auto const& [serial, positions] : m_deathMarkerPositions) {
+            (void)serial;
+            drawDeathMarkersForAttempt_(positions);
+        }
+    }
+
+    void clearDeathMarkers_() {
+        m_deathMarkerPositions.clear();
+        if (m_deathMarkerDrawNode) m_deathMarkerDrawNode->clear();
+    }
+
+    void recordDeathMarker_(Attempt const& a) {
+        if (a.serial <= 0 || a.completed || a.p1.empty()) return;
+        if (m_deathMarkerPositions.find(a.serial) != m_deathMarkerPositions.end()) return;
+        DeathMarkerPositions positions;
+        positions.p1.x = a.p1.back().x;
+        positions.p1.y = a.p1.back().y;
+
+        if (a.hadDual && !a.p2.empty()) {
+            constexpr double kDualDeathTimeTolerance = 0.1;
+            const double p1EndTime = static_cast<double>(a.p1.back().t);
+            const double p2EndTime = static_cast<double>(a.p2.back().t);
+
+            if (std::abs(p1EndTime - p2EndTime) <= kDualDeathTimeTolerance) {
+                positions.p2.x = a.p2.back().x;
+                positions.p2.y = a.p2.back().y;
+                positions.hasP2 = true;
+            }
+        }
+
+        auto const [it, inserted] = m_deathMarkerPositions.emplace(a.serial, positions);
+        if (inserted) drawDeathMarkersForAttempt_(it->second);
+    }
+
+    void setDeathMarkersEnabled(bool enabled) {
+        m_showDeathMarkers = enabled;
+        Mod::get()->setSavedValue("death-markers-enabled", enabled);
+        redrawDeathMarkers_();
+    }
+    bool areDeathMarkersEnabled() const { return m_showDeathMarkers; }
+
+    void setDeathMarkerSize(float size) {
+        m_deathMarkerSize = std::clamp(size, 4.f, 40.f);
+        Mod::get()->setSavedValue("death-marker-size", static_cast<int64_t>(std::lround(m_deathMarkerSize)));
+        redrawDeathMarkers_();
+    }
+    float getDeathMarkerSize() const { return m_deathMarkerSize; }
+
+    void setDeathMarkerThickness(float thickness) {
+        m_deathMarkerThickness = std::clamp(thickness, 1.f, 8.f);
+        Mod::get()->setSavedValue(
+            "death-marker-thickness-tenths",
+            static_cast<int64_t>(std::lround(m_deathMarkerThickness * 10.f))
+        );
+        redrawDeathMarkers_();
+    }
+    float getDeathMarkerThickness() const { return m_deathMarkerThickness; }
+
+    void setDeathMarkerOpacity(int opacityValue) {
+        m_deathMarkerOpacity = static_cast<uint8_t>(std::clamp(opacityValue, 0, 255));
+        Mod::get()->setSavedValue("death-marker-opacity", static_cast<int64_t>(m_deathMarkerOpacity));
+        redrawDeathMarkers_();
+    }
+    int getDeathMarkerOpacity() const { return static_cast<int>(m_deathMarkerOpacity); }
+
     bool countGhostTextDeathOnceBySerial_(int serial) {
         if (serial <= 0) return false;
 
@@ -635,52 +996,47 @@ public:
         return true;
     }
 
-    bool countGhostTextDeathOnce_(Attempt& a) {
-        return countGhostTextDeathOnceBySerial_(a.serial);
+    bool countGhostTextDeathOnce_(Attempt const& a) {
+        const bool counted = countGhostTextDeathOnceBySerial_(a.serial);
+        if (counted) recordDeathMarker_(a);
+        return counted;
     }
 
     void updateGhostTextOnDeath(bool reset = false) {
-        if (reset) m_ghostTextCountedDeadSerials.clear();
-
-        switch (m_ghostTextMode) {
-            case GhostTextPreset::DeadAttempts: {
-                updateDeadAttemptsText(reset);
-                break;
-            }
-            case GhostTextPreset::AliveAttempts: {
-                updateAliveAttemptsText(reset);
-                break;
-            }
-            default: break;
+        if (reset) {
+            m_ghostTextCountedDeadSerials.clear();
+            m_numDeadGhosts = 0;
+            m_numTotalGhosts = m_preloadLoaded > 0
+                ? m_preloadLoaded
+                : m_preloadedIndices.size();
+            m_numAliveGhosts = m_numTotalGhosts;
+            clearDeathMarkers_();
         }
+        else {
+            ++m_numDeadGhosts;
+            if (m_numAliveGhosts > 0) --m_numAliveGhosts;
+            if (m_ghostTextFlashOnDeath) flashPlayLayerGhostTextRed(0.2);
+        }
+
+        rebuildGhostTextString_();
+        updatePlayLayerGhostTextLabel_();
     }
 
     void updateDeadAttemptsText(bool reset = false) {
-        if (reset) m_numDeadGhosts = 0;
-        else {
-            m_numDeadGhosts++;
-            flashPlayLayerGhostTextRed(0.2);
+        if (reset) {
+            m_numDeadGhosts = 0;
+            m_numAliveGhosts = m_numTotalGhosts;
         }
-        if (m_showPlayLayerGhostText) {
-            m_playLayerGhostText = fmt::format("Dead Attempts: {}", m_numDeadGhosts);
-        }
+        rebuildGhostTextString_();
     }
 
     void updateAliveAttemptsText(bool reset = false) {
-        if (reset) {
-            m_numAliveGhosts = m_grid.insertedAttempts;
-        }
-        else {
-            if (m_numAliveGhosts > 0) m_numAliveGhosts--;
-            flashPlayLayerGhostTextRed(0.2);
-        }
-
-        if (m_showPlayLayerGhostText) {
-            m_playLayerGhostText = fmt::format("Alive Attempts: {}", m_numAliveGhosts);
-        }
-    }
+        if (reset) m_numAliveGhosts = m_numTotalGhosts;
+        rebuildGhostTextString_();
+     }
 
     void flashPlayLayerGhostTextRed(double fadeSeconds = 0.2) {
+        if (!m_ghostTextFlashOnDeath) return;
         auto* label = m_playLayerGhostTextLabel;
         if (!label) return;
 
@@ -694,12 +1050,6 @@ public:
         fadeToWhite->setTag(m_ghostTextFlashActionTag);
         label->runAction(fadeToWhite);
     }
-
-    // Updates to this label:
-    // Allow the font to be the default white one or use the gold font
-    // Allow change of the flash color
-    // Allow custom text like "{Alive}/{Total}", more stuff: {Dead}
-    // Allow user to set the position x and y and scale
 
     int m_levelIDOnAttach = 0;
 
@@ -720,8 +1070,10 @@ public:
     static constexpr int kRandomColorCount = kRandomColorSlots;
 
     bool m_randomColorMaskLoaded = false;
-    std::array<uint8_t, kRandomColorCount> m_randomColorAllowed{};
-    std::vector<int> m_randomColorAllowedList;
+    std::array<uint8_t, kRandomColorCount> m_randomColorAllowedP1{};
+    std::array<uint8_t, kRandomColorCount> m_randomColorAllowedP2{};
+    std::vector<int> m_randomColorAllowedListP1;
+    std::vector<int> m_randomColorAllowedListP2;
 
     PreloadSortMode m_preloadSortMode = PreloadSortMode::Best;
 
@@ -914,7 +1266,7 @@ public:
         m_activeOwnerSerial = -1;
         m_practiceCompositeOwnerSerial = -1;
 
-        m_loadedSerials.clear();
+        m_loadedAttemptKeys.clear();
         m_loadedLevelID = 0;
         clearAttemptCatalog_();
 
@@ -963,96 +1315,627 @@ public:
         return geode::utils::string::pathToString(path.filename());
     }
 
-    void ensureRandomColorMaskLoaded_() {
-        if (m_randomColorMaskLoaded) return;
-        m_randomColorMaskLoaded = true;
-        m_randomColorAllowed.fill(1);
+    enum class AttemptFileExportMode : uint8_t {
+        FullFile = 0,
+        BestNormalAttempt = 1,
+        BestPracticePath = 2,
+    };
 
-        auto* mod = Mod::get();
-        const bool has = mod->hasSavedValue(kGhostRandomColorsMaskKey);
-        
-        if (has) {
-            auto s = mod->getSavedValue<std::string>(kGhostRandomColorsMaskKey);
+    enum class AttemptFileImportMode : uint8_t {
+        ReplaceCurrent = 0,
+        MergeWithCurrent = 1,
+    };
 
-            if (s.size() == (size_t)kRandomColorCount) {
-                int enabled = 0;
-                for (int slot = 0; slot < kRandomColorCount; ++slot) {
-                    const bool on = (s[slot] != '0');
-                    m_randomColorAllowed[slot] = on ? 1 : 0;
-                    enabled += on ? 1 : 0;
-                }
-                //log::info("[RandomColors] parsed mask ok: enabledSlots={}/{}", enabled, kRandomColorCount);
-            } else {
-                log::warn("[RandomColors] saved mask wrong length (got {}, expected {}), using default(all enabled)",
-                        s.size(), (size_t)kRandomColorCount);
+    struct AttemptFileImportPreview {
+        bool valid = false;
+        std::string error;
+        size_t incomingAttempts = 0;
+        size_t incomingPracticeSessions = 0;
+        size_t currentAttempts = 0;
+        size_t currentPracticeSessions = 0;
+        size_t attemptSerialConflicts = 0;
+        size_t practiceSessionIdConflicts = 0;
+        bool incomingContainsNormal = false;
+        bool incomingContainsPractice = false;
+        bool incomingIsLegacy = false;
+    };
+
+    std::filesystem::path getCurrentLevelSavePath() const {
+        if (!hasCurrentPersistenceTarget_()) return {};
+        return fileForLevel_(m_levelIDOnAttach);
+    }
+
+    std::filesystem::path getAttemptExportsDir() const {
+        auto dir = Mod::get()->getSaveDir() / "exports";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (ec) {
+            log::warn(
+                "[APX export] create_directories failed for {}: {}",
+                geode::utils::string::pathToString(dir),
+                ec.message()
+            );
+        }
+        return dir;
+    }
+
+    bool exportCurrentLevelAttempts(
+        std::filesystem::path const& destination,
+        AttemptFileExportMode mode,
+        std::string* outError = nullptr
+    ) {
+        auto fail = [&](std::string const& error) {
+            if (outError) *outError = error;
+            log::warn("[APX export] {}", error);
+            return false;
+        };
+
+        if (outError) outError->clear();
+        if (destination.empty()) return fail("No export destination was selected.");
+        if (!hasCurrentPersistenceTarget_()) return fail("There is no active level save to export.");
+
+        if (!refreshAttemptCatalogForCurrentLevel_(true, true)) {
+            return fail("The current APX save could not be read.");
+        }
+
+        const auto source = fileForLevel_(m_levelIDOnAttach);
+        std::error_code ec;
+        if (!std::filesystem::exists(source, ec) || ec) {
+            return fail("No APX save file exists for this level yet.");
+        }
+
+        if (mode == AttemptFileExportMode::FullFile) {
+            ec.clear();
+            const auto parent = destination.parent_path();
+            if (!parent.empty()) {
+                std::filesystem::create_directories(parent, ec);
+                if (ec) return fail("Could not create the export folder: " + ec.message());
+            }
+
+            ec.clear();
+            bool sameFile = false;
+            const auto sourceAbs = std::filesystem::absolute(source, ec);
+            if (!ec) {
+                ec.clear();
+                const auto destAbs = std::filesystem::absolute(destination, ec);
+                if (!ec) sameFile = sourceAbs.lexically_normal() == destAbs.lexically_normal();
+            }
+
+            if (sameFile) return true;
+
+            ec.clear();
+            std::filesystem::copy_file(
+                source,
+                destination,
+                std::filesystem::copy_options::overwrite_existing,
+                ec
+            );
+            if (ec) return fail("Failed to copy the APX file: " + ec.message());
+            return true;
+        }
+
+        if (mode == AttemptFileExportMode::BestNormalAttempt) {
+            const APXAttemptDiskInfo* best = nullptr;
+
+            auto better = [](APXAttemptDiskInfo const& a, APXAttemptDiskInfo const& b) {
+                if (a.completed != b.completed) return a.completed;
+                if (a.endPercent != b.endPercent) return a.endPercent > b.endPercent;
+                if (a.endX != b.endX) return a.endX > b.endX;
+                return a.serial > b.serial;
+            };
+
+            for (auto const& entry : m_attemptCatalog) {
+                if (entry.practiceAttempt) continue;
+                if (entry.p1Count == 0 && entry.p2Count == 0) continue;
+                if (!best || better(entry, *best)) best = &entry;
+            }
+
+            if (!best) return fail("There are no saved normal-mode attempts to export.");
+
+            Attempt attempt{};
+            bool usedLegacy = false;
+            if (!loadAPXAttemptByCatalogEntry(source, *best, attempt, &usedLegacy)) {
+                return fail("The best normal-mode attempt could not be loaded from the APX file.");
+            }
+
+            attempt.persistedOnDisk = true;
+            attempt.recordedThisSession = false;
+
+            PracticePath emptyPath{};
+            std::vector<Attempt> exportedAttempts;
+            exportedAttempts.push_back(std::move(attempt));
+            if (!saveAPXFileCurrent(destination, exportedAttempts, emptyPath)) {
+                return fail("Failed to write the best normal-mode attempt export.");
+            }
+            return true;
+        }
+
+        const PracticeSession* bestSession = nullptr;
+        auto sessionReplayEnd = [](PracticeSession const& session) {
+            double end = 0.0;
+            for (auto const& segment : session.segments) {
+                end = std::max(end, segment.absEnd());
+            }
+            return end;
+        };
+        auto betterSession = [&](PracticeSession const& a, PracticeSession const& b) {
+            if (a.completed != b.completed) return a.completed;
+            if (a.endX != b.endX) return a.endX > b.endX;
+            const double aEnd = sessionReplayEnd(a);
+            const double bEnd = sessionReplayEnd(b);
+            if (aEnd != bEnd) return aEnd > bEnd;
+            return a.sessionId > b.sessionId;
+        };
+
+        for (auto const& session : m_attemptCatalogPracticePath.sessions) {
+            if (session.segments.empty()) continue;
+            if (!bestSession || betterSession(session, *bestSession)) bestSession = &session;
+        }
+
+        if (!bestSession) return fail("There is no saved practice replay path to export.");
+
+        std::vector<int> pathSerials;
+        std::unordered_set<int> seenPathSerials;
+        pathSerials.reserve(bestSession->segments.size());
+
+        for (auto const& segment : bestSession->segments) {
+            if (segment.ownerSerial <= 0) {
+                return fail("The best practice path contains an invalid attempt reference.");
+            }
+            if (seenPathSerials.insert(segment.ownerSerial).second) {
+                pathSerials.push_back(segment.ownerSerial);
             }
         }
 
-        rebuildRandomColorAllowedList_();
+        if (pathSerials.empty()) return fail("The best practice path does not contain any replay attempts.");
+
+        std::vector<Attempt> pathAttempts;
+        pathAttempts.reserve(pathSerials.size());
+
+        for (int serial : pathSerials) {
+            const APXAttemptDiskInfo* entry = findCatalogEntryBySerialAndPractice_(serial, true);
+            if (!entry) {
+                return fail(fmt::format("Practice path attempt serial {} is missing from the APX file.", serial));
+            }
+
+            Attempt attempt{};
+            bool usedLegacy = false;
+            if (!loadAPXAttemptByCatalogEntry(source, *entry, attempt, &usedLegacy)) {
+                return fail(fmt::format("Practice path attempt serial {} could not be loaded.", serial));
+            }
+
+            attempt.practiceAttempt = true;
+            attempt.persistedOnDisk = true;
+            attempt.recordedThisSession = false;
+            pathAttempts.push_back(std::move(attempt));
+        }
+
+        PracticeSession exportedSession = *bestSession;
+        exportedSession.allAttemptSerials = pathSerials;
+        exportedSession.frozen = false;
+        exportedSession.updateSpan();
+
+        PracticePath exportedPath{};
+        exportedPath.sessions.push_back(std::move(exportedSession));
+        exportedPath.activeSessionId = bestSession->sessionId;
+        exportedPath.selectedSessionId = bestSession->sessionId;
+        exportedPath.frozen = false;
+
+        if (!saveAPXFileCurrent(destination, pathAttempts, exportedPath)) {
+            return fail("Failed to write the best practice replay-path export.");
+        }
+        return true;
     }
 
-    void rebuildRandomColorAllowedList_() {
-        m_randomColorAllowedList.clear();
-        m_randomColorAllowedList.reserve(kRandomColorCount);
+    AttemptFileImportPreview inspectAttemptImportFile(std::filesystem::path const& source) {
+        AttemptFileImportPreview preview{};
+        if (source.empty()) {
+            preview.error = "No import file was selected.";
+            return preview;
+        }
 
+        std::error_code ec;
+        const bool exists = std::filesystem::exists(source, ec);
+        if (ec || !exists) {
+            preview.error = ec ? "Could not access the selected file: " + ec.message() : "The selected file does not exist.";
+            return preview;
+        }
+
+        APXCatalogScanResult incoming{};
+        if (!scanAPXFileCatalog(source, incoming)) {
+            preview.error = "The selected file is not a valid supported APX save.";
+            return preview;
+        }
+
+        preview.incomingAttempts = incoming.attempts.size();
+        preview.incomingPracticeSessions = incoming.practicePath.sessions.size();
+        preview.incomingIsLegacy = incoming.loadedLegacy;
+
+        for (auto const& entry : incoming.attempts) {
+            if (entry.practiceAttempt) preview.incomingContainsPractice = true;
+            else preview.incomingContainsNormal = true;
+        }
+        if (!incoming.practicePath.sessions.empty()) preview.incomingContainsPractice = true;
+
+        if (!hasCurrentPersistenceTarget_()) {
+            preview.error = "There is no active level save to import into.";
+            return preview;
+        }
+
+        refreshAttemptCatalogForCurrentLevel_(true, true);
+        preview.currentAttempts = m_attemptCatalog.size();
+        preview.currentPracticeSessions = m_attemptCatalogPracticePath.sessions.size();
+
+        std::unordered_set<int> currentSerials;
+        currentSerials.reserve(m_attemptCatalog.size());
+        for (auto const& entry : m_attemptCatalog) currentSerials.insert(entry.serial);
+
+        for (auto const& entry : incoming.attempts) {
+            if (currentSerials.count(entry.serial) != 0) ++preview.attemptSerialConflicts;
+        }
+
+        std::unordered_set<int> currentSessionIds;
+        currentSessionIds.reserve(m_attemptCatalogPracticePath.sessions.size());
+        for (auto const& session : m_attemptCatalogPracticePath.sessions) {
+            currentSessionIds.insert(session.sessionId);
+        }
+        for (auto const& session : incoming.practicePath.sessions) {
+            if (currentSessionIds.count(session.sessionId) != 0) ++preview.practiceSessionIdConflicts;
+        }
+
+        preview.valid = true;
+        return preview;
+    }
+
+    bool importAttemptFile(
+        std::filesystem::path const& source,
+        AttemptFileImportMode mode,
+        std::string* outError = nullptr
+    ) {
+        auto fail = [&](std::string const& error) {
+            if (outError) *outError = error;
+            log::warn("[APX import] {}", error);
+            return false;
+        };
+
+        if (outError) outError->clear();
+        if (source.empty()) return fail("No import file was selected.");
+        if (!hasCurrentPersistenceTarget_()) return fail("There is no active level save to import into.");
+        if (m_isSaving) return fail("The APX save is currently busy. Try again after the current save finishes.");
+
+        std::error_code ec;
+        if (!std::filesystem::exists(source, ec) || ec) {
+            return fail(ec ? "Could not access the selected file: " + ec.message() : "The selected file does not exist.");
+        }
+
+
+        if (!refreshAttemptCatalogForCurrentLevel_(true, true)) {
+            return fail("The current APX save could not be prepared for import.");
+        }
+
+        std::vector<Attempt> incomingAttempts;
+        PracticePath incomingPath;
+
+        if (!loadAPXFileWithMigration(source, incomingAttempts, incomingPath, false)) {
+            return fail("The selected APX file could not be loaded.");
+        }
+
+        std::unordered_set<int> incomingSerials;
+        incomingSerials.reserve(incomingAttempts.size());
+        for (auto const& attempt : incomingAttempts) {
+            if (attempt.serial <= 0 || !incomingSerials.insert(attempt.serial).second) {
+                return fail("The selected APX file contains invalid or duplicate attempt serial IDs.");
+            }
+        }
+
+        std::unordered_set<int> incomingSessionIds;
+        incomingSessionIds.reserve(incomingPath.sessions.size());
+        for (auto const& session : incomingPath.sessions) {
+            if (session.sessionId <= 0 || !incomingSessionIds.insert(session.sessionId).second) {
+                return fail("The selected APX file contains invalid or duplicate practice-session IDs.");
+            }
+        }
+
+        auto validatePracticeRefs = [&](PracticePath const& path, std::unordered_set<int> const& serials) {
+            for (auto const& session : path.sessions) {
+                for (auto const& segment : session.segments) {
+                    if (segment.ownerSerial <= 0 || serials.count(segment.ownerSerial) == 0) return false;
+                }
+            }
+            return true;
+        };
+
+        if (!validatePracticeRefs(incomingPath, incomingSerials)) {
+            return fail("The selected APX practice path references attempts that are missing from the file.");
+        }
+
+        std::vector<Attempt> finalAttempts;
+        PracticePath finalPath;
+
+        if (mode == AttemptFileImportMode::ReplaceCurrent) {
+            finalAttempts = std::move(incomingAttempts);
+            finalPath = std::move(incomingPath);
+        }
+        else {
+            const auto currentPath = fileForLevel_(m_levelIDOnAttach);
+
+            ec.clear();
+            const auto sourceAbs = std::filesystem::absolute(source, ec);
+            bool sameFile = false;
+            if (!ec) {
+                ec.clear();
+                const auto currentAbs = std::filesystem::absolute(currentPath, ec);
+                if (!ec) sameFile = sourceAbs.lexically_normal() == currentAbs.lexically_normal();
+            }
+            if (sameFile) return fail("You cannot merge the current save file into itself.");
+
+            if (!loadAPXFileWithMigration(currentPath, finalAttempts, finalPath)) {
+                return fail("The current APX save could not be loaded for merging.");
+            }
+
+            int maxSerial = 0;
+            for (auto const& attempt : finalAttempts) maxSerial = std::max(maxSerial, attempt.serial);
+
+            std::unordered_map<int, int> serialMap;
+            serialMap.reserve(incomingAttempts.size());
+            for (auto& attempt : incomingAttempts) {
+                const int oldSerial = attempt.serial;
+                const int newSerial = ++maxSerial;
+                serialMap.emplace(oldSerial, newSerial);
+                attempt.serial = newSerial;
+                attempt.persistedOnDisk = true;
+                attempt.recordedThisSession = false;
+                finalAttempts.push_back(std::move(attempt));
+            }
+
+            const bool currentHadSessions = !finalPath.sessions.empty();
+            int maxSessionId = 0;
+            for (auto const& session : finalPath.sessions) maxSessionId = std::max(maxSessionId, session.sessionId);
+
+            const int oldIncomingActive = incomingPath.activeSessionId;
+            const int oldIncomingSelected = incomingPath.selectedSessionId;
+            std::unordered_map<int, int> sessionMap;
+            sessionMap.reserve(incomingPath.sessions.size());
+
+            for (auto& session : incomingPath.sessions) {
+                const int oldSessionId = session.sessionId;
+                const int newSessionId = ++maxSessionId;
+                sessionMap.emplace(oldSessionId, newSessionId);
+                session.sessionId = newSessionId;
+
+                std::vector<int> mappedAttemptSerials;
+                mappedAttemptSerials.reserve(session.allAttemptSerials.size());
+                std::unordered_set<int> seenMapped;
+                for (int oldSerial : session.allAttemptSerials) {
+                    auto it = serialMap.find(oldSerial);
+                    if (it == serialMap.end()) continue;
+                    if (seenMapped.insert(it->second).second) mappedAttemptSerials.push_back(it->second);
+                }
+                session.allAttemptSerials = std::move(mappedAttemptSerials);
+
+                for (auto& segment : session.segments) {
+                    auto it = serialMap.find(segment.ownerSerial);
+                    if (it == serialMap.end()) {
+                        return fail("An imported practice path reference could not be remapped during merge.");
+                    }
+                    segment.ownerSerial = it->second;
+                }
+
+                session.updateSpan();
+                finalPath.sessions.push_back(std::move(session));
+            }
+
+            if (!currentHadSessions) {
+                if (auto it = sessionMap.find(oldIncomingActive); it != sessionMap.end()) {
+                    finalPath.activeSessionId = it->second;
+                }
+                if (auto it = sessionMap.find(oldIncomingSelected); it != sessionMap.end()) {
+                    finalPath.selectedSessionId = it->second;
+                }
+                finalPath.frozen = false;
+            }
+        }
+
+        for (auto& attempt : finalAttempts) {
+            attempt.persistedOnDisk = true;
+            attempt.recordedThisSession = false;
+        }
+
+        auto normalizePathIds = [](PracticePath& path) {
+            auto hasSession = [&](int id) {
+                if (id <= 0) return false;
+                return std::any_of(
+                    path.sessions.begin(),
+                    path.sessions.end(),
+                    [&](PracticeSession const& session) { return session.sessionId == id; }
+                );
+            };
+
+            if (path.sessions.empty()) {
+                path.activeSessionId = 0;
+                path.selectedSessionId = 0;
+                path.frozen = false;
+                return;
+            }
+
+            for (auto& session : path.sessions) session.updateSpan();
+            if (!hasSession(path.activeSessionId)) path.activeSessionId = path.sessions.front().sessionId;
+            if (!hasSession(path.selectedSessionId)) path.selectedSessionId = path.activeSessionId;
+        };
+        normalizePathIds(finalPath);
+
+        const auto destination = fileForLevel_(m_levelIDOnAttach);
+        if (!saveAPXFileCurrent(destination, finalAttempts, finalPath)) {
+            return fail("Failed to write the imported APX data into the current level save.");
+        }
+
+        clearRuntimeReplayStateAfterAttemptDeletion_();
+        clearAllGhostNodes();
+        attempts.clear();
+        m_current = Attempt{};
+        m_loadedAttemptKeys.clear();
+        m_loadedLevelID = 0;
+        m_lastWinSerial = -1;
+        m_nextAttemptSerial = 1;
+
+        invalidateAttemptPointerCaches_();
+        invalidatePrimedPlayerObjectRefs();
+        m_preloadOrder.clear();
+        m_initialAttemptsToSet.clear();
+        m_preloadedIndices.clear();
+        m_preloadedSet.clear();
+        m_primedIndices.clear();
+        m_primedSet.clear();
+        m_wantToPrimeIndices.clear();
+        m_wantToPrimeSet.clear();
+        m_attemptsPreloadedTotal = 0;
+        m_spans.clear();
+        m_grid.clear();
+        m_gridThreshold.clear();
+        m_cachedCandidates.clear();
+        m_cachedBinL = INT_MAX;
+        m_cachedBinR = INT_MIN;
+        m_serialCacheDirty = true;
+        invalidateAttemptCounts();
+
+        m_checkpointMgr.restorePath(finalPath);
+        m_needsMigrationRewrite = false;
+        m_loadedFileWasLegacyAttempts = false;
+        clearAttemptCatalog_();
+        if (!scanAttemptCatalogForLevel_(m_levelIDOnAttach)) {
+            return fail("The imported file was written, but its new catalog could not be rebuilt.");
+        }
+
+        recording = true;
+        recordingBlocked = false;
+        m_justDied = false;
+        m_blockAttemptCount = false;
+        block_attempt_push_on_recording_start = false;
+        armFreshRecordingAfterDeleteRestart_();
+        restartLevel();
+        return true;
+    }
+
+    static bool validRandomColorMaskString_(std::string const& s) {
+        if (s.size() != static_cast<size_t>(kRandomColorCount)) return false;
+        return std::all_of(s.begin(), s.end(), [](char ch) { return ch == '0' || ch == '1'; });
+    }
+
+    static void randomColorArrayFromString_(
+        std::array<uint8_t, kRandomColorCount>& out,
+        std::string const& s
+    ) {
         for (int slot = 0; slot < kRandomColorCount; ++slot) {
-            if (m_randomColorAllowed[slot]) m_randomColorAllowedList.push_back(kRandomColorIDs[slot]);
+            out[slot] = s[slot] == '1' ? 1 : 0;
         }
     }
 
-    void saveRandomColorMask_() {
-        std::string s;
-        s.reserve(kRandomColorCount);
-
+    static std::string randomColorArrayToString_(
+        std::array<uint8_t, kRandomColorCount> const& mask
+    ) {
+        std::string s(kRandomColorCount, '0');
         for (int slot = 0; slot < kRandomColorCount; ++slot) {
-            const bool on = (m_randomColorAllowed[slot] != 0);
-            s.push_back(on ? '1' : '0');
+            s[slot] = mask[slot] ? '1' : '0';
         }
-
-        Mod::get()->setSavedValue(kGhostRandomColorsMaskKey, s);
+        return s;
     }
 
-    bool isRandomGhostColorAllowed(int slot) {
+    void ensureRandomColorMaskLoaded_() {
+        if (m_randomColorMaskLoaded) return;
+        m_randomColorMaskLoaded = true;
+
+        auto* mod = Mod::get();
+
+        const std::string fallback = kDefaultRandomColorMask;
+
+        auto readValid = [mod](const char* key) -> std::string {
+            if (!mod->hasSavedValue(key)) return {};
+            auto value = mod->getSavedValue<std::string>(key);
+            return validRandomColorMaskString_(value) ? value : std::string{};
+        };
+ 
+        const std::string legacy = readValid(kGhostRandomColorsMaskKey);
+        std::string p1 = readValid(kGhostRandomColorsMaskP1Key);
+        std::string p2 = readValid(kGhostRandomColorsMaskP2Key);
+
+        // Migrate from old single color to new 2 player color
+        if (p1.empty()) p1 = !legacy.empty() ? legacy : (!p2.empty() ? p2 : fallback);
+        if (p2.empty()) p2 = !legacy.empty() ? legacy : (!p1.empty() ? p1 : fallback);
+
+        randomColorArrayFromString_(m_randomColorAllowedP1, p1);
+        randomColorArrayFromString_(m_randomColorAllowedP2, p2);
+        rebuildRandomColorAllowedLists_();
+
+        saveRandomColorMasks_();
+    }
+
+    void rebuildRandomColorAllowedLists_() {
+        m_randomColorAllowedListP1.clear();
+        m_randomColorAllowedListP2.clear();
+        m_randomColorAllowedListP1.reserve(kRandomColorCount);
+        m_randomColorAllowedListP2.reserve(kRandomColorCount);
+
+        for (int slot = 0; slot < kRandomColorCount; ++slot) {
+            if (m_randomColorAllowedP1[slot]) m_randomColorAllowedListP1.push_back(kRandomColorIDs[slot]);
+            if (m_randomColorAllowedP2[slot]) m_randomColorAllowedListP2.push_back(kRandomColorIDs[slot]);
+        }
+    }
+
+    void saveRandomColorMasks_() {
+        const std::string p1 = randomColorArrayToString_(m_randomColorAllowedP1);
+        const std::string p2 = randomColorArrayToString_(m_randomColorAllowedP2);
+ 
+        std::string legacy(kRandomColorCount, '0');
+
+        for (int slot = 0; slot < kRandomColorCount; ++slot) {
+            legacy[slot] = (m_randomColorAllowedP1[slot] || m_randomColorAllowedP2[slot]) ? '1' : '0';
+        }
+
+        auto* mod = Mod::get();
+        mod->setSavedValue(kGhostRandomColorsMaskP1Key, p1);
+        mod->setSavedValue(kGhostRandomColorsMaskP2Key, p2);
+        mod->setSavedValue(kGhostRandomColorsMaskKey, legacy);
+    }
+
+    bool isRandomGhostColorAllowed(int slot, bool player1) {
         ensureRandomColorMaskLoaded_();
 
-        if (slot < 0 || slot >= kRandomColorCount) {
-            // log::info("[RandomColors] isRandomGhostColorAllowed: slot out of range: {}", slot);
-            return false;
-        }
-
-        const bool allowed = (m_randomColorAllowed[slot] != 0);
-        return allowed;
+        if (slot < 0 || slot >= kRandomColorCount) return false;
+        return player1 ? (m_randomColorAllowedP1[slot] != 0) : (m_randomColorAllowedP2[slot] != 0);
     }
 
-    void setRandomGhostColorAllowed(int slot, bool allowed) {
+    void setRandomGhostColorAllowed(int slot, bool allowed, bool player1) {
         ensureRandomColorMaskLoaded_();
 
         if (slot < 0 || slot >= kRandomColorCount) return;
-        m_randomColorAllowed[slot] = allowed ? 1 : 0;
-
-        rebuildRandomColorAllowedList_();
-        saveRandomColorMask_();
+        auto& mask = player1 ? m_randomColorAllowedP1 : m_randomColorAllowedP2;
+        mask[slot] = allowed ? 1 : 0;
+        rebuildRandomColorAllowedLists_();
+        saveRandomColorMasks_();
     }
 
-    void setAllRandomGhostColorsAllowed(bool allowed) {
+    void setAllRandomGhostColorsAllowed(bool allowed, bool player1) {
         ensureRandomColorMaskLoaded_();
 
-        m_randomColorAllowed.fill(allowed ? 1 : 0);
-        rebuildRandomColorAllowedList_();
-        saveRandomColorMask_();
+        auto& mask = player1 ? m_randomColorAllowedP1 : m_randomColorAllowedP2;
+        mask.fill(allowed ? 1 : 0);
+        rebuildRandomColorAllowedLists_();
+        saveRandomColorMasks_();
     }
 
-    int pickRandomAllowedGhostColorIdx(uint32_t seed) {
+    int pickRandomAllowedGhostColorIdx(uint32_t seed, bool player1) {
         ensureRandomColorMaskLoaded_();
-
-        if (m_randomColorAllowedList.empty()) return kRandomColorIDs[0];
 
         std::mt19937 rng(seed);
-        std::uniform_int_distribution<size_t> pick(0, m_randomColorAllowedList.size() - 1);
-        const size_t idx = pick(rng);
-        const int paletteIdx = m_randomColorAllowedList[idx];
+        auto const& allowed = player1 ? m_randomColorAllowedListP1 : m_randomColorAllowedListP2;
 
-        return paletteIdx;
+        if (allowed.empty()) {
+            std::uniform_int_distribution<size_t> pick(0, kRandomColorCount - 1);
+            return kRandomColorIDs[pick(rng)];
+        }
+
+        std::uniform_int_distribution<size_t> pick(0, allowed.size() - 1);
+        return allowed[pick(rng)];
     }
 
     int getNumAttemptsPreloadedTotal() { return m_attemptsPreloadedTotal; }
@@ -1071,12 +1954,12 @@ public:
 
         if (m_replayKind == ReplayKind::PracticeComposite) {
             auto getEndT = [&](uint32_t serial) -> double {
-                const Attempt* a = findLoadedAttemptBySerialOnly_(static_cast<int>(serial));
+                const Attempt* a = findLoadedAttemptBySerialAndPractice_(static_cast<int>(serial), true);
                 if (a && !a->p1.empty()) {
                     return static_cast<double>(a->p1.back().t);
                 }
 
-                const APXAttemptDiskInfo* entry = findCatalogEntryBySerial_(static_cast<int>(serial));
+                const APXAttemptDiskInfo* entry = findCatalogEntryBySerialAndPractice_(static_cast<int>(serial), true);
                 if (entry) {
                     return 0.0;
                 }
@@ -1317,6 +2200,16 @@ public:
 
         m_preloadCursor = 0;
         m_preloadActive = (m_preloadLoaded < m_preloadTarget) && !m_preloadOrder.empty();
+
+        log::info(
+            "[Preload] begin target={} totalMatching={} candidates={} order={} initialPO={} active={}",
+            m_preloadTarget,
+            totalMatching,
+            m_preloadableSerials.size(),
+            m_preloadOrder.size(),
+            m_initialAttemptsToSet.size(),
+            m_preloadActive
+        );
     }
 
     void prioritizeInitialAttemptsInPreloadOrder_(int targetCount) {
@@ -1384,13 +2277,14 @@ public:
             m_preloadCursor < m_preloadOrder.size())
         {
             const int serial = static_cast<int>(m_preloadOrder[m_preloadCursor]);
-            Attempt* loaded = ensureAttemptLoadedBySerial_(serial, false);
+            const std::optional<bool> wantPractice = practiceFilterForGhosts_();
+            Attempt* loaded = ensureAttemptLoadedBySerialFiltered_(serial, wantPractice, false);
             if (!loaded) {
                 ++m_preloadCursor;
                 continue;
             }
 
-            const size_t idx = findLoadedAttemptIndexBySerial_(serial);
+            const size_t idx = findLoadedAttemptIndexBySerialFiltered_(serial, wantPractice);
             if (idx == SIZE_MAX || idx >= attempts.size()) {
                 ++m_preloadCursor;
                 continue;
@@ -1410,6 +2304,18 @@ public:
         }
 
         if (m_preloadLoaded >= m_preloadTarget || m_preloadCursor >= m_preloadOrder.size()) {
+
+            if (m_preloadLoaded < m_preloadTarget && m_preloadCursor >= m_preloadOrder.size()) {
+                log::warn(
+                    "[Preload] order ran out early: loaded={} target={} cursor={} order={} candidates={}",
+                    m_preloadLoaded,
+                    m_preloadTarget,
+                    m_preloadCursor,
+                    m_preloadOrder.size(),
+                    m_preloadableSerials.size()
+                );
+            }
+
             m_preloadActive = false;
             if (m_replayKind == ReplayKind::BestSingle) replayBestSetOwner();
             rebuildGridPreloadedSet_();
@@ -1457,13 +2363,14 @@ public:
 
         for (int i = startIndex; i < end; ++i) {
             const int serial = static_cast<int>(order[i]);
+            const std::optional<bool> wantPractice = practiceFilterForGhosts_();
 
-            Attempt* loaded = ensureAttemptLoadedBySerial_(serial, false);
+            Attempt* loaded = ensureAttemptLoadedBySerialFiltered_(serial, wantPractice, false);
             if (!loaded) {
                 continue;
             }
 
-            const size_t attemptIdx = findLoadedAttemptIndexBySerial_(serial);
+            const size_t attemptIdx = findLoadedAttemptIndexBySerialFiltered_(serial, wantPractice);
             if (attemptIdx == SIZE_MAX || attemptIdx >= attempts.size()) {
                 continue;
             }
@@ -1672,6 +2579,7 @@ public:
     bool useCheckpointsRoute() const { return m_useCheckpointsRoute; }
     
     void setGhostDistance(int maxPx) { m_randomDistPx = maxPx; }
+    int getGhostDistance() const { return m_randomDistPx; }
 
     void setModEnabled(bool on) {
         modEnabled = on;
@@ -1681,7 +2589,7 @@ public:
             stopReplay();
             clearAllGhostNodes();
             attempts.clear();
-            m_loadedSerials.clear();
+            m_loadedAttemptKeys.clear();
             m_loadedLevelID = 0;
             m_serialCacheDirty = true;
             m_spans.clear();
@@ -1710,17 +2618,18 @@ public:
     }
 
     bool isModEnabled() const {
-        auto* pl = m_gl ? typeinfo_cast<PlayLayer*>(m_gl) : nullptr;
-
+        auto* pl = getPlayLayer();
         return isModEnabledForPlayLayer(pl);
     }
 
     bool hasModAttachedToLevel() const {
-        return m_pl != nullptr;
+        return getPlayLayer() != nullptr;
     }
 
     bool isAttachedPlayLayer(PlayLayer* pl) const {
-        return pl && m_pl == pl;
+        if (!pl || pl != m_pl) return false;
+        auto* active = GJBaseGameLayer::get();
+        return active && active == static_cast<GJBaseGameLayer*>(pl);
     }
 
     bool shouldHandlePlayLayer(PlayLayer* pl) const {
@@ -1728,8 +2637,7 @@ public:
     }
 
     bool shouldHandleActivePlayLayer() const {
-        auto* pl = m_gl ? typeinfo_cast<PlayLayer*>(m_gl) : nullptr;
-        return shouldHandlePlayLayer(pl);
+        return shouldHandlePlayLayer(getPlayLayer());
     }
 
     bool isUpdateAttemptCountBlocked() const { return m_blockAttemptCount; }
@@ -1771,7 +2679,7 @@ public:
     std::filesystem::path fileForLevel_(int levelID) const {
         auto dir = attemptsDir_();
 
-        if (levelID < 120 && !m_customSaveId.empty()) {
+        if (!m_customSaveId.empty()) {
             return dir / (m_customSaveId + "_attempts.apx");
         }
 
@@ -1858,19 +2766,191 @@ public:
         return oss.str(); // ex: "4f82d0e62887c3fa"
     }
 
-    void refreshLevelName(int levelID) {
-        //log::info("[refreshLevelName] levelID < 120 {}",levelID < 120);
-        //log::info("[refreshLevelName] m_pl {}",m_pl!=nullptr);
-        //log::info("[refreshLevelName] m_pl->m_level {}",m_pl!=nullptr && m_pl->m_level!=nullptr);
-        
-        if (levelID < 120 && m_pl && m_pl->m_level) {
-            const std::string lvlName = m_pl->m_level->m_levelName;
-            //log::info("[lvlName] {}",lvlName);
-            if (lvlName.length() == 0) m_customSaveId.clear();
-            else m_customSaveId = customLevelSaveId(lvlName);
-        } else {
-            m_customSaveId.clear();
+    void migrateLegacyCustomLevelFiles_(
+        int levelID,
+        std::string const& legacyNameHash,
+        std::string const& canonicalSaveId
+    ) {
+        if (canonicalSaveId.empty()) return;
+
+        const auto dir = attemptsDir_();
+        const auto canonicalPath = dir / (canonicalSaveId + "_attempts.apx");
+
+        std::vector<std::filesystem::path> legacyPaths;
+        auto addLegacy = [&](std::filesystem::path const& p) {
+            if (p == canonicalPath) return;
+            std::error_code ec;
+            if (!std::filesystem::exists(p, ec) || ec) return;
+            if (std::find(legacyPaths.begin(), legacyPaths.end(), p) == legacyPaths.end()) {
+                legacyPaths.push_back(p);
+            }
+        };
+
+        if (!legacyNameHash.empty()) {
+            addLegacy(dir / (legacyNameHash + "_attempts.apx"));
         }
+
+        if (levelID > 0) {
+            addLegacy(dir / (std::to_string(levelID) + "_attempts.apx"));
+        }
+
+        if (legacyPaths.empty()) return;
+
+        std::error_code ec;
+        const bool canonicalExists = std::filesystem::exists(canonicalPath, ec) && !ec;
+
+
+        if (!canonicalExists && legacyPaths.size() == 1) {
+            ec.clear();
+            std::filesystem::rename(legacyPaths.front(), canonicalPath, ec);
+            if (!ec) {
+                log::info(
+                    "[APX custom-id] migrated {} -> {}",
+                    geode::utils::string::pathToString(legacyPaths.front()),
+                    geode::utils::string::pathToString(canonicalPath)
+                );
+                return;
+            }
+
+            log::warn(
+                "[APX custom-id] rename migration failed ({}); falling back to merge",
+                ec.message()
+            );
+        }
+
+        std::vector<Attempt> mergedAttempts;
+        PracticePath mergedPath;
+
+        if (canonicalExists) {
+            if (!loadAPXFileWithMigration(canonicalPath, mergedAttempts, mergedPath)) {
+                log::warn(
+                    "[APX custom-id] refusing migration because canonical file could not be read: {}",
+                    geode::utils::string::pathToString(canonicalPath)
+                );
+                return;
+            }
+        }
+
+        int maxSerial = 0;
+        for (auto const& a : mergedAttempts) maxSerial = std::max(maxSerial, a.serial);
+
+        int maxSessionId = 0;
+        for (auto const& s : mergedPath.sessions) maxSessionId = std::max(maxSessionId, s.sessionId);
+
+        std::vector<std::filesystem::path> mergedLegacyPaths;
+
+        for (auto const& legacyPath : legacyPaths) {
+            std::vector<Attempt> incomingAttempts;
+            PracticePath incomingPath;
+
+            if (!loadAPXFileWithMigration(legacyPath, incomingAttempts, incomingPath)) {
+                log::warn(
+                    "[APX custom-id] could not read legacy file; leaving it untouched: {}",
+                    geode::utils::string::pathToString(legacyPath)
+                );
+                continue;
+            }
+
+            mergedLegacyPaths.push_back(legacyPath);
+
+            std::unordered_map<int, int> serialMap;
+            serialMap.reserve(incomingAttempts.size());
+
+            for (auto& a : incomingAttempts) {
+                const int oldSerial = a.serial;
+                const int newSerial = ++maxSerial;
+                serialMap[oldSerial] = newSerial;
+                a.serial = newSerial;
+                a.persistedOnDisk = true;
+                a.recordedThisSession = false;
+                mergedAttempts.push_back(std::move(a));
+            }
+
+            const int oldActiveSession = incomingPath.activeSessionId;
+            const int oldSelectedSession = incomingPath.selectedSessionId;
+            std::unordered_map<int, int> sessionMap;
+            sessionMap.reserve(incomingPath.sessions.size());
+
+            for (auto& session : incomingPath.sessions) {
+                const int oldSessionId = session.sessionId;
+                const int newSessionId = ++maxSessionId;
+                sessionMap[oldSessionId] = newSessionId;
+                session.sessionId = newSessionId;
+
+                for (int& serial : session.allAttemptSerials) {
+                    if (auto it = serialMap.find(serial); it != serialMap.end()) {
+                        serial = it->second;
+                    }
+                }
+                for (auto& seg : session.segments) {
+                    if (auto it = serialMap.find(seg.ownerSerial); it != serialMap.end()) {
+                        seg.ownerSerial = it->second;
+                    }
+                }
+
+                session.updateSpan();
+                mergedPath.sessions.push_back(std::move(session));
+            }
+
+            if (mergedPath.activeSessionId == 0) {
+                if (auto it = sessionMap.find(oldActiveSession); it != sessionMap.end()) {
+                    mergedPath.activeSessionId = it->second;
+                }
+            }
+            if (mergedPath.selectedSessionId == 0) {
+                if (auto it = sessionMap.find(oldSelectedSession); it != sessionMap.end()) {
+                    mergedPath.selectedSessionId = it->second;
+                }
+            }
+        }
+
+        if (!canonicalExists && mergedLegacyPaths.empty()) {
+            return;
+        }
+
+        if (!saveAPXFileCurrent(canonicalPath, mergedAttempts, mergedPath)) {
+            log::warn(
+                "[APX custom-id] merged migration failed; legacy files were not removed: {}",
+                geode::utils::string::pathToString(canonicalPath)
+            );
+            return;
+        }
+
+        for (auto const& legacyPath : mergedLegacyPaths) {
+            ec.clear();
+            std::filesystem::remove(legacyPath, ec);
+            if (ec) {
+                log::warn(
+                    "[APX custom-id] migrated data but could not remove old file {}: {}",
+                    geode::utils::string::pathToString(legacyPath),
+                    ec.message()
+                );
+            }
+        }
+    }
+
+    void refreshLevelName(int levelID) {
+        m_customSaveId.clear();
+        if (!m_pl || !m_pl->m_level) return;
+
+        auto* level = m_pl->m_level;
+        const std::string lvlName = level->m_levelName;
+        const std::string legacyNameHash = lvlName.empty() ? std::string{} : customLevelSaveId(lvlName);
+
+        // Editor Level ID API goop
+        if (level->m_levelType == GJLevelType::Editor) {
+            const int editorLevelId = EditorIDs::getID(level);
+            if (editorLevelId > 0) {
+                m_customSaveId = "editor-" + std::to_string(editorLevelId);
+                migrateLegacyCustomLevelFiles_(levelID, legacyNameHash, m_customSaveId);
+                return;
+            }
+        }
+
+        // Compatibility with the old way I did it
+        if (levelID < 120 && !legacyNameHash.empty()) {
+            m_customSaveId = legacyNameHash;
+         }
     }
 
     void prepareLevelPersistence(int levelID, PlayLayer* pl) {
@@ -2124,13 +3204,14 @@ public:
                     clearAPXWavePointThisFrameBits(a);
                 }
 
-                if (m_loadedSerials.count(a.serial)) {
+                const bool isPractice = a.practiceAttempt;
+                const uint64_t attemptKey = attemptIdentityKey_(a.serial, isPractice);
+                if (m_loadedAttemptKeys.count(attemptKey)) {
                     continue;
                 }
 
                 maxSerialSeen = std::max(maxSerialSeen, static_cast<uint32_t>(a.serial));
 
-                const bool isPractice = a.practiceAttempt;
                 bool loadThis = true;
 
                 if (!(forceFullMigrationLoad)) {
@@ -2145,7 +3226,7 @@ public:
                     continue;
                 }
 
-                m_loadedSerials.insert(a.serial);
+                m_loadedAttemptKeys.insert(attemptKey);
                 pushAttempt(std::move(a), false);
 
                 ++loaded;
@@ -2161,7 +3242,9 @@ public:
                 in.read(reinterpret_cast<char*>(&m), sizeof(m));
                 if (!in) break;
 
-                if (m_loadedSerials.count((int)m.serial)) {
+                const bool isPractice = (m.flags & 1u) != 0;
+                const uint64_t attemptKey = attemptIdentityKey_(static_cast<int>(m.serial), isPractice);
+                if (m_loadedAttemptKeys.count(attemptKey)) {
                     auto now = in.tellg();
                     auto readSoFar = (std::streamoff)(now - attzChunkStart);
                     auto remain = (std::streamoff)sz - readSoFar;
@@ -2171,7 +3254,6 @@ public:
 
                 maxSerialSeen = std::max(maxSerialSeen, m.serial);
 
-                const bool isPractice = (m.flags & 1u) != 0;
                 bool loadThis = true;
 
                 if (!forceFullMigrationLoad) {
@@ -2246,7 +3328,7 @@ public:
                 a.persistedOnDisk = true;
                 a.recordedThisSession = false;
 
-                m_loadedSerials.insert(a.serial);
+                m_loadedAttemptKeys.insert(attemptKey);
                 pushAttempt(std::move(a), false);
 
                 ++loaded;
@@ -2432,7 +3514,14 @@ public:
     void setInterpolationEnabled(bool on) { m_useInterpolation = on; }
     bool isGhostsExplodeEnabled() const { return m_ghostsExplode; }
     void setGhostsExplodeEnabled(bool on) { m_ghostsExplode = on; }
-    PlayLayer* getPlayLayer() { return m_pl; }
+    PlayLayer* getPlayLayer() const {
+        auto* active = GJBaseGameLayer::get();
+        if (!active || active != static_cast<GJBaseGameLayer*>(m_pl)) {
+            return nullptr;
+        }
+
+        return typeinfo_cast<PlayLayer*>(active);
+    }
     bool isGhostsExplodeSFXEnabled() const { return m_ghostsExplodeSFX; }
     void setGhostsExplodeSFXEnabled(bool on) { m_ghostsExplodeSFX = on; }
     bool getPlaybackCustomDeathSoundEnabled() const { return m_useCustomExplodeSounds; }
@@ -2526,6 +3615,8 @@ public:
         if (objectLayer) {
             objectLayer->addChild(m_ghostRoot, 5);
         }
+        ensureDeathMarkerLayer_();
+        redrawDeathMarkers_();
         
         m_ghostPool.initialize(pl, m_ghostRoot, 1);
         m_fmodEngine = FMODAudioEngine::sharedEngine();
@@ -2561,6 +3652,7 @@ public:
         forceSetPosP2.y = 105.f;
 
         auto* mod = Mod::get();
+        syncGhostUiSettingsFromSaved_();
 
         int numRealPlayerObjects = getSettingIntOrDefault_(mod, "real-player-objects", 1000);
 
@@ -2569,6 +3661,7 @@ public:
         m_currentOwner = nullptr;
         m_playbackArmed = false;
         botActive = false;
+        m_runUsedBot = false;
         m_didInitialWarp = false;
         botPrevHold1 = botPrevHold2 = false;
         botPrevHoldL1 = botPrevHoldL2 = false;
@@ -2591,7 +3684,7 @@ public:
         if (!modEnabled || (m_pl->m_isPlatformer && !m_allow_platformer)) {
             clearAllGhostNodes();
             attempts.clear();
-            m_loadedSerials.clear();
+            m_loadedAttemptKeys.clear();
             clearAttemptCatalog_();
             invalidateAttemptPointerCaches_();
             recording = false;
@@ -2649,10 +3742,23 @@ public:
         if (!mod->hasSavedValue("ghost-colors")) mod->setSavedValue("ghost-colors", std::string("PlayerColors"));
         std::string colorMode = mod->getSavedValue<std::string>("ghost-colors");
 
-        if (colorMode == "PlayerColors") colors = ColorMode::PlayerColors;
-        else if (colorMode == "White") colors = ColorMode::White;
-        else if (colorMode == "Black") colors = ColorMode::Black;
-        else colors = ColorMode::Random;
+        std::string colorModeLower = colorMode;
+        std::transform(colorModeLower.begin(), colorModeLower.end(), colorModeLower.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        if (colorModeLower == "playercolors") {
+            colors = ColorMode::PlayerColors;
+            if (colorMode != "PlayerColors") mod->setSavedValue("ghost-colors", std::string("PlayerColors"));
+        } else if (colorModeLower == "white") {
+            colors = ColorMode::White;
+            if (colorMode != "White") mod->setSavedValue("ghost-colors", std::string("White"));
+        } else if (colorModeLower == "black") {
+            colors = ColorMode::Black;
+            if (colorMode != "Black") mod->setSavedValue("ghost-colors", std::string("Black"));
+        } else {
+            colors = ColorMode::Random;
+            if (colorMode != "Random") mod->setSavedValue("ghost-colors", std::string("Random"));
+        }
 
         m_autosaveEnabled = getSettingBoolOrDefault_(mod, "autosave-enabled", true);
         m_autosaveMinutes = getSettingIntOrDefault_(mod, "autosave-minutes", 5);
@@ -2771,10 +3877,11 @@ public:
         
         if (m_replayKind == ReplayKind::BestSingle) {
             if (m_replayOwnerSerial > 0) {
-                owner = ensureAttemptLoadedBySerial_(m_replayOwnerSerial, false);
+                owner = ensureAttemptLoadedBySerialAndPractice_(m_replayOwnerSerial, false, false);
             }
 
-            if (!owner && m_compOwnerIdx < attempts.size()) {
+            if (!owner && m_compOwnerIdx < attempts.size() &&
+                !attempts[m_compOwnerIdx].practiceAttempt) {
                 owner = &attempts[m_compOwnerIdx];
                 m_replayOwnerSerial = owner->serial;
             }
@@ -2783,8 +3890,8 @@ public:
         } else {
             int serial = m_checkpointMgr.findOwnerSerialForTime(m_baseTime);
             if (serial > 0) {
-                owner = ensureAttemptLoadedBySerial_(serial, false);
-                m_replayOwnerSerial = serial;
+                owner = ensurePracticeReplayOwnerLoaded_(serial, "reset-owner");
+                if (owner) m_replayOwnerSerial = serial;
             }
             m_replayAttempt = nullptr;
             rebuildRouteOwnerCache_();
@@ -2802,22 +3909,21 @@ public:
             //log::info("[Seed] Applied seed {} from owner attempt {} during init", owner->seed, owner->serial);
         //}
 
-        const Frame& f1 = owner->p1.front();
+        m_currentOwner = owner;
+        m_currentSessionTime = m_baseTime;
+        m_prevSessionTime = m_baseTime;
+        seekReplayCursorsToTimeExact_(*owner, m_currentSessionTime);
+
+        const Frame& f1 = owner->p1[m_replayIdx1];
         applyPoseHard(m_pl->m_player1, f1, m_pl);
 
         if (m_pl->m_player2 && owner->hadDual && !owner->p2.empty()) {
-            const Frame& f2 = owner->p2.front();
+            const Frame& f2 = owner->p2[m_replayIdx2];
             applyPoseHard(m_pl->m_player2, f2, m_pl);
         }
 
         m_prevBotPx = f1.x;
         m_didInitialWarp = true;
-
-        // Set starting time
-        m_currentSessionTime = m_baseTime;
-        m_prevSessionTime = m_baseTime;
-        
-        adjustReplayCursorToTime_(m_currentSessionTime);
 
         m_justStartedBot = false;
     }
@@ -2866,6 +3972,7 @@ public:
     void onReset() {
         m_justDied = false;
         m_playingEndAnimation = false;
+        if (!botActive) m_runUsedBot = false;
 
         if (m_forceFreshRecordingAfterDelete) {
             m_forceFreshRecordingAfterDelete = false;
@@ -3097,6 +4204,7 @@ public:
 
     void onQuit() {
         m_is_quitting = true;
+        g_disableUpdate = false;
 
         death_sound_preloaded = false;
         m_allowWaveHook = false;
@@ -3106,6 +4214,7 @@ public:
         flushPendingSaves_();
         
         botActive = false;
+        m_runUsedBot = false;
         playback = false;
         recording = false;
         m_hasWavePointData = false;
@@ -3141,6 +4250,12 @@ public:
         resetPlayerMirrorVisualOffsets_();
         resetMirrorVisualState_();
         m_mirrorVisualWarmupFrames = 0;
+
+        if (m_deathMarkerDrawNode) {
+            if (m_deathMarkerDrawNode->getParent()) m_deathMarkerDrawNode->removeFromParent();
+            m_deathMarkerDrawNode = nullptr;
+        }
+        m_deathMarkerPositions.clear();
         
         if (m_ghostRoot) {
             m_ghostRoot->setScaleX(1.f);
@@ -3200,7 +4315,7 @@ public:
         m_lastGhostTickFrame = 0;
 
         m_ghostUpdateAccum = 0.f;
-        m_loadedSerials.clear();
+        m_loadedAttemptKeys.clear();
         m_loadedLevelID = 0;
         clearAttemptCatalog_();
         m_practiceCompositeOwnerSerial = -1;
@@ -3318,11 +4433,13 @@ public:
         m_playbackArmed = true;
         m_playbackStartTick = m_frameCounter;
         recording = false;
+        updateGhostTextOnDeath(true);
         updateGhostVisibility(); 
         for (auto& a : attempts) a.resetPlayback();
     }
     void stopPlayback() {
         playback = false;
+        clearDeathMarkers_();
         updateGhostVisibility();
         resetPlayerMirrorVisualOffsets_();
         resetMirrorVisualState_();
@@ -3330,8 +4447,9 @@ public:
 
     void clearGhosts() {
         clearAllGhostNodes();
+        clearDeathMarkers_();
         attempts.clear();
-        m_loadedSerials.clear();
+        m_loadedAttemptKeys.clear();
         m_serialCacheDirty = true;
         m_spans.clear();
         m_grid.clear();
@@ -3524,6 +4642,7 @@ public:
     }
 
     bool startReplayPractice() {
+        restartLevel();
         // Maybe the crash the one person had was from reset/toggle the PlayLayer directly from a menu click callback
         // On macOS, resetting while Geode/Cocos is still releasing the clicked UI
         // object can maybe crash in CCObject::release from executeMainThreadQueue()?
@@ -3744,6 +4863,7 @@ public:
 
 
     bool startReplayBest() {
+        restartLevel();
         m_freezePlayerXAtEnd = false;
         m_freezePlayerX = 0.f;
         m_freezePlayerY = 0.f;
@@ -3831,7 +4951,7 @@ public:
             //log::info("rawSerial: {}", rawSerial);
             const int serial = static_cast<int>(rawSerial);
 
-            const size_t idx = findLoadedAttemptIndexBySerial_(serial);
+            const size_t idx = findLoadedAttemptIndexBySerialAndPractice_(serial, false);
 
             if (idx == SIZE_MAX || idx >= attempts.size()) {
                 log::info("bad index");
@@ -3885,7 +5005,7 @@ public:
             return false;
         }
 
-        Attempt* chosen = ensureAttemptLoadedBySerial_(serial, false);
+        Attempt* chosen = ensureAttemptLoadedBySerialAndPractice_(serial, false, false);
         if (!chosen || chosen->p1.empty()) {
             log::warn("[Bot] startReplayBest: failed to load chosen attempt serial={}", serial);
             m_replayOwnerSerial = -1;
@@ -3902,7 +5022,7 @@ public:
             offsetAttemptTimesFast(*chosen, offsetQ);
         }
 
-        const size_t idx = findLoadedAttemptIndexBySerial_(serial);
+        const size_t idx = findLoadedAttemptIndexBySerialAndPractice_(serial, false);
         if (idx == SIZE_MAX) {
             log::warn("[Bot] startReplayBest: loaded serial {} but index lookup failed", serial);
             m_replayOwnerSerial = -1;
@@ -3955,6 +5075,7 @@ public:
         m_preloadOrder.clear();
         m_1PreloadedSoDontShowGhosts = false;
         forceHidePlayLayerGhostTextLabelOnly();
+        clearDeathMarkers_();
         resetPlayerMirrorVisualOffsets_();
         resetMirrorVisualState_();
     }
@@ -3970,6 +5091,7 @@ public:
     }
 
     bool isBotActive() const { return botActive; }
+    bool didUseBotThisAttempt() const { return m_runUsedBot; }
     bool isReplaying() const { return playback; }
     bool isResetting() const { return resetting; }
     void setResetting(bool on) { resetting = on; }
@@ -4035,6 +5157,7 @@ public:
         if (!recordingBlocked) {
             if (enabled) {
                 m_practiceCompositeOwnerSerial = -1;
+                renumberCurrentAttemptIfFresh();
                 m_current.practiceAttempt = true;
 
                 m_checkpointMgr.createNewSession();
@@ -4058,25 +5181,26 @@ public:
         if (m_replayKind != ReplayKind::PracticeComposite) return;
         if (m_didInitialWarp) return;
 
-        // Use time 0 to get the first owner
-        const Attempt* owner = getReplayOwner_(getStartTime());
+        const double warpTime = m_currentSessionTime;
+        const Attempt* owner = getReplayOwner_(warpTime);
         if (!owner || owner->p1.empty()) return;
 
-        const float px = m_pl->m_player1->getPositionX();
-        const float f1x = owner->p1.front().x;
+        seekReplayCursorsToTimeExact_(*owner, warpTime);
 
-        if (px + 5.f >= f1x) return;
+        const float px = m_pl->m_player1->getPositionX();
+        const Frame& f = owner->p1[m_replayIdx1];
+
+        if (px + 5.f >= f.x) return;
 
         forceMode(m_pl->m_player1, IconType::Cube);
         if (m_pl->m_player2 && owner->hadDual && !owner->p2.empty()) 
             forceMode(m_pl->m_player2, IconType::Cube);
 
-        const Frame& f = owner->p1.front();
         m_pl->m_player1->setPosition({ f.x, f.y });
         m_pl->m_player1->setRotation(f.rot);
 
         if (m_pl->m_player2 && owner->hadDual && !owner->p2.empty()) {
-            const Frame& f2 = owner->p2.front();
+            const Frame& f2 = owner->p2[m_replayIdx2];
             m_pl->m_player2->setPosition({ f2.x, f2.y });
             m_pl->m_player2->setRotation(f2.rot);
             forceMode(m_pl->m_player2, f2.mode);
@@ -4092,12 +5216,12 @@ public:
     bool refreshCurrentOwnerPointer_() {
         if (m_replayKind == ReplayKind::BestSingle) {
             if (m_replayOwnerSerial > 0) {
-                if (const Attempt* bySerial = findLoadedAttemptBySerialOnly_(m_replayOwnerSerial)) {
+                if (const Attempt* bySerial = findLoadedAttemptBySerialAndPractice_(m_replayOwnerSerial, false)) {
                     m_currentOwner = bySerial;
                     return true;
                 }
 
-                m_currentOwner = ensureAttemptLoadedBySerial_(m_replayOwnerSerial, false);
+                m_currentOwner = ensureAttemptLoadedBySerialAndPractice_(m_replayOwnerSerial, false, false);
                 return m_currentOwner != nullptr;
             }
 
@@ -4114,12 +5238,12 @@ public:
         }
 
         if (m_replayOwnerSerial > 0) {
-            if (const Attempt* bySerial = findLoadedAttemptBySerialOnly_(m_replayOwnerSerial)) {
+            if (const Attempt* bySerial = findLoadedAttemptBySerialAndPractice_(m_replayOwnerSerial, true)) {
                 m_currentOwner = bySerial;
                 return true;
             }
 
-            m_currentOwner = ensureAttemptLoadedBySerial_(m_replayOwnerSerial, false);
+            m_currentOwner = ensurePracticeReplayOwnerLoaded_(m_replayOwnerSerial, "refresh-owner");
             return m_currentOwner != nullptr;
         }
 
@@ -4182,7 +5306,14 @@ public:
     }
 
     void hasReachedEndOfLevel() {
+        if (m_playingEndAnimation) return;
+
+        if (!m_currentDidNoclip) {
+            m_currentDidNoclip = setFalseIfPlayerWasDestroyedCheck || isNoclipDetected;
+        }
+
         m_playingEndAnimation = true;
+        resetNoclipDetectedFlag();
     }
 
     void preUpdate() {
@@ -4241,7 +5372,7 @@ public:
             
             if (previousOwnerSerial > 0) {
                 m_currentlyHiddenSerials.erase(previousOwnerSerial);
-                if (Attempt* oldOwner = findAttemptBySerial_(previousOwnerSerial)) {
+                if (Attempt* oldOwner = findAttemptBySerialAndPractice_(previousOwnerSerial, true)) {
                     clearGhostOffset_(*oldOwner);
 
                     oldOwner->primedP1 = false;
@@ -4325,7 +5456,7 @@ public:
                     g_explodeLimiter.play(sfxPath, /*volume*/ 1.f, /*pitch*/ 1.f);
                 }
             }
-            countGhostTextDeathOnceBySerial_(m_currentOwner->serial);
+            countGhostTextDeathOnce_(*m_currentOwner);
         }
 
         if (m_freezePlayerXAtEnd && !m_playingEndAnimation) {
@@ -5134,6 +6265,7 @@ private:
     bool m_currentDidNoclip = false;
 
     bool botActive = false;
+    bool m_runUsedBot = false;
     bool resetting = false;
     bool disablePlayerMove = false;
     bool m_didInitialWarp = false;
@@ -5253,12 +6385,13 @@ private:
     bool m_isSaving = false;
     int m_autosaveMinutes = 5;
     float m_autosaveAccum = 0.f;
-    std::unordered_set<int> m_loadedSerials;
+    std::unordered_set<uint64_t> m_loadedAttemptKeys;
     int m_loadedLevelID = 0;
     bool m_needsMigrationRewrite = false;
     bool m_loadedFileWasLegacyAttempts = false;
     std::vector<APXAttemptDiskInfo> m_attemptCatalog;
     std::unordered_map<int, size_t> m_attemptCatalogBySerial;
+    std::unordered_map<uint64_t, size_t> m_attemptCatalogByIdentity;
     int m_attemptCatalogLevelID = 0;
     bool m_attemptCatalogScanned = false;
     std::string m_attemptCatalogCustomSaveId;
@@ -5319,6 +6452,7 @@ private:
     CheckpointManager m_checkpointMgr;
 
     mutable std::unordered_map<int, size_t> m_serialToIdx;
+    mutable std::unordered_map<uint64_t, size_t> m_attemptToIdxByIdentity;
     mutable bool m_serialCacheDirty = true;
 
     static constexpr float kReplayStartTolerance = 30.0f;
@@ -6019,7 +7153,7 @@ private:
         attempts.clear();
         invalidateAttemptPointerCaches_();
 
-        m_loadedSerials.clear();
+        m_loadedAttemptKeys.clear();
 
         for (int serial : deleteSet) {
             m_ghostTextCountedDeadSerials.erase(serial);
@@ -6151,6 +7285,7 @@ private:
         m_attemptCatalog.clear();
         m_attemptCatalogPracticePath.clear();
         m_attemptCatalogBySerial.clear();
+        m_attemptCatalogByIdentity.clear();
         m_attemptCatalogLevelID = 0;
         m_attemptCatalogCustomSaveId.clear();
         m_attemptCatalogScanned = false;
@@ -6175,9 +7310,12 @@ private:
         m_attemptCatalog = std::move(scan.attempts);
         m_attemptCatalogPracticePath = std::move(scan.practicePath);
         m_attemptCatalogBySerial.reserve(m_attemptCatalog.size());
+        m_attemptCatalogByIdentity.reserve(m_attemptCatalog.size());
 
         for (size_t i = 0; i < m_attemptCatalog.size(); ++i) {
-            m_attemptCatalogBySerial[m_attemptCatalog[i].serial] = i;
+            const APXAttemptDiskInfo& entry = m_attemptCatalog[i];
+            m_attemptCatalogBySerial[entry.serial] = i;
+            m_attemptCatalogByIdentity[attemptIdentityKey_(entry.serial, entry.practiceAttempt)] = i;
         }
 
         if (m_nextAttemptSerial <= static_cast<int>(scan.maxSerialSeen)) {
@@ -6190,11 +7328,43 @@ private:
         return true;
     }
 
+    static uint64_t attemptIdentityKey_(int serial, bool practiceAttempt) {
+        return (static_cast<uint64_t>(static_cast<uint32_t>(serial)) << 1u) |
+            (practiceAttempt ? 1ull : 0ull);
+    }
+
+    const APXAttemptDiskInfo* findCatalogEntryBySerialAndPractice_(
+        int serial,
+        bool practiceAttempt
+    ) const {
+        const auto it = m_attemptCatalogByIdentity.find(attemptIdentityKey_(serial, practiceAttempt));
+        if (it == m_attemptCatalogByIdentity.end()) return nullptr;
+        if (it->second >= m_attemptCatalog.size()) return nullptr;
+
+        const APXAttemptDiskInfo& entry = m_attemptCatalog[it->second];
+        if (entry.serial != serial || entry.practiceAttempt != practiceAttempt) return nullptr;
+        return &entry;
+    }
+
     const APXAttemptDiskInfo* findCatalogEntryBySerial_(int serial) const {
         auto it = m_attemptCatalogBySerial.find(serial);
         if (it == m_attemptCatalogBySerial.end()) return nullptr;
         if (it->second >= m_attemptCatalog.size()) return nullptr;
         return &m_attemptCatalog[it->second];
+    }
+
+    size_t findLoadedAttemptIndexBySerialAndPractice_(
+        int serial,
+        bool practiceAttempt
+    ) const {
+        rebuildSerialCache_();
+        const auto it = m_attemptToIdxByIdentity.find(attemptIdentityKey_(serial, practiceAttempt));
+        if (it == m_attemptToIdxByIdentity.end()) return SIZE_MAX;
+        if (it->second >= attempts.size()) return SIZE_MAX;
+
+        const Attempt& attempt = attempts[it->second];
+        if (attempt.serial != serial || attempt.practiceAttempt != practiceAttempt) return SIZE_MAX;
+        return it->second;
     }
 
     size_t findLoadedAttemptIndexBySerial_(int serial) const {
@@ -6204,6 +7374,25 @@ private:
         if (it->second >= attempts.size()) return SIZE_MAX;
         if (attempts[it->second].serial != serial) return SIZE_MAX;
         return it->second;
+    }
+
+    size_t findLoadedAttemptIndexBySerialFiltered_(int serial, std::optional<bool> wantPractice) const {
+        if (wantPractice.has_value()) {
+            return findLoadedAttemptIndexBySerialAndPractice_(serial, wantPractice.value());
+        }
+        return findLoadedAttemptIndexBySerial_(serial);
+    }
+
+    Attempt* findLoadedAttemptBySerialAndPractice_(int serial, bool practiceAttempt) {
+        const size_t idx = findLoadedAttemptIndexBySerialAndPractice_(serial, practiceAttempt);
+        if (idx == SIZE_MAX) return nullptr;
+        return &attempts[idx];
+    }
+
+    const Attempt* findLoadedAttemptBySerialAndPractice_(int serial, bool practiceAttempt) const {
+        const size_t idx = findLoadedAttemptIndexBySerialAndPractice_(serial, practiceAttempt);
+        if (idx == SIZE_MAX) return nullptr;
+        return &attempts[idx];
     }
 
     Attempt* findLoadedAttemptBySerialOnly_(int serial) {
@@ -6224,7 +7413,9 @@ private:
     }
 
     bool getPreloadSortInfoForSerial_(int serial, float& endX, double& endT) const {
-        if (const Attempt* a = findLoadedAttemptBySerialOnly_(serial)) {
+        const bool wantPractice = (m_replayKind == ReplayKind::PracticeComposite);
+
+        if (const Attempt* a = findLoadedAttemptBySerialAndPractice_(serial, wantPractice)) {
             if (!a->p1.empty()) {
                 endX = static_cast<float>(a->p1.back().x);
                 endT = static_cast<double>(a->p1.back().t);
@@ -6237,7 +7428,7 @@ private:
             }
         }
 
-        if (const APXAttemptDiskInfo* entry = findCatalogEntryBySerial_(serial)) {
+        if (const APXAttemptDiskInfo* entry = findCatalogEntryBySerialAndPractice_(serial, wantPractice)) {
             if (entry->p1Count <= 0) return false;
             endX = entry->endX;
             endT = 0.0;
@@ -6280,12 +7471,16 @@ private:
         outInitial.assign(sorted.begin(), sorted.begin() + initialCount);
     }
 
-    Attempt* ensureAttemptLoadedBySerial_(int serial, bool spawnNow = false) {
+    Attempt* ensureAttemptLoadedBySerialFiltered_(int serial, std::optional<bool> wantPractice, bool spawnNow = false) {
         if (serial <= 0) return nullptr;
 
-        if (Attempt* already = findLoadedAttemptBySerialOnly_(serial)) {
-            return already;
+        Attempt* already = nullptr;
+        if (wantPractice.has_value()) {
+            already = findLoadedAttemptBySerialAndPractice_(serial, wantPractice.value());
+        } else {
+            already = findLoadedAttemptBySerialOnly_(serial);
         }
+        if (already) return already;
 
         if (!m_pl || !hasCurrentPersistenceTarget_()) return nullptr;
 
@@ -6293,7 +7488,9 @@ private:
 
         if (!scanAttemptCatalogForLevel_(m_levelIDOnAttach)) return nullptr;
 
-        const APXAttemptDiskInfo* entry = findCatalogEntryBySerial_(serial);
+        const APXAttemptDiskInfo* entry = wantPractice.has_value()
+            ? findCatalogEntryBySerialAndPractice_(serial, wantPractice.value())
+            : findCatalogEntryBySerial_(serial);
         if (!entry) return nullptr;
 
         Attempt loaded{};
@@ -6301,27 +7498,39 @@ private:
 
         if (!loadAPXAttemptByCatalogEntry(path, *entry, loaded, &usedLegacy)) return nullptr;
 
-        if (m_loadedSerials.count(loaded.serial) != 0) {
-            Attempt* existing = findLoadedAttemptBySerialOnly_(loaded.serial);
+        if (wantPractice.has_value() && loaded.practiceAttempt != wantPractice.value()) {
+            log::warn("[APX] serial={} loaded with practice={} but practice={} was requested", serial, loaded.practiceAttempt, wantPractice.value());
+            return nullptr;
+        }
+
+        const uint64_t loadedKey = attemptIdentityKey_(loaded.serial,loaded.practiceAttempt);
+        if (m_loadedAttemptKeys.count(loadedKey) != 0) {
+            Attempt* existing = findLoadedAttemptBySerialAndPractice_(loaded.serial,loaded.practiceAttempt);
             if (existing) return existing;
 
-            m_loadedSerials.erase(loaded.serial);
+            m_loadedAttemptKeys.erase(loadedKey);
         }
 
         const int loadedSerial = loaded.serial;
-        m_loadedSerials.insert(loadedSerial);
+        const bool loadedPractice = loaded.practiceAttempt;
+        m_loadedAttemptKeys.insert(loadedKey);
         pushAttempt(std::move(loaded), spawnNow);
 
-        Attempt* result = findLoadedAttemptBySerialOnly_(serial);
-        if (!result && loadedSerial != serial) {
-            result = findLoadedAttemptBySerialOnly_(loadedSerial);
-        }
+        Attempt* result = findLoadedAttemptBySerialAndPractice_(loadedSerial,loadedPractice);
 
         if (!result) {
-            m_loadedSerials.erase(loadedSerial);
+            m_loadedAttemptKeys.erase(loadedKey);
         }
 
         return result;
+    }
+
+    Attempt* ensureAttemptLoadedBySerial_(int serial, bool spawnNow = false) {
+        return ensureAttemptLoadedBySerialFiltered_(serial,std::nullopt,spawnNow);
+    }
+
+    Attempt* ensureAttemptLoadedBySerialAndPractice_(int serial,bool practiceAttempt,bool spawnNow = false) {
+        return ensureAttemptLoadedBySerialFiltered_(serial,std::optional<bool>(practiceAttempt),spawnNow);
     }
 
     Attempt* ensurePracticeReplayOwnerLoaded_(
@@ -6330,7 +7539,7 @@ private:
     ) {
         if (serial <= 0) return nullptr;
 
-        Attempt* owner = ensureAttemptLoadedBySerial_(serial, false);
+        Attempt* owner = ensureAttemptLoadedBySerialAndPractice_(serial, true, false);
 
         if (!owner) {
             log::warn(
@@ -6363,15 +7572,19 @@ private:
     void rebuildSerialCache_() const {
         if (!m_serialCacheDirty) return;
         m_serialToIdx.clear();
+        m_attemptToIdxByIdentity.clear();
         m_serialToIdx.reserve(attempts.size());
+        m_attemptToIdxByIdentity.reserve(attempts.size());
         for (size_t i = 0; i < attempts.size(); ++i) {
-            m_serialToIdx[attempts[i].serial] = i;
+            const Attempt& attempt = attempts[i];
+            m_serialToIdx[attempt.serial] = i;
+            m_attemptToIdxByIdentity[attemptIdentityKey_(attempt.serial, attempt.practiceAttempt)] = i;
         }
         m_serialCacheDirty = false;
     }
 
-    inline Attempt* findAttemptBySerial_(int serial) {
-        const size_t idx = findLoadedAttemptIndexBySerial_(serial);
+    inline Attempt* findAttemptBySerialAndPractice_(int serial,bool practiceAttempt) {
+        const size_t idx = findLoadedAttemptIndexBySerialAndPractice_(serial,practiceAttempt);
         if (idx == SIZE_MAX) return nullptr;
 
         m_replayOwnerIndex = idx;
@@ -6409,9 +7622,9 @@ private:
         return mod->getSettingValue<std::string>(key);
     }
 
-    cocos2d::ccColor3B randomGameColor(uint32_t seed) {
+    cocos2d::ccColor3B randomGameColor(uint32_t seed, bool player1) {
         auto* gm = GameManager::sharedState();
-        int paletteIdx = pickRandomAllowedGhostColorIdx(seed);
+        int paletteIdx = pickRandomAllowedGhostColorIdx(seed, player1);
         return gm->colorForIdx(paletteIdx);
     }
 
@@ -6868,6 +8081,7 @@ private:
     void applyBotSafety_(bool on) {
         safeMode_enabled = on;
         noclip_enabled = on;
+        if (on) m_runUsedBot = true;
         if (on) cheatAPI::setCheat();
         else cheatAPI::endCheat();
     }
@@ -7001,14 +8215,14 @@ private:
         if (!a.colorsAssigned) {
             if (colors == ColorMode::Random) {
                 uint32_t seed = static_cast<uint32_t>(a.serial) ^ 0xA5339E4Du;
-                a.c1p1 = randomGameColor(seed);
-                a.c2p1 = randomGameColor(seed ^ 0xBADA551u);
-                a.c1p2 = a.c1p1;
-                a.c2p2 = a.c2p1;
+                a.c1p1 = randomGameColor(seed, true);
+                a.c2p1 = randomGameColor(seed ^ 0x0BADA551u, true);
+                a.c1p2 = randomGameColor(seed ^ 0x9E3779B9u, false);
+                a.c2p2 = randomGameColor(seed ^ 0x85EBCA6Bu, false);
                 hasGlowActive(true, a.hasGlowP1);
                 hasGlowActive(false, a.hasGlowP2);
-                if (a.hasGlowP1) a.cgp1 = randomGameColor(seed ^ 0x6C8E9CF5u);
-                if (a.hasGlowP2) a.cgp2 = randomGameColor(seed ^ 0xD1B54A35u);
+                if (a.hasGlowP1) a.cgp1 = randomGameColor(seed ^ 0x6C8E9CF5u, true);
+                if (a.hasGlowP2) a.cgp2 = randomGameColor(seed ^ 0xD1B54A35u, false);
             } else {
                 a.c1p1 = chooseColor1(true);
                 a.c2p1 = chooseColor2(true);
@@ -7258,7 +8472,21 @@ private:
             a.primedP1 = true;
         }
 
-        if (a.hadDual && !a.p2.empty() && !a.primedP2) {
+        const bool p2HasStarted = a.hadDual && !a.p2.empty() &&
+            ghostTime >= static_cast<double>(a.p2.front().t) - 0.0001;
+
+        if (!p2HasStarted) {
+            if (a.g2) {
+                a.setP2Visible(false, true);
+                if (a.g2->m_waveTrail) {
+                    a.g2->m_waveTrail->reset();
+                    a.g2->m_waveTrail->setVisible(false);
+                }
+            }
+            a.trailactive2 = false;
+            a.prevTeleported2 = false;
+        }
+        else if (!a.primedP2) {
             if (!a.g2 && a.g2Idx < 0) {
                 auto h2 = m_playerObjectPool.acquireForOwner(a.serial + 0x100000, static_cast<uint32_t>(attemptIdx), true);
                 if (h2) {
@@ -7503,6 +8731,16 @@ private:
         }
     }
 
+    void seekReplayCursorsToTimeExact_(const Attempt& owner, double sessionTime) {
+        m_replayIdx1 = owner.p1.empty()
+            ? 0
+            : idxForTimeBounded_(owner.p1, owner.acc1Time, sessionTime);
+
+        if (owner.hadDual && !owner.p2.empty()) {
+            m_replayIdx2 = idxForTimeBounded_(owner.p2,owner.acc2Time,sessionTime);
+        } else m_replayIdx2 = 0;
+    }
+
     void advanceReplayCursorsLockstep_(double sessionTime, bool wentBack) {
         if (!m_currentOwner) return;
 
@@ -7574,11 +8812,12 @@ private:
     const Attempt* getReplayOwner_(double sessionTime) {
         if (m_replayKind == ReplayKind::BestSingle) {
             if (m_replayOwnerSerial > 0) {
-                m_currentOwner = ensureAttemptLoadedBySerial_(m_replayOwnerSerial, false);
+                m_currentOwner = ensureAttemptLoadedBySerialAndPractice_(m_replayOwnerSerial,false,false);
                 return m_currentOwner;
             }
 
-            if (m_compOwnerIdx < attempts.size()) {
+            if (m_compOwnerIdx < attempts.size() &&
+                !attempts[m_compOwnerIdx].practiceAttempt) {
                 m_replayOwnerSerial = attempts[m_compOwnerIdx].serial;
                 m_currentOwner = &attempts[m_compOwnerIdx];
                 return m_currentOwner;
@@ -7589,23 +8828,31 @@ private:
         }
 
         constexpr double kPhysicsTick = 1.0 / 240.0;
-        int serial = m_checkpointMgr.findOwnerSerialForTimeWithBridge(sessionTime, kPhysicsTick);
-
-        if (serial != m_replayOwnerSerial && serial > 0) {
-            m_replayOwnerSerial = serial;
-            m_replayIdx1 = 0;
-            m_replayIdx2 = 0;
-            m_lastEmitIdx1 = kNoEmitIdx;
-            m_lastEmitIdx2 = kNoEmitIdx;
-            // log::info("New owner");
-        }
+        const int serial = m_checkpointMgr.findOwnerSerialForTimeWithBridge(sessionTime,kPhysicsTick);
 
         if (serial <= 0) {
             m_currentOwner = nullptr;
             return nullptr;
         }
 
-        m_currentOwner = ensureAttemptLoadedBySerial_(serial, false);
+        Attempt* owner = ensurePracticeReplayOwnerLoaded_(serial, "owner-transition");
+        if (!owner) {
+            m_currentOwner = nullptr;
+            return nullptr;
+        }
+
+        const bool ownerChanged = serial != m_replayOwnerSerial || m_currentOwner != owner;
+
+        m_replayOwnerSerial = serial;
+        m_currentOwner = owner;
+
+        if (ownerChanged) {
+            seekReplayCursorsToTimeExact_(*owner, sessionTime);
+            m_lastEmitIdx1 = kNoEmitIdx;
+            m_lastEmitIdx2 = kNoEmitIdx;
+            m_lastPoseIdx1 = kNoEmitIdx;
+            m_lastPoseIdx2 = kNoEmitIdx;
+        }
         return m_currentOwner;
     }
 
@@ -7708,11 +8955,16 @@ private:
                     }
 
                     // Non-completed ghosts
+                    a.eolFrozenP2 = true;
                     if (ghost) {
                         ghost->stopDashing();
 
                         if (m_ghostsExplode) {
                             ghost->playDeathEffect();
+                            if (a.g2 && a.g2 != ghost && a.g2->isVisible()) {
+                                a.g2->stopDashing();
+                                a.g2->playDeathEffect();
+                            }
                         }
 
                         if (m_ghostsExplodeSFX && m_fmodEngine) {
@@ -7825,6 +9077,13 @@ private:
             const float nw = fNext.waveSize;
             const double nt = fNext.t;
 
+            bool recordedGoingLeft = false;
+            if (nextIdx != drawIdx) {
+                recordedGoingLeft = nx < fx;
+            } else if (drawIdx > 0) {
+                recordedGoingLeft = fx < static_cast<float>(frames[drawIdx - 1].x);
+            }
+
             const float lasty = pc.y;
 
             float ix = fx, iy = fy, irot = fr;
@@ -7849,8 +9108,8 @@ private:
 
             // For P2, check if started
             if (isP2) {
-                const float firstX = frames.front().x;
-                if (playerX + 0.0001f < firstX) {
+                const double firstT = static_cast<double>(frames.front().t);
+                if (ghostTime + 0.0001 < firstT) {
                     a.setP2Visible(false, true);
                     return;
                 }
@@ -8051,7 +9310,7 @@ private:
                             trail->setZOrder(-3);
                             trail->setVisible(true);
                             //log::info("a");
-                            waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
+                            waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false, recordedGoingLeft);
                         }
                         else log::info("NO GHOST TRAIL");
                     }
@@ -8074,10 +9333,10 @@ private:
 
                                     if (wi == drawIdx) {
                                         //log::info("b");
-                                        waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
+                                        waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false, recordedGoingLeft);
                                     } else {
                                         //log::info("c");
-                                        waveTrailAddPointToPlayer(trail, {wf.x, wf.y}, !isP2, false);
+                                        waveTrailAddPointToPlayer(trail, {wf.x, wf.y}, !isP2, false, recordedGoingLeft);
                                     }
                                 }
                             }
@@ -8085,20 +9344,20 @@ private:
                             hasWavePointData = true;
                             //log::info("d");
                             // log::info("wavePointThisFrame x: {}, y: {}", ix, iy);
-                            waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
+                            waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false, recordedGoingLeft);
                         }
                         if (!hasWavePointData) {
                             if (f.hold != prevHolding) {
                                 //log::info("e");
-                                waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
+                                waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false, recordedGoingLeft);
                             }
                             else if (fNext.vehicleSize != f.vehicleSize) {
                                 //log::info("f");
-                                waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
+                                waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false, recordedGoingLeft);
                             }
                             else if (pc.wasMovingUp != isMovingUp) {   
                                 //log::info("g"); 
-                                waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
+                                waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false, recordedGoingLeft);
                             }
                             else {
                                 const bool stateDartSlide = (std::fabs(fNext.y - f.y) <= kYEqualEps);
@@ -8115,9 +9374,10 @@ private:
                         
                         // Teleport visual wacky stuff
                         if (prevTeleported) {
+                            trail->reset();
                             trail->resumeStroke();
                             //log::info("i");
-                            waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false);
+                            waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false, recordedGoingLeft);
                             prevTeleported = false;
                         }
                         if (std::fabs(fNext.y - f.y) > kWaveTeleportedTolerance) {
@@ -8517,7 +9777,7 @@ private:
             
             while ((int64_t)attempts.size() > maxGhosts) {
                 invalidateAttemptPointerCaches_();
-                m_loadedSerials.erase(attempts.front().serial);
+                m_loadedAttemptKeys.erase(attemptIdentityKey_(attempts.front().serial,attempts.front().practiceAttempt));
                 attempts.erase(attempts.begin());
                 m_serialCacheDirty = true;
             }
@@ -8551,7 +9811,7 @@ private:
             if (oldest.g1) oldest.g1->removeFromParentAndCleanup(true);
             if (oldest.g2) oldest.g2->removeFromParentAndCleanup(true);
 
-            m_loadedSerials.erase(oldest.serial);
+            m_loadedAttemptKeys.erase(attemptIdentityKey_(oldest.serial,oldest.practiceAttempt));
 
             attempts.erase(attempts.begin());
             m_spans.erase(m_spans.begin());
@@ -8620,35 +9880,70 @@ private:
         //p1RHold = p2RHold = false;
     }
 
-    inline bool waveTrailAddPointToPlayer(HardStreak* m_waveTrail, cocos2d::CCPoint point, bool isP1, bool m_skip) {
-        // if (m_skip) return false;
-        if (!m_waveTrail || !m_waveTrail->m_pointArray) return false;
-
-        auto arr = m_waveTrail->m_pointArray;
-
-        if (arr->count() > 0) {
-            auto lastObj = arr->lastObject();
-            auto lastNode = static_cast<PointNode*>(lastObj);
-
-            if (!lastNode) return false;
-
-            cocos2d::CCPoint previousPoint = lastNode->m_point;
-
-            //log::info(
-            //    "previous point: px={}, py={} | new point: px={}, py={}",
-            //    previousPoint.x, previousPoint.y,
-            //    point.x, point.y
-            //);
-
-            if (previousPoint.x == point.x && previousPoint.y == point.y) return false;
-            if (point.x < previousPoint.x) return false;
+    inline bool waveTrailAddPointToPlayer(
+        HardStreak* waveTrail,
+        cocos2d::CCPoint point,
+        bool isP1,
+        bool m_skip,
+        std::optional<bool> goingLeftOverride = std::nullopt
+    ) {
+        if (!waveTrail || !waveTrail->m_pointArray) {
+            return false;
         }
 
-        m_allowWavePointAdding = true;
-        m_waveTrail->addPoint(point);
-        m_allowWavePointAdding = false;
+        auto* arr = waveTrail->m_pointArray;
 
-        //log::info("p1: {} px: {}, py: {}", isP1, point.x, point.y);
+        if (arr->count() > 0) {
+            auto* lastNode = static_cast<PointNode*>(
+                arr->lastObject()
+            );
+
+            if (!lastNode) {
+                return false;
+            }
+
+            const auto previousPoint = lastNode->m_point;
+
+            // Exact duplicate
+            if (
+                previousPoint.x == point.x &&
+                previousPoint.y == point.y
+            ) {
+                return false;
+            }
+
+            bool goingLeft = false;
+
+            if (goingLeftOverride.has_value()) {
+                goingLeft = *goingLeftOverride;
+            }
+            else if (m_pl) {
+                auto* player = isP1
+                    ? m_pl->m_player1
+                    : m_pl->m_player2;
+
+                if (player) {
+                    goingLeft = player->m_isGoingLeft;
+                }
+            }
+
+            // Reject tiny playback jitter 
+            if (!goingLeft && point.x < previousPoint.x) {
+                return false;
+            }
+
+            if (goingLeft && point.x > previousPoint.x) {
+                return false;
+            }
+        }
+
+        const bool oldAllow =
+            m_allowWavePointAdding;
+
+        m_allowWavePointAdding = true;
+        waveTrail->addPoint(point);
+        m_allowWavePointAdding = oldAllow;
+
         return true;
     }
 
@@ -8810,8 +10105,12 @@ private:
 
         for (size_t poseI = startIdx; poseI <= endIdx; ++poseI) {
             // Click state
-            const size_t clickI = std::min(v.size() - 1, poseI);
-            //log::info("poseI: {}", poseI);
+            constexpr size_t kClickLeadFrames = 1;
+            const size_t clickI = std::min(
+                v.size() - 1,
+                poseI + kClickLeadFrames
+            );
+            //log::info("poseI: {}, clickI: {}", poseI, clickI);
 
             const Frame& F = v[clickI];
             const Frame& C = v[poseI];
@@ -8946,6 +10245,7 @@ private:
                                 *snapped,
                                 isP1,
                                 m_p2JustSpawned
+                                //ix < prevX
                             );
                             if (addedWavePoint) markWavePoint(*snapped, isP1);
                         }
@@ -8973,6 +10273,7 @@ private:
                                     { ix, iy },
                                     isP1,
                                     !isP1 && m_p2JustSpawned
+                                    //ix < prevX
                                 );
                             }
                         }

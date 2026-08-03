@@ -4,6 +4,8 @@
 
 // saved mask key (one char per SLOT in kRandomColorIDs: '1' enabled, '0' disabled)
 static constexpr const char* kGhostRandomColorsMaskKey = "ghost-random-colors-mask";
+static constexpr const char* kGhostRandomColorsMaskP1Key = "ghost-random-colors-mask-p1";
+static constexpr const char* kGhostRandomColorsMaskP2Key = "ghost-random-colors-mask-p2";
 
 // Why did robtop use this order????
 static constexpr std::array<int, 107> kRandomColorIDs = {

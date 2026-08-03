@@ -79,7 +79,19 @@ class $modify(PLHook, PlayLayer) {
         PlayLayer::onQuit();
     }
     static void onModify(auto& self) {
-        auto _ = self.setHookPriority("PlayLayer::levelComplete", -1000000);
+        if (!self.setHookPriorityPre("PlayLayer::levelComplete", Priority::First)) {
+            log::warn("Failed to set first levelComplete pre-hook priority");
+        }
+        if (Loader::get()->isModInstalled(kDeathTrackerModID)) {
+            if (!self.setHookPriorityBeforePre("PlayLayer::levelComplete", kDeathTrackerModID)) {
+                log::warn("Failed to place levelComplete before Death Tracker Mod");
+            }
+        }
+        if (Loader::get()->isModInstalled(kMoreThan100ModID)) {
+            if (!self.setHookPriorityBeforePre("PlayLayer::levelComplete", kMoreThan100ModID)) {
+                log::warn("Failed to place levelComplete before More Than 100 Mod");
+            }
+        }
     }
     $override void levelComplete() {
         // log::info("[PlayLayer] levelComplete");

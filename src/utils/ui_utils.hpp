@@ -70,5 +70,3 @@ auto createTextButton_(
         )
         .updateLayout();
 }
-
-void normalizePopupMenuTouchPriorities(cocos2d::CCNode* root, int priority);
