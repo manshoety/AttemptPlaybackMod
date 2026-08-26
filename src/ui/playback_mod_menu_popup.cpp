@@ -33,6 +33,8 @@
 #include <cmath>
 #include <sstream>
 #include <vector>
+#include <unordered_map>
+#include <unordered_set>
 #include <cctype>
 #include <iomanip>
 #include <type_traits>
@@ -84,6 +86,8 @@ namespace {
     constexpr float kPopupH = 340.f;
     constexpr float kPreloadPopupW = 300.f;
     constexpr float kPreloadPopupH = 200.f;
+    constexpr float kPracticeRunPopupH = 270.f;
+    constexpr float kPracticeRunGapTolerance = 2.f;
     constexpr float kPlaybackSettingsW = 300.f;
     constexpr float kPlaybackSettingsH = 200.f;
 
@@ -514,8 +518,9 @@ void PlaybackModMenu::onReplayBest(CCObject*) {
 
 void PlaybackModMenu::onReplayPractice(CCObject*) {
     replay_ui_detail::setFallbackFlag(true);
+    Ghosts::I().clearPracticeReplaySessionSelection();
 
-    if (auto* p = PreloadAttemptsPopup::create(ReplayKind::PracticeComposite)) {
+    if (auto* p = PracticeRunSelectPopup::create()) {
         p->m_noElasticity = true;
         p->show();
     } else {
@@ -808,6 +813,633 @@ void PlaybackModMenu::refreshColorsLabel_() {
     if (m_colorModeLabel) {
         m_colorModeLabel->setString(("Color Mode: " + nice).c_str());
     }
+}
+
+PracticeRunSelectPopup* PracticeRunSelectPopup::create() {
+    auto ret = new PracticeRunSelectPopup();
+    if (ret && ret->init(kPreloadPopupW, kPracticeRunPopupH)) {
+        ret->autorelease();
+        return ret;
+    }
+    CC_SAFE_DELETE(ret);
+    return nullptr;
+}
+
+bool PracticeRunSelectPopup::init(float width, float height) {
+    if (!Popup::init(width, height)) return false;
+
+    this->setID("practice-run-select-popup"_spr);
+    setTitle("");
+
+    auto& G = Ghosts::I();
+    if (!G.hasModAttachedToLevel()) {
+        replay_ui_detail::setFallbackFlag(false);
+        FLAlertLayer::create(
+            "No Level",
+            gd::string("Open a level before selecting practice runs."),
+            "OK"
+        )->show();
+        return false;
+    }
+
+    m_haveCurrentStart = G.getCurrentPracticeStartLocation(m_currentStartX, m_currentStartPercent);
+
+    loadRuns_();
+    if (m_runs.empty()) {
+        replay_ui_detail::setFallbackFlag(false);
+        FLAlertLayer::create(
+            "No Practice Runs",
+            gd::string("There are no saved practice runs with recorded attempts for this level."),
+            "OK"
+        )->show();
+        return false;
+    }
+
+    m_mainLayer->setLayout(AnchorLayout::create());
+
+    auto* root = CCNode::create();
+    root->setContentSize({0.f, 0.f});
+    root->setAnchorPoint({0.5f, 0.5f});
+    root->setPosition({width * 0.5f, height * 0.5f});
+    m_mainLayer->addChild(root);
+
+    auto* bg = CCScale9Sprite::create("GJ_square01.png");
+    bg->setContentSize({width, height});
+    bg->setPosition({0.f, 0.f});
+    root->addChild(bg, -1);
+
+    auto makeLabel = [root](char const* text, float x, float y, float scale,
+                            ccColor3B color = {255, 255, 255}) {
+        auto* label = CCLabelBMFont::create(text, "bigFont.fnt");
+        label->setPosition({x, y});
+        label->setScale(scale);
+        label->setColor(color);
+        root->addChild(label);
+        return label;
+    };
+
+    makeLabel("Select Practice Runs", 0.f, 116.f, 0.68f);
+    makeLabel(
+        "Select runs to include in the playback",
+        0.f,
+        94.f,
+        0.29f,
+        {255, 225, 90}
+    );
+
+    makeLabel("Sort:", -111.f, 72.f, 0.30f);
+
+    auto* controls = CCMenu::create();
+    controls->setPosition({0.f, 0.f});
+    root->addChild(controls, 10);
+
+    auto makeButton = [this, controls](
+        char const* text,
+        SEL_MenuHandler selector,
+        float x,
+        float y,
+        float w,
+        float h,
+        char const* texture,
+        CCLabelBMFont** outLabel = nullptr
+    ) {
+        auto* buttonBg = CCScale9Sprite::create(texture);
+        buttonBg->setContentSize({w, h});
+
+        auto* label = CCLabelBMFont::create(text, "bigFont.fnt");
+        label->setPosition({w * 0.5f, h * 0.52f});
+        label->setScale(0.34f);
+        buttonBg->addChild(label);
+        if (outLabel) *outLabel = label;
+
+        auto* item = CCMenuItemSpriteExtra::create(buttonBg, this, selector);
+        item->setPosition({x, y});
+        item->setSizeMult(0.72f);
+        controls->addChild(item);
+        return item;
+    };
+
+    makeButton(
+        "Recent",
+        menu_selector(PracticeRunSelectPopup::onCycleSort),
+        -59.f,
+        72.f,
+        70.f,
+        20.f,
+        "GJ_button_02.png",
+        &m_sortValueLabel
+    );
+
+    m_currentStartToggle = CCMenuItemToggler::createWithStandardSprites(
+        this,
+        menu_selector(PracticeRunSelectPopup::onToggleCurrentStart),
+        0.5f
+    );
+    m_currentStartToggle->setPosition({-8.f, 72.f});
+    m_currentStartToggle->setSizeMult(0.30f);
+    m_currentStartToggle->toggle(false);
+    controls->addChild(m_currentStartToggle);
+
+    const std::string currentStartText = m_haveCurrentStart
+        ? fmt::format("Current Start Only ({:.1f}%)", m_currentStartPercent)
+        : "Current Start Unavailable";
+    m_currentStartLabel = CCLabelBMFont::create(currentStartText.c_str(), "bigFont.fnt");
+    m_currentStartLabel->setAnchorPoint({0.f, 0.5f});
+    m_currentStartLabel->setPosition({4.f, 72.f});
+    m_currentStartLabel->setScale(m_haveCurrentStart ? 0.27f : 0.18f);
+    m_currentStartLabel->setColor(
+        m_haveCurrentStart ? ccColor3B{238, 240, 255} : ccColor3B{150, 150, 150}
+    );
+    root->addChild(m_currentStartLabel);
+
+    if (!m_haveCurrentStart) {
+        m_currentStartToggle->setEnabled(false);
+        m_currentStartToggle->setOpacity(110);
+    }
+
+    makeLabel("INCLUDE", -118.f, 51.f, 0.235f, {205, 214, 255});
+    makeLabel("START", -61.f, 51.f, 0.235f, {205, 214, 255});
+    makeLabel("END", 15.f, 51.f, 0.235f, {205, 214, 255});
+    makeLabel("ATTEMPTS", 94.f, 51.f, 0.235f, {205, 214, 255});
+
+    m_rowsRoot = CCNode::create();
+    m_rowsRoot->setPosition({0.f, 0.f});
+    root->addChild(m_rowsRoot, 5);
+
+    m_prevBtn = makeButton(
+        "Prev",
+        menu_selector(PracticeRunSelectPopup::onPrevPage),
+        -111.f,
+        -93.f,
+        48.f,
+        18.f,
+        "GJ_button_01.png"
+    );
+    m_prevEndBtn = makeButton(
+        "Prev",
+        menu_selector(PracticeRunSelectPopup::onPrevPage),
+        -111.f,
+        -93.f,
+        48.f,
+        18.f,
+        "GJ_button_04.png"
+    );
+    m_nextBtn = makeButton(
+        "Next",
+        menu_selector(PracticeRunSelectPopup::onNextPage),
+        111.f,
+        -93.f,
+        48.f,
+        18.f,
+        "GJ_button_01.png"
+    );
+    m_nextEndBtn = makeButton(
+        "Next",
+        menu_selector(PracticeRunSelectPopup::onNextPage),
+        111.f,
+        -93.f,
+        48.f,
+        18.f,
+        "GJ_button_04.png"
+    );
+
+    m_selectionLabel = makeLabel("0 selected", 0.f, -93.f, 0.27f, {255, 225, 90});
+
+    m_continueBtn = makeButton(
+        "Continue",
+        menu_selector(PracticeRunSelectPopup::onContinue),
+        0.f,
+        -116.f,
+        96.f,
+        24.f,
+        "GJ_button_01.png"
+    );
+
+    sortRuns_();
+    rebuildRows_();
+    refreshFooter_();
+    return true;
+}
+
+void PracticeRunSelectPopup::loadRuns_() {
+    m_allRuns.clear();
+
+    auto& G = Ghosts::I();
+    G.refreshAttemptCatalogForCurrentLevel(true);
+
+    auto const& catalog = G.getAttemptCatalog();
+    auto const& path = G.getPracticePathCatalog();
+
+    std::unordered_map<int, APXAttemptDiskInfo const*> bySerial;
+    bySerial.reserve(catalog.size());
+    for (auto const& attempt : catalog) {
+        if (attempt.practiceAttempt && attempt.serial > 0) {
+            bySerial[attempt.serial] = &attempt;
+        }
+    }
+
+    for (auto const& session : path.sessions) {
+        std::unordered_set<int> serials;
+        serials.reserve(session.allAttemptSerials.size() + session.segments.size());
+
+        for (int serial : session.allAttemptSerials) {
+            if (serial > 0) serials.insert(serial);
+        }
+        for (auto const& segment : session.segments) {
+            if (segment.ownerSerial > 0) serials.insert(segment.ownerSerial);
+        }
+
+        RunInfo info{};
+        info.sessionId = session.sessionId;
+        info.completed = session.completed;
+        info.replayEndTime = CheckpointManager::sessionAbsEnd_(session);
+        info.startX = CheckpointManager::sessionStartX_(session);
+        info.endX = session.endX;
+
+        float fallbackStartPercent = 0.f;
+        float fallbackEndPercent = 0.f;
+        bool haveFallbackStart = false;
+
+        for (int serial : serials) {
+            auto found = bySerial.find(serial);
+            if (found == bySerial.end()) continue;
+
+            auto const& attempt = *found->second;
+            ++info.attempts;
+
+            info.endX = std::max(info.endX, attempt.endX);
+            fallbackEndPercent = std::max(fallbackEndPercent, attempt.endPercent);
+
+            if (!haveFallbackStart || attempt.startPercent < fallbackStartPercent) {
+                fallbackStartPercent = attempt.startPercent;
+                haveFallbackStart = true;
+             }
+        }
+
+        info.startPercent = G.getAccuratePercentForX(info.startX, fallbackStartPercent);
+        info.endPercent = info.completed
+            ? 100.f
+            : G.getAccuratePercentForX(info.endX, fallbackEndPercent);
+
+        if (info.attempts > 0 && info.sessionId > 0) {
+            m_allRuns.push_back(info);
+        }
+    }
+    applyCurrentStartFilter_();
+}
+
+void PracticeRunSelectPopup::applyCurrentStartFilter_() {
+    m_runs.clear();
+    m_runs.reserve(m_allRuns.size());
+
+    const float tolerance = Ghosts::I().getStartPosTolerance();
+    for (auto const& run : m_allRuns) {
+        if (m_onlyCurrentStart && m_haveCurrentStart && 
+            std::fabs(run.startX - m_currentStartX) > tolerance) {
+            continue;
+        }
+
+        m_runs.push_back(run);
+    }
+
+    if (m_onlyCurrentStart) {
+        std::unordered_set<int> visible;
+        visible.reserve(m_runs.size());
+        for (auto const& run : m_runs) visible.insert(run.sessionId);
+
+        for (auto it = m_selectedSessionIds.begin(); it != m_selectedSessionIds.end();) {
+            if (!visible.contains(*it)) it = m_selectedSessionIds.erase(it);
+            else ++it;
+         }
+     }
+
+    m_page = 0;
+ }
+
+void PracticeRunSelectPopup::sortRuns_() {
+    std::sort(m_runs.begin(), m_runs.end(), [this](RunInfo const& a, RunInfo const& b) {
+        switch (m_sortMode) {
+            case SortMode::Furthest:
+                if (a.completed != b.completed) return a.completed > b.completed;
+                if (a.endPercent != b.endPercent) return a.endPercent > b.endPercent;
+                if (a.replayEndTime != b.replayEndTime) return a.replayEndTime > b.replayEndTime;
+                return a.sessionId > b.sessionId;
+
+            case SortMode::Attempts:
+                if (a.attempts != b.attempts) return a.attempts > b.attempts;
+                if (a.endPercent != b.endPercent) return a.endPercent > b.endPercent;
+                return a.sessionId > b.sessionId;
+
+            case SortMode::Recent:
+            default:
+                return a.sessionId > b.sessionId;
+        }
+    });
+
+    m_page = std::clamp(m_page, 0, maxPage_());
+}
+
+int PracticeRunSelectPopup::maxPage_() const {
+    constexpr int kRowsPerPage = 4;
+    if (m_runs.empty()) return 0;
+    return static_cast<int>((m_runs.size() - 1) / kRowsPerPage);
+}
+
+void PracticeRunSelectPopup::rebuildRows_() {
+    if (!m_rowsRoot) return;
+    m_rowsRoot->removeAllChildrenWithCleanup(true);
+
+    constexpr int kRowsPerPage = 4;
+    constexpr float kRowY[kRowsPerPage] = {29.f, 3.f, -23.f, -49.f};
+
+    auto formatPercent = [](float value) {
+        std::ostringstream ss;
+        const float rounded = std::round(value);
+        if (std::fabs(value - rounded) < 0.005f) {
+            ss << static_cast<int>(rounded) << "%";
+        } else {
+            ss << std::fixed << std::setprecision(2) << value << "%";
+        }
+        return ss.str();
+    };
+
+    if (m_runs.empty()) {
+        auto* empty = CCLabelBMFont::create("No runs found from this start position", "bigFont.fnt");
+        empty->setPosition({0.f, -1.f});
+        empty->setScale(0.30f);
+        empty->setColor({238, 240, 255});
+        m_rowsRoot->addChild(empty);
+
+        auto* hint = CCLabelBMFont::create("Turn off Current Start Only to show all runs", "bigFont.fnt");
+        hint->setPosition({0.f, -20.f});
+        hint->setScale(0.18f);
+        hint->setColor({255, 225, 90});
+        m_rowsRoot->addChild(hint);
+        return;
+    }
+
+    auto* rowMenu = CCMenu::create();
+    rowMenu->setPosition({0.f, 0.f});
+    m_rowsRoot->addChild(rowMenu, 5);
+
+    const int first = m_page * kRowsPerPage;
+    for (int row = 0; row < kRowsPerPage; ++row) {
+        const int index = first + row;
+        if (index < 0 || index >= static_cast<int>(m_runs.size())) break;
+
+        auto const& run = m_runs[static_cast<size_t>(index)];
+        const float y = kRowY[row];
+        const bool selected = m_selectedSessionIds.contains(run.sessionId);
+
+        auto* rowBg = CCScale9Sprite::create("square02b_001.png");
+        rowBg->setContentSize({270.f, 60.f});
+        rowBg->setScaleY(0.325f);
+        rowBg->setPosition({0.f, y});
+        rowBg->setColor(selected ? ccColor3B{8, 8, 8} : ccColor3B{0, 0, 0});
+        rowBg->setOpacity(selected ? 120 : 66);
+        m_rowsRoot->addChild(rowBg);
+
+        auto* checkbox = CCMenuItemToggler::createWithStandardSprites(
+            this,
+            menu_selector(PracticeRunSelectPopup::onToggleRun),
+            0.40f
+        );
+        checkbox->setPosition({-122.f, y});
+        checkbox->setTag(run.sessionId);
+        checkbox->setSizeMult(0.32f);
+        checkbox->toggle(selected);
+        rowMenu->addChild(checkbox, 10);
+
+        auto addRowLabel = [this, y](std::string const& text, float x, ccColor3B color) {
+            auto* label = CCLabelBMFont::create(text.c_str(), "bigFont.fnt");
+            label->setPosition({x, y});
+            label->setScale(0.285f);
+            label->setColor(color);
+            m_rowsRoot->addChild(label, 2);
+        };
+
+
+        addRowLabel(formatPercent(run.startPercent), -61.f, {238, 240, 255});
+        addRowLabel(
+            formatPercent(run.endPercent),
+            15.f,
+            run.completed || run.endPercent >= 99.999f
+                ? ccColor3B{120, 255, 80}
+                : ccColor3B{255, 235, 120}
+        );
+        addRowLabel(std::to_string(run.attempts), 94.f, {238, 240, 255});
+    }
+}
+
+void PracticeRunSelectPopup::refreshFooter_() {
+    const int pages = maxPage_() + 1;
+    if (m_selectionLabel) {
+        if (m_runs.empty()) m_selectionLabel->setString("0 selected  |  0 runs");
+        else {
+            m_selectionLabel->setString(fmt::format(
+                "{} selected  |  {}/{}",
+                m_selectedSessionIds.size(),
+                m_page + 1,
+                pages
+            ).c_str());
+        }
+    }
+
+    const bool atStart = m_page <= 0;
+    const bool atEnd = m_page >= maxPage_();
+
+    if (m_prevBtn) {
+        m_prevBtn->setVisible(!atStart);
+        m_prevBtn->setEnabled(!atStart);
+    }
+    if (m_prevEndBtn) {
+        m_prevEndBtn->setVisible(atStart);
+        m_prevEndBtn->setEnabled(false);
+    }
+    if (m_nextBtn) {
+        m_nextBtn->setVisible(!atEnd);
+        m_nextBtn->setEnabled(!atEnd);
+    }
+    if (m_nextEndBtn) {
+        m_nextEndBtn->setVisible(atEnd);
+        m_nextEndBtn->setEnabled(false);
+    }
+    if (m_continueBtn) m_continueBtn->setEnabled(!m_selectedSessionIds.empty());
+}
+
+bool PracticeRunSelectPopup::selectedRunsHaveGap_(float& gapEndPercent, float& nextStartPercent) const {
+    struct Span {
+        float startX;
+        float endX;
+        float startPercent;
+        float endPercent;
+    };
+
+    std::vector<Span> spans;
+    spans.reserve(m_selectedSessionIds.size());
+
+    for (auto const& run : m_runs) {
+        if (!m_selectedSessionIds.contains(run.sessionId)) continue;
+        if (!std::isfinite(run.startX) || !std::isfinite(run.endX)) continue;
+
+        spans.push_back({
+            std::min(run.startX, run.endX),
+            std::max(run.startX, run.endX),
+            run.startPercent,
+            run.endPercent
+        });
+    }
+
+    if (spans.size() < 2) return false;
+
+    std::sort(spans.begin(), spans.end(), [](Span const& a, Span const& b) {
+        if (a.startX != b.startX) return a.startX < b.startX;
+        return a.endX > b.endX;
+    });
+
+    float coveredEndX = spans.front().endX;
+    float coveredEndPercent = spans.front().endPercent;
+
+    for (size_t i = 1; i < spans.size(); ++i) {
+        auto const& span = spans[i];
+
+        if (span.startX > coveredEndX + kPracticeRunGapTolerance) {
+            gapEndPercent = coveredEndPercent;
+            nextStartPercent = span.startPercent;
+            return true;
+        }
+
+        if (span.endX > coveredEndX) {
+            coveredEndX = span.endX;
+            coveredEndPercent = span.endPercent;
+         }
+     }
+ 
+   return false;
+}
+
+void PracticeRunSelectPopup::onToggleRun(CCObject* sender) {
+    auto* node = typeinfo_cast<CCNode*>(sender);
+    if (!node) return;
+
+    const int sessionId = node->getTag();
+    if (sessionId <= 0) return;
+
+    if (m_selectedSessionIds.contains(sessionId)) m_selectedSessionIds.erase(sessionId);
+    else m_selectedSessionIds.insert(sessionId);
+
+    rebuildRows_();
+    refreshFooter_();
+}
+
+void PracticeRunSelectPopup::onToggleCurrentStart(CCObject*) {
+    if (!m_haveCurrentStart) return;
+
+    m_onlyCurrentStart = !m_onlyCurrentStart;
+    applyCurrentStartFilter_();
+    sortRuns_();
+    rebuildRows_();
+    refreshFooter_();
+}
+
+void PracticeRunSelectPopup::onCycleSort(CCObject*) {
+    switch (m_sortMode) {
+        case SortMode::Recent:
+            m_sortMode = SortMode::Furthest;
+            break;
+        case SortMode::Furthest:
+            m_sortMode = SortMode::Attempts;
+            break;
+        case SortMode::Attempts:
+        default:
+            m_sortMode = SortMode::Recent;
+            break;
+    }
+
+    if (m_sortValueLabel) {
+        char const* text = "Recent";
+        if (m_sortMode == SortMode::Furthest) text = "Furthest";
+        else if (m_sortMode == SortMode::Attempts) text = "Attempts";
+        m_sortValueLabel->setString(text);
+    }
+
+    m_page = 0;
+    sortRuns_();
+    rebuildRows_();
+    refreshFooter_();
+}
+
+void PracticeRunSelectPopup::onPrevPage(CCObject*) {
+    if (m_page <= 0) return;
+    --m_page;
+    rebuildRows_();
+    refreshFooter_();
+}
+
+void PracticeRunSelectPopup::onNextPage(CCObject*) {
+    if (m_page >= maxPage_()) return;
+    ++m_page;
+    rebuildRows_();
+    refreshFooter_();
+}
+
+void PracticeRunSelectPopup::onContinue(CCObject*) {
+    if (m_selectedSessionIds.empty()) return;
+
+    float gapEndPercent = 0.f;
+    float nextStartPercent = 0.f;
+    if (selectedRunsHaveGap_(gapEndPercent, nextStartPercent)) {
+        FLAlertLayer::create(
+            "Practice Run Gap",
+            gd::string(fmt::format(
+                "These runs have a gap around <cy>{:.1f}%</c> to <cy>{:.1f}%</c>. Select overlapping or touching runs so the real-player replay can connect them.",
+                gapEndPercent,
+                nextStartPercent
+            )),
+            "OK"
+        )->show();
+        return;
+    }
+
+    std::vector<int> selected;
+    selected.reserve(m_selectedSessionIds.size());
+    for (auto const& run : m_runs) {
+        if (m_selectedSessionIds.contains(run.sessionId)) {
+            selected.push_back(run.sessionId);
+        }
+    }
+
+    if (selected.empty()) return;
+
+    Ghosts::I().setPracticeReplaySessionSelection(selected);
+
+    if (auto* preload = PreloadAttemptsPopup::create(ReplayKind::PracticeComposite)) {
+        m_continuing = true;
+        preload->m_noElasticity = true;
+        Popup::onClose(nullptr);
+        preload->show();
+        return;
+    }
+
+    Ghosts::I().clearPracticeReplaySessionSelection();
+    replay_ui_detail::setFallbackFlag(false);
+}
+
+void PracticeRunSelectPopup::onClose(CCObject* sender) {
+    if (!m_continuing) {
+        Ghosts::I().clearPracticeReplaySessionSelection();
+        replay_ui_detail::setFallbackFlag(false);
+
+        if (auto* scene = CCDirector::sharedDirector()->getRunningScene()) {
+            if (auto* menu = typeinfo_cast<PlaybackModMenu*>(
+                scene->getChildByIDRecursive("playbackModMenu-popup"_spr)
+            )) {
+                menu->syncUIFromRuntime();
+            }
+        }
+    }
+
+    Popup::onClose(sender);
 }
 
 PreloadAttemptsPopup* PreloadAttemptsPopup::create(ReplayKind kind) {

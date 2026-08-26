@@ -1,3 +1,10 @@
+# 1.5.2
+ADDITIONS:
+- Practice playback menu for selecting which runs to use
+FIXES: 
+- Wave trail wackiness in practice playback (on attempt transition)
+- Wave trail draw issues in playback when using hide player
+- Mod conflicts
 # 1.5.0
 ADDITIONS:
 - Separate custom colors for player 1 and 2

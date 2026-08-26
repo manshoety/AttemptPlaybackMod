@@ -15,6 +15,8 @@
 #include <Geode/binding/GJBaseGameLayer.hpp>
 #include <Geode/binding/ButtonSprite.hpp>
 #include <Geode/binding/HardStreak.hpp>
+#include <Geode/binding/StartPosObject.hpp>
+#include <Geode/binding/LevelSettingsObject.hpp>
 
 #include <Geode/cocos/CCDirector.h>
 #include <Geode/cocos/label_nodes/CCLabelBMFont.h>
@@ -88,6 +90,10 @@
 // Someone said the random color button when in random mode wasn't coloring their icons randomly (maybe mod conflict or weird device specific thing idk)
 
 // On some resolutions, sliders can have their position offset weirdly
+
+
+// Someone had have trails above the ghost waves
+// Camera does weird stuff on arctic lights playback
 
 
 using namespace geode::prelude;
@@ -311,6 +317,46 @@ public:
 
     float getStartPosTolerance() const { return kReplayStartTolerance; }
 
+    float getAccuratePercentForX(float x, float fallbackPercent = 0.f) const {
+        const float fallback = std::clamp(fallbackPercent, 0.f, 100.f);
+        if (!m_pl || m_pl->m_isPlatformer || !std::isfinite(x)) return fallback;
+
+        const float endX = m_pl->m_endXPosition;
+        if (!std::isfinite(endX) || endX <= 0.f) return fallback;
+
+        return std::clamp((x / endX) * 100.f, 0.f, 100.f);
+    }
+
+    bool getCurrentPracticeStartLocation(float& startX, float& startPercent) const {
+        if (!m_pl) return false;
+
+        float x = NAN;
+        float fallbackPercent = 0.f;
+
+        if (!m_current.p1.empty()) {
+            x = static_cast<float>(m_current.p1.front().x);
+            fallbackPercent = m_current.startPercent;
+        }
+        else if (m_pl->m_startPosObject) {
+            x = m_pl->m_startPosObject->getPositionX();
+            fallbackPercent = m_pl->getCurrentPercent();
+        }
+        else if (std::isfinite(m_current.startX)) {
+            x = m_current.startX;
+            fallbackPercent = m_current.startPercent;
+        }
+        else if (m_pl->m_player1) {
+            x = m_pl->m_player1->getPositionX();
+            fallbackPercent = m_pl->getCurrentPercent();
+        }
+
+        if (!std::isfinite(x)) return false;
+
+        startX = x;
+        startPercent = getAccuratePercentForX(x, fallbackPercent);
+        return true;
+    }
+
     const std::vector<APXAttemptDiskInfo>& getAttemptCatalog() {
         if (hasCurrentPersistenceTarget_()) {
             scanAttemptCatalogForLevel_(m_levelIDOnAttach);
@@ -327,6 +373,26 @@ public:
 
     bool refreshAttemptCatalogForCurrentLevel(bool pushCurrentAttempt = true) {
         return refreshAttemptCatalogForCurrentLevel_(true, pushCurrentAttempt);
+    }
+
+    void setPracticeReplaySessionSelection(std::vector<int> const& sessionIds) {
+        m_requestedPracticeSessionIds.clear();
+        m_requestedPracticeSessionIds.reserve(sessionIds.size());
+
+        for (int id : sessionIds) {
+            if (id > 0) m_requestedPracticeSessionIds.insert(id);
+        }
+
+        invalidateAttemptCounts();
+    }
+
+    void clearPracticeReplaySessionSelection() {
+        m_requestedPracticeSessionIds.clear();
+        invalidateAttemptCounts();
+    }
+
+    bool hasPracticeReplaySessionSelection() const {
+        return !m_requestedPracticeSessionIds.empty();
     }
 
     bool deleteAttemptBySerial(int serial) {
@@ -645,27 +711,86 @@ public:
         }
     }
 
-    std::string formatCustomGhostText_() const {
-        std::string out = m_ghostTextCustomFormat.empty()
-            ? std::string("{alive}/{total} attempts remain")
-            : m_ghostTextCustomFormat;
+    static std::string formatGhostPercentage_(size_t count, size_t total, int precision) {
+        precision = std::clamp(precision, 0, 6);
+        if (total == 0) return precision == 0 ? "0" : fmt::format("{:.{}f}", 0.0, precision);
 
-        const double alivePct = m_numTotalGhosts > 0
-            ? (100.0 * static_cast<double>(m_numAliveGhosts) / static_cast<double>(m_numTotalGhosts))
-            : 0.0;
-        const double deadPct = m_numTotalGhosts > 0
-            ? (100.0 * static_cast<double>(m_numDeadGhosts) / static_cast<double>(m_numTotalGhosts))
-            : 0.0;
+        count = std::min(count, total);
 
-        replaceAllGhostTextToken_(out, "{alive}", std::to_string(m_numAliveGhosts));
-        replaceAllGhostTextToken_(out, "{Alive}", std::to_string(m_numAliveGhosts));
-        replaceAllGhostTextToken_(out, "{dead}", std::to_string(m_numDeadGhosts));
-        replaceAllGhostTextToken_(out, "{Dead}", std::to_string(m_numDeadGhosts));
-        replaceAllGhostTextToken_(out, "{total}", std::to_string(m_numTotalGhosts));
-        replaceAllGhostTextToken_(out, "{Total}", std::to_string(m_numTotalGhosts));
-        replaceAllGhostTextToken_(out, "{percent_alive}", fmt::format("{:.0f}", alivePct));
-        replaceAllGhostTextToken_(out, "{percent_dead}", fmt::format("{:.0f}", deadPct));
+        long long scale = 1;
+        for (int i = 0; i < precision; ++i) scale *= 10;
+
+        const double percent = 100.0 * static_cast<double>(count) / static_cast<double>(total);
+        long long units = std::llround(percent * static_cast<double>(scale));
+        const long long fullUnits = 100LL * scale;
+
+        if (count < total && units >= fullUnits) units = fullUnits - 1;
+        if (count == total) units = fullUnits;
+
+        return fmt::format("{:.{}f}", static_cast<double>(units) / static_cast<double>(scale), precision);
+    }
+
+    static void replaceGhostPercentageTokens_(std::string& value, std::string const& name, size_t count, size_t total) {
+        replaceAllGhostTextToken_(
+            value,
+            "{" + name + "}",
+            formatGhostPercentage_(count, total, 0)
+        );
+
+        const std::string prefix = "{" + name + ":";
+        size_t pos = 0;
+        while ((pos = value.find(prefix, pos)) != std::string::npos) {
+            const size_t end = value.find('}', pos + prefix.size());
+            if (end == std::string::npos) break;
+
+            const std::string spec = value.substr(pos + prefix.size(), end - (pos + prefix.size()));
+            bool valid = !spec.empty();
+            int precision = 0;
+            for (char c : spec) {
+                if (c < '0' || c > '9') {
+                    valid = false;
+                    break;
+                }
+                precision = std::min(6, precision * 10 + (c - '0'));
+            }
+
+            if (!valid) {
+                pos = end + 1;
+                continue;
+            }
+
+            const std::string replacement = formatGhostPercentage_(count, total, precision);
+            value.replace(pos, end - pos + 1, replacement);
+            pos += replacement.size();
+        }
+    }
+
+    static std::string formatGhostTextForCounts_(
+        std::string out,
+        size_t alive,
+        size_t dead,
+        size_t total
+    ) {
+        replaceAllGhostTextToken_(out, "{alive}", std::to_string(alive));
+        replaceAllGhostTextToken_(out, "{Alive}", std::to_string(alive));
+        replaceAllGhostTextToken_(out, "{dead}", std::to_string(dead));
+        replaceAllGhostTextToken_(out, "{Dead}", std::to_string(dead));
+        replaceAllGhostTextToken_(out, "{total}", std::to_string(total));
+        replaceAllGhostTextToken_(out, "{Total}", std::to_string(total));
+        replaceGhostPercentageTokens_(out, "percent_alive", alive, total);
+        replaceGhostPercentageTokens_(out, "percent_dead", dead, total);
         return out;
+    }
+ 
+    std::string formatCustomGhostText_() const {
+        return formatGhostTextForCounts_(
+            m_ghostTextCustomFormat.empty()
+                ? std::string("{alive}/{total} attempts remain")
+                : m_ghostTextCustomFormat,
+            m_numAliveGhosts,
+            m_numDeadGhosts,
+            m_numTotalGhosts
+        );
     }
 
     void rebuildGhostTextString_() {
@@ -3868,7 +3993,7 @@ public:
         setPreloadSortMode(m_preloadSortMode);
     }
 
-    void initBotAfterReset_() {
+    void initBotAfterReset_(bool naturalPracticeStart = false) {
         if (!botActive || !m_pl || !m_pl->m_player1) return;
 
         m_replayIdx1 = m_replayIdx2 = 0;
@@ -3880,7 +4005,11 @@ public:
         botPrevHoldR1 = botPrevHoldR2 = false;
 
         const Attempt* owner = nullptr;
-        m_baseTime = getStartTime();
+        if (naturalPracticeStart && m_replayKind == ReplayKind::PracticeComposite) {
+            auto replaySegs = m_checkpointMgr.getReplaySequence();
+            m_baseTime = replaySegs.empty() ? getStartTime() : replaySegs.front().absStart();
+        }
+        else m_baseTime = getStartTime();
         
         if (m_replayKind == ReplayKind::BestSingle) {
             if (m_replayOwnerSerial > 0) {
@@ -3922,12 +4051,14 @@ public:
         seekReplayCursorsToTimeExact_(*owner, m_currentSessionTime);
 
         const Frame& f1 = owner->p1[m_replayIdx1];
-        applyPoseHard(m_pl->m_player1, f1, m_pl);
+        if (!naturalPracticeStart) {
+            applyPoseHard(m_pl->m_player1, f1, m_pl);
 
-        if (m_pl->m_player2 && owner->hadDual && !owner->p2.empty()) {
-            const Frame& f2 = owner->p2[m_replayIdx2];
-            applyPoseHard(m_pl->m_player2, f2, m_pl);
-        }
+            if (m_pl->m_player2 && owner->hadDual && !owner->p2.empty()) {
+                const Frame& f2 = owner->p2[m_replayIdx2];
+                applyPoseHard(m_pl->m_player2, f2, m_pl);
+            }
+         }
 
         m_prevBotPx = f1.x;
         m_didInitialWarp = true;
@@ -4000,6 +4131,10 @@ public:
         m_haveLastSnappedWavePointP2 = false;
         m_wavePointLastFrameP1 = false;
         m_wavePointLastFrameP2 = false;
+        m_explicitWavePointAddedPrevPoseP1 = false;
+        m_explicitWavePointAddedPrevPoseP2 = false;
+        m_suppressNextExplicitWavePointP1 = false;
+        m_suppressNextExplicitWavePointP2 = false;
 
         // log::info("onReset");
 
@@ -4055,7 +4190,11 @@ public:
 
         startNewAttempt();
 
-        m_currentSessionTime = getStartTime();
+        if (m_pendingPracticeStartPosInit && m_replayKind == ReplayKind::PracticeComposite) {
+            auto replaySegs = m_checkpointMgr.getReplaySequence();
+            m_currentSessionTime = replaySegs.empty() ? getStartTime() : replaySegs.front().absStart();
+        }
+        else m_currentSessionTime = getStartTime();
         m_prevSessionTime = m_currentSessionTime;
         m_baseTime = m_currentSessionTime;
 
@@ -4100,8 +4239,14 @@ public:
             m_playerPrevTeleportedP2 = false;
             m_p2JustSpawned = false;
             m_prevHadP2 = false;
-            // Check for start position switch
-            if (ccpDistance(m_currentReplayStartPos, {(float)m_pl->m_player1->m_positionX, (float)m_pl->m_player1->m_positionY}) > kReplayStartTolerance) {
+            if (m_pendingPracticeStartPosInit) {
+                m_justStartedBot = true;
+                m_replayIdx1 = m_replayIdx2 = 0;
+                m_lastEmitIdx1 = m_lastEmitIdx2 = kNoEmitIdx;
+                m_lastPoseIdx1 = m_lastPoseIdx2 = kNoEmitIdx;
+                m_replayOwnerSerial = -1;
+            } // Check for start position switch
+            else if (ccpDistance(m_currentReplayStartPos, {(float)m_pl->m_player1->m_positionX, (float)m_pl->m_player1->m_positionY}) > kReplayStartTolerance) {
                 if (!isRecording()) toggleRecording();
                 setActiveGhostsInvisible();
             }
@@ -4213,6 +4358,8 @@ public:
         m_is_quitting = true;
         g_disableUpdate = false;
 
+        clearReplayStartPosOverride_();
+        clearPracticeReplaySessionSelection();
         clearPlayLayerGhostTextLabel();
 
         m_preloadActive = false;
@@ -4660,7 +4807,9 @@ public:
     }
 
     bool startReplayPractice() {
-        restartLevel();
+        const bool explicitSelection = !m_requestedPracticeSessionIds.empty();
+        clearReplayStartPosOverride_();
+        if (!explicitSelection) restartLevel();
         // Maybe the crash the one person had was from reset/toggle the PlayLayer directly from a menu click callback
         // On macOS, resetting while Geode/Cocos is still releasing the clicked UI
         // object can maybe crash in CCObject::release from executeMainThreadQueue()?
@@ -4688,23 +4837,40 @@ public:
             }
         }
 
+        if (explicitSelection) m_pl->m_currentCheckpoint = nullptr;
         if (isPracticeMode()) togglePracticeMode(false);
 
-        restartLevel();
+        int selectedSession = -1;
 
-        m_currentReplayStartPos.x = m_pl->m_player1->m_positionX;
-        m_currentReplayStartPos.y = m_pl->m_player1->m_positionY;
+        m_checkpointMgr.clearReplayOverrideSegments();
 
-        const int selectedSession = m_checkpointMgr.selectBestSessionForStartX_RankByTime(
-            m_currentReplayStartPos.x,
-            kReplayStartTolerance
-        );
+        if (explicitSelection) {
+            if (!buildSelectedPracticeReplayRoute_()) {
+                log::warn("[Bot] startReplayPractice: selected practice runs could not make a replay route");
+                m_filterByStartPosition = false;
+                stopReplay();
+                return false;
+            }
+
+            selectedSession = m_practiceReplayRouteStartSessionId;
+
+            // Use startpos to spawn player in the right spot
+            if (!installReplayStartPosForSelectedPracticeSession_()) {
+                m_filterByStartPosition = false;
+                stopReplay();
+                return false;
+            }
+        }
+
+        if (!explicitSelection) {
+            restartLevel();
+            m_currentReplayStartPos.x = m_pl->m_player1->m_positionX;
+            m_currentReplayStartPos.y = m_pl->m_player1->m_positionY;
+            selectedSession = m_checkpointMgr.selectBestSessionForStartX_RankByTime(m_currentReplayStartPos.x, kReplayStartTolerance);
+        }
 
         if (selectedSession <= 0 || m_checkpointMgr.noValidSessionForStartX()) {
-            log::warn(
-                "[Bot] startReplayPractice: no valid session for startX={}",
-                m_currentReplayStartPos.x
-            );
+            log::warn("[Bot] startReplayPractice: no valid session for startX={}", m_currentReplayStartPos.x);
             m_filterByStartPosition = false;
             stopReplay();
             return false;
@@ -4714,7 +4880,15 @@ public:
 
         //buildCompositePracticePath(std::optional<bool>(true));
 
-        if (m_baseTime != 0.0) {
+        if (explicitSelection) {
+            auto const replaySegs = m_checkpointMgr.getReplaySequence();
+            if (!replaySegs.empty()) {
+                m_baseTime = replaySegs.front().absStart();
+                m_currentSessionTime = m_baseTime;
+                m_prevSessionTime = m_baseTime;
+            }
+        }
+        else if (m_baseTime != 0.0) {
             m_checkpointMgr.offsetSelectedSessionBaseTimeIfZero(m_baseTime);
         }
 
@@ -4874,13 +5048,22 @@ public:
             m_freezePlayerYP2 = 0.f;
             m_freezePlayerRotationP2 = 0.f;
         }
+
+        if (explicitSelection) {
+            m_pl->m_currentCheckpoint = nullptr;
+            m_pendingPracticeStartPosInit = true;
+            m_pendingPracticeStartPosFrames = 0;
+        }
         
         restartLevel();
+        if (explicitSelection) m_pl->startMusic();
         return true;
     }
 
 
     bool startReplayBest() {
+        clearReplayStartPosOverride_();
+        clearPracticeReplaySessionSelection();
         restartLevel();
         m_freezePlayerXAtEnd = false;
         m_freezePlayerX = 0.f;
@@ -5072,6 +5255,10 @@ public:
 
     void stopReplay() {
         if (!botActive) {
+            clearReplayStartPosOverride_();
+            m_checkpointMgr.clearReplayOverrideSegments();
+            m_practiceReplayRouteStartSessionId = 0;
+            clearPracticeReplaySessionSelection();
             clearHeldInputs_();
             return;
         }
@@ -5096,6 +5283,10 @@ public:
         clearDeathMarkers_();
         resetPlayerMirrorVisualOffsets_();
         resetMirrorVisualState_();
+        clearReplayStartPosOverride_();
+        m_checkpointMgr.clearReplayOverrideSegments();
+        m_practiceReplayRouteStartSessionId = 0;
+        clearPracticeReplaySessionSelection();
     }
 
     void restartLevel() { 
@@ -5340,6 +5531,12 @@ public:
         // if (!m_allowWorkThisTick || m_is_quitting || !m_pl) return;
         if (m_is_quitting || !m_pl || !m_pl->m_player1) return;
 
+        if (m_pendingPracticeStartPosInit) {
+            m_px = m_pl->m_player1->getPositionX();
+            m_currentSessionTime = m_baseTime;
+            return;
+        }
+
         // log::info("m_freezePlayerXAtEnd: {}, {}", m_freezePlayerXAtEnd, m_pl->m_hasCompletedLevel);
 
         m_px = m_pl->m_player1->getPositionX();
@@ -5553,6 +5750,7 @@ public:
     void applySegmentBasedReplay_(bool isPlayer1) {
         if (!botActive) return;
         if (!m_pl || m_is_quitting) return;
+        if (m_pendingPracticeStartPosInit) return;
 
         //const float px = playerX_();
         //const float px2 = playerX2_();
@@ -5872,6 +6070,42 @@ public:
         if (!modEnabled || !m_pl || m_is_quitting) { 
             ++m_frameCounter; 
             return; 
+        }
+
+        if (m_pendingPracticeStartPosInit) {
+            if (!botActive || !m_pl->m_player1 || !m_replayStartPosObject) {
+                m_pendingPracticeStartPosInit = false;
+                m_pendingPracticeStartPosFrames = 0;
+            }
+            else {
+                ++m_pendingPracticeStartPosFrames;
+
+                const cocos2d::CCPoint playerPos = m_pl->m_player1->getPosition();
+                const float dist = ccpDistance(m_currentReplayStartPos, playerPos);
+
+                if (dist > kReplayStartTolerance && m_pendingPracticeStartPosFrames < 3) {
+                    ++m_frameCounter;
+                    return;
+                }
+
+                if (dist > kReplayStartTolerance) {
+                    log::warn(
+                        "[Practice replay] start pos did not settle naturally: expected=({:.2f}, {:.2f}), actual=({:.2f}, {:.2f})",
+                        m_currentReplayStartPos.x,
+                        m_currentReplayStartPos.y,
+                        playerPos.x,
+                        playerPos.y
+                    );
+                }
+
+                initBotAfterReset_(true);
+                m_pendingPracticeStartPosInit = false;
+                m_pendingPracticeStartPosFrames = 0;
+                m_playbackArmed = true;
+
+                ++m_frameCounter;
+                return;
+            }
         }
 
         updateMirrorVisuals_();
@@ -6252,6 +6486,10 @@ private:
     bool m_skipHardStreakCheck = false;
     MovementDirection m_movementDirectionP1 = MovementDirection::Flat;
     MovementDirection m_movementDirectionP2 = MovementDirection::Flat;
+    bool m_explicitWavePointAddedPrevPoseP1 = false;
+    bool m_explicitWavePointAddedPrevPoseP2 = false;
+    bool m_suppressNextExplicitWavePointP1 = false;
+    bool m_suppressNextExplicitWavePointP2 = false;
     bool m_wavePointLastFrameP1 = false;
     bool m_wavePointLastFrameP2 = false;
     cocos2d::CCPoint m_lastWavePointP1;
@@ -6425,6 +6663,8 @@ private:
 
     bool m_justStartedBot = false;
     cocos2d::CCPoint m_currentReplayStartPos{0.f, 0.f};
+    bool m_pendingPracticeStartPosInit = false;
+    int m_pendingPracticeStartPosFrames = 0;
 
     bool m_chainAuthoritative = false;
     bool m_checkpointDirty = false;
@@ -6457,6 +6697,12 @@ private:
     mutable int m_attemptsPreloadedTotal = 0;
 
     std::unordered_set<int> m_practiceSerialSet;
+    std::unordered_set<int> m_requestedPracticeSessionIds;
+    int m_practiceReplayRouteStartSessionId = 0;
+
+    geode::Ref<StartPosObject> m_replayStartPosObject = nullptr;
+    geode::Ref<StartPosObject> m_savedStartPosObject = nullptr;
+    geode::Ref<LevelSettingsObject> m_replayStartSettings = nullptr;
     std::vector<int> m_preloadableIndexesInAttemptsList;
     std::vector<uint32_t> m_preloadableSerials;
 
@@ -6474,6 +6720,10 @@ private:
     mutable bool m_serialCacheDirty = true;
 
     static constexpr float kReplayStartTolerance = 30.0f;
+    static constexpr float kPracticeStitchXOverlapTolerance = 2.0f;
+    static constexpr float kPracticeStitchMaxPositionDelta = 8.0f;
+    static constexpr float kPracticeStitchMaxMotionDelta = 3.0f;
+    static constexpr float kPracticeStitchMinExtension = 0.5f;
     static constexpr float kTolSq = kReplayStartTolerance * kReplayStartTolerance;
     static constexpr float kWaveTeleportedTolerance = 30.0f;
     static constexpr float kNoDualTimeGap = 0.1f;
@@ -8033,14 +8283,467 @@ private:
         m_attemptCountsDirty = false;
     }
 
+    static int startModeForReplayFrame_(IconType mode) {
+        switch (mode) {
+            case IconType::Ship:    return 1;
+            case IconType::Ball:    return 2;
+            case IconType::Ufo:     return 3;
+            case IconType::Wave:    return 4;
+            case IconType::Robot:   return 5;
+            case IconType::Spider:  return 6;
+            case IconType::Swing:   return 7;
+            case IconType::Jetpack: return 1;
+            case IconType::Cube:
+            default:                return 0;
+        }
+    }
+
+    struct PracticeReplayRoute_ {
+        std::vector<PracticeSegment> segments;
+        int startSessionId = 0;
+        float startX = 0.f;
+        float endX = 0.f;
+        int stitches = 0;
+    };
+
+    struct PracticeSplice_ {
+        bool valid = false;
+        double time = 0.0;
+        float score = std::numeric_limits<float>::max();
+    };
+
+    static float practiceSessionEndX_(PracticeSession const& session) {
+        float endX = session.endX;
+        for (auto const& seg : session.segments) {
+            endX = std::max(endX, seg.endX);
+            endX = std::max(endX, seg.maxXReached);
+        }
+        return endX;
+    }
+
+    static float practiceSpliceScore_(Frame const& a, Frame const& b) {
+        const bool miniA = static_cast<float>(a.vehicleSize) < 0.9f;
+        const bool miniB = static_cast<float>(b.vehicleSize) < 0.9f;
+
+        if (a.mode != b.mode || miniA != miniB || a.upsideDown != b.upsideDown) {
+            return std::numeric_limits<float>::max();
+        }
+
+        const float dx = static_cast<float>(a.x) - static_cast<float>(b.x);
+        const float dy = static_cast<float>(a.y) - static_cast<float>(b.y);
+
+        if (std::fabs(dx) > kPracticeStitchMaxPositionDelta ||
+            std::fabs(dy) > kPracticeStitchMaxPositionDelta) {
+            return std::numeric_limits<float>::max();
+        }
+
+        float rotDelta = std::fabs(static_cast<float>(a.rot) - static_cast<float>(b.rot));
+        while (rotDelta >= 360.f) rotDelta -= 360.f;
+        if (rotDelta > 180.f) rotDelta = 360.f - rotDelta;
+
+        float score = dx * dx + dy * dy;
+        score += rotDelta * 0.01f;
+        if (a.hold != b.hold) score += 4.f;
+        if (a.holdL != b.holdL) score += 4.f;
+        if (a.holdR != b.holdR) score += 4.f;
+        if (a.isDashing != b.isDashing) score += 8.f;
+        return score;
+    }
+
+    static float practiceMotionScore_(
+        std::vector<Frame> const& a,
+        size_t ai,
+        std::vector<Frame> const& b,
+        size_t bi
+    ) {
+        if (ai == 0 || bi == 0 || ai >= a.size() || bi >= b.size()) return 0.f;
+
+        const float adx = static_cast<float>(a[ai].x) - static_cast<float>(a[ai - 1].x);
+        const float ady = static_cast<float>(a[ai].y) - static_cast<float>(a[ai - 1].y);
+        const float bdx = static_cast<float>(b[bi].x) - static_cast<float>(b[bi - 1].x);
+        const float bdy = static_cast<float>(b[bi].y) - static_cast<float>(b[bi - 1].y);
+        const float dx = adx - bdx;
+        const float dy = ady - bdy;
+
+        if (std::fabs(dx) > kPracticeStitchMaxMotionDelta ||
+            std::fabs(dy) > kPracticeStitchMaxMotionDelta) {
+            return std::numeric_limits<float>::max();
+        }
+
+        return (dx * dx + dy * dy) * 2.f;
+    }
+
+    static bool practiceDualAtTime_(Attempt const& attempt, double time) {
+        if (!attempt.hadDual || attempt.p2.empty()) return false;
+        const double first = static_cast<double>(attempt.p2.front().t);
+        const double last = static_cast<double>(attempt.p2.back().t);
+        return time >= first - 0.01 && time <= last + 0.01;
+    }
+
+    PracticeSplice_ findPracticeSplice_(
+        std::vector<PracticeSegment> const& route,
+        PracticeSession const& nextSession
+    ) {
+        PracticeSplice_ best;
+
+        for (auto const& routeSeg : route) {
+            if (routeSeg.ownerSerial <= 0) continue;
+
+            for (auto const& nextSeg : nextSession.segments) {
+                if (nextSeg.ownerSerial <= 0) continue;
+
+                const double overlapStart = std::max(routeSeg.absStart(), nextSeg.absStart());
+                const double overlapEnd = std::min(routeSeg.absEnd(), nextSeg.absEnd());
+                if (overlapEnd + 1e-5 < overlapStart) continue;
+
+                if (!ensureAttemptLoadedBySerialAndPractice_(routeSeg.ownerSerial, true, false)) continue;
+                if (!ensureAttemptLoadedBySerialAndPractice_(nextSeg.ownerSerial, true, false)) continue;
+
+                auto const* routeOwner = findLoadedAttemptBySerialAndPractice_(routeSeg.ownerSerial, true);
+                auto const* nextOwner = findLoadedAttemptBySerialAndPractice_(nextSeg.ownerSerial, true);
+                if (!routeOwner || !nextOwner || routeOwner->p1.empty() || nextOwner->p1.empty()) continue;
+
+                constexpr int samples = 32;
+                for (int sample = 0; sample <= samples; ++sample) {
+                    const double alpha = samples == 0 ? 0.0 : static_cast<double>(sample) / samples;
+                    const double time = overlapStart + (overlapEnd - overlapStart) * alpha;
+
+                    const size_t routeIdx = idxForTime(routeOwner->acc1Time, routeOwner->p1, time);
+                    const size_t nextIdx = idxForTime(nextOwner->acc1Time, nextOwner->p1, time);
+                    if (routeIdx >= routeOwner->p1.size() || nextIdx >= nextOwner->p1.size()) continue;
+
+                    float score = practiceSpliceScore_(
+                        routeOwner->p1[routeIdx],
+                        nextOwner->p1[nextIdx]
+                    );
+                    if (!std::isfinite(score)) continue;
+
+                    const float motionScore = practiceMotionScore_(
+                        routeOwner->p1,
+                        routeIdx,
+                        nextOwner->p1,
+                        nextIdx
+                    );
+                    if (!std::isfinite(motionScore)) continue;
+                    score += motionScore;
+
+                    const bool routeDual = practiceDualAtTime_(*routeOwner, time);
+                    const bool nextDual = practiceDualAtTime_(*nextOwner, time);
+                    if (routeDual != nextDual) continue;
+
+                    if (routeDual) {
+                        const size_t routeIdx2 = idxForTime(routeOwner->acc2Time, routeOwner->p2, time);
+                        const size_t nextIdx2 = idxForTime(nextOwner->acc2Time, nextOwner->p2, time);
+                        if (routeIdx2 >= routeOwner->p2.size() || nextIdx2 >= nextOwner->p2.size()) continue;
+
+                        const float p2Score = practiceSpliceScore_(
+                            routeOwner->p2[routeIdx2],
+                            nextOwner->p2[nextIdx2]
+                        );
+                        if (!std::isfinite(p2Score)) continue;
+
+                        const float p2MotionScore = practiceMotionScore_(
+                            routeOwner->p2,
+                            routeIdx2,
+                            nextOwner->p2,
+                            nextIdx2
+                        );
+                        if (!std::isfinite(p2MotionScore)) continue;
+
+                        score += p2Score + p2MotionScore;
+                    }
+
+                    if (!best.valid || score < best.score - 0.001f ||
+                        (std::fabs(score - best.score) <= 0.001f && time > best.time)) {
+                        best.valid = true;
+                        best.time = time;
+                        best.score = score;
+                    }
+                }
+            }
+        }
+
+        return best;
+    }
+
+    static void trimPracticeRouteAfter_(std::vector<PracticeSegment>& route, double time) {
+        std::vector<PracticeSegment> trimmed;
+        trimmed.reserve(route.size());
+
+        for (auto seg : route) {
+            if (seg.absStart() >= time - 1e-6) break;
+
+            if (seg.absEnd() > time) {
+                seg.localEndTime = time - seg.baseTimeOffset;
+            }
+
+            if (seg.ownerSerial > 0 && seg.absEnd() > seg.absStart() + 1e-6) {
+                trimmed.push_back(seg);
+            }
+        }
+
+        route.swap(trimmed);
+    }
+
+    static void appendPracticeSessionFrom_(
+        std::vector<PracticeSegment>& route,
+        PracticeSession const& session,
+        double time
+    ) {
+        for (auto seg : session.segments) {
+            if (seg.absEnd() <= time + 1e-6) continue;
+
+            if (seg.absStart() < time) {
+                seg.localStartTime = time - seg.baseTimeOffset;
+            }
+
+            if (seg.ownerSerial > 0 && seg.absEnd() > seg.absStart() + 1e-6) {
+                route.push_back(seg);
+            }
+        }
+    }
+
+    bool buildSelectedPracticeReplayRoute_() {
+        m_checkpointMgr.clearReplayOverrideSegments();
+        m_practiceReplayRouteStartSessionId = 0;
+
+        std::vector<PracticeSession const*> selected;
+        selected.reserve(m_requestedPracticeSessionIds.size());
+ 
+         for (auto const& session : m_checkpointMgr.getPath().sessions) {
+            if (!m_requestedPracticeSessionIds.contains(session.sessionId)) continue;
+            if (session.segments.empty()) continue;
+            selected.push_back(&session);
+        }
+
+        if (selected.empty()) return false;
+
+        std::sort(selected.begin(), selected.end(), [](PracticeSession const* a, PracticeSession const* b) {
+            const float ax = CheckpointManager::sessionStartX_(*a);
+            const float bx = CheckpointManager::sessionStartX_(*b);
+            if (ax != bx) return ax < bx;
+            return practiceSessionEndX_(*a) > practiceSessionEndX_(*b);
+        });
+
+        float selectedStartX = CheckpointManager::sessionStartX_(*selected.front());
+        float selectedEndX = practiceSessionEndX_(*selected.front());
+
+        if (!std::isfinite(selectedStartX) || !std::isfinite(selectedEndX)) return false;
+
+        for (size_t i = 1; i < selected.size(); ++i) {
+            const float startX = CheckpointManager::sessionStartX_(*selected[i]);
+            const float endX = practiceSessionEndX_(*selected[i]);
+            if (!std::isfinite(startX) || !std::isfinite(endX)) return false;
+
+            if (startX > selectedEndX + kPracticeStitchXOverlapTolerance) {
+                log::warn(
+                    "[Practice replay] selected runs have a gap from x={:.2f} to x={:.2f}",
+                    selectedEndX,
+                    startX
+                );
+                return false;
+            }
+
+            selectedEndX = std::max(selectedEndX, endX);
+        }
+
+        PracticeReplayRoute_ bestRoute;
+        bool haveBest = false;
+
+        for (auto const* seed : selected) {
+            PracticeReplayRoute_ route;
+            route.segments = seed->segments;
+            route.startSessionId = seed->sessionId;
+            route.startX = CheckpointManager::sessionStartX_(*seed);
+            route.endX = practiceSessionEndX_(*seed);
+
+            std::unordered_set<int> used;
+            used.insert(seed->sessionId);
+
+            while (true) {
+                PracticeSession const* bestNext = nullptr;
+                PracticeSplice_ bestSplice;
+                float bestNextEndX = route.endX;
+
+                for (auto const* candidate : selected) {
+                    if (used.contains(candidate->sessionId)) continue;
+
+                    const float candidateStartX = CheckpointManager::sessionStartX_(*candidate);
+                    const float candidateEndX = practiceSessionEndX_(*candidate);
+
+                    if (!std::isfinite(candidateStartX) || !std::isfinite(candidateEndX)) continue;
+                    if (candidateEndX <= route.endX + kPracticeStitchMinExtension) continue;
+                    if (candidateStartX > route.endX + kPracticeStitchXOverlapTolerance) continue;
+
+                    PracticeSplice_ splice = findPracticeSplice_(route.segments, *candidate);
+                    if (!splice.valid) continue;
+
+                    if (!bestNext ||
+                        candidateEndX > bestNextEndX + kPracticeStitchMinExtension ||
+                        (std::fabs(candidateEndX - bestNextEndX) <= kPracticeStitchMinExtension &&
+                            splice.score < bestSplice.score - 0.001f) ||
+                        (std::fabs(candidateEndX - bestNextEndX) <= kPracticeStitchMinExtension &&
+                            std::fabs(splice.score - bestSplice.score) <= 0.001f &&
+                            candidate->sessionId > bestNext->sessionId)) {
+                        bestNext = candidate;
+                        bestSplice = splice;
+                        bestNextEndX = candidateEndX;
+                    }
+                }
+
+                if (!bestNext) break;
+
+                trimPracticeRouteAfter_(route.segments, bestSplice.time);
+                appendPracticeSessionFrom_(route.segments, *bestNext, bestSplice.time);
+                route.endX = bestNextEndX;
+                route.stitches++;
+                used.insert(bestNext->sessionId);
+            }
+
+            if (!haveBest ||
+                route.endX > bestRoute.endX + kPracticeStitchMinExtension ||
+                (std::fabs(route.endX - bestRoute.endX) <= kPracticeStitchMinExtension &&
+                    route.startX < bestRoute.startX - kPracticeStitchMinExtension) ||
+                (std::fabs(route.endX - bestRoute.endX) <= kPracticeStitchMinExtension &&
+                    std::fabs(route.startX - bestRoute.startX) <= kPracticeStitchMinExtension &&
+                    route.stitches > bestRoute.stitches) ||
+                (std::fabs(route.endX - bestRoute.endX) <= kPracticeStitchMinExtension &&
+                    std::fabs(route.startX - bestRoute.startX) <= kPracticeStitchMinExtension &&
+                    route.stitches == bestRoute.stitches &&
+                    route.startSessionId > bestRoute.startSessionId)) {
+                bestRoute = std::move(route);
+                haveBest = true;
+             }
+         }
+ 
+        if (!haveBest || bestRoute.segments.empty() || bestRoute.startSessionId <= 0) {
+            return false;
+        }
+
+        if (
+            bestRoute.startX > selectedStartX + kPracticeStitchXOverlapTolerance ||
+            bestRoute.endX < selectedEndX - kPracticeStitchMinExtension
+        ) {
+            log::warn(
+                "[Practice replay] selected runs overlap but no clean splice covers x={:.2f} to x={:.2f}",
+                selectedStartX,
+                selectedEndX
+            );
+            return false;
+        }
+
+        if (m_checkpointMgr.selectSessionById(bestRoute.startSessionId) <= 0) {
+            return false;
+        }
+
+        m_practiceReplayRouteStartSessionId = bestRoute.startSessionId;
+        m_checkpointMgr.setReplayOverrideSegments(std::move(bestRoute.segments));
+
+        log::info(
+            "[Practice replay] selected route startSession={} startX={:.2f} endX={:.2f} stitches={}",
+            m_practiceReplayRouteStartSessionId,
+            bestRoute.startX,
+            bestRoute.endX,
+            bestRoute.stitches
+        );
+        return true;
+     }
+
+    void clearReplayStartPosOverride_() {
+        if (m_pl && m_replayStartPosObject) {
+            m_pl->setStartPosObject(m_savedStartPosObject);
+        }
+
+        m_pendingPracticeStartPosInit = false;
+        m_pendingPracticeStartPosFrames = 0;
+        m_replayStartPosObject = nullptr;
+        m_replayStartSettings = nullptr;
+        m_savedStartPosObject = nullptr;
+    }
+
+    bool installReplayStartPosForSelectedPracticeSession_() {
+        if (m_requestedPracticeSessionIds.empty()) return true;
+        if (!m_pl) return false;
+
+        auto replaySegments = m_checkpointMgr.getReplaySequence();
+        if (replaySegments.empty()) {
+            log::warn("[Practice replay] selected route has no segments");
+            return false;
+        }
+
+        auto const& firstSegment = replaySegments.front();
+        if (firstSegment.ownerSerial <= 0) {
+            log::warn("[Practice replay] selected route has no first owner serial");
+            return false;
+        }
+
+        Attempt* owner = ensureAttemptLoadedBySerialAndPractice_(firstSegment.ownerSerial, true, false);
+        if (!owner || owner->p1.empty()) {
+            log::warn("[Practice replay] could not load first owner {} for selected primary session", firstSegment.ownerSerial);
+            return false;
+        }
+
+        size_t frameIndex = idxForTime(owner->acc1Time, owner->p1, firstSegment.absStart());
+        if (frameIndex >= owner->p1.size()) frameIndex = 0;
+        auto const& frame = owner->p1[frameIndex];
+
+        LevelSettingsObject* settings = nullptr;
+        if (m_pl->m_levelSettings) {
+            settings = LevelSettingsObject::objectFromString(m_pl->m_levelSettings->getSaveString());
+        }
+        if (!settings) settings = LevelSettingsObject::create();
+
+        auto* startPos = StartPosObject::create();
+        if (!settings || !startPos) {
+            log::warn("[Practice replay] failed to create temporary start-position objects");
+            return false;
+        }
+
+        settings->m_level = m_pl->m_level;
+        settings->m_startMode = startModeForReplayFrame_(frame.mode);
+        settings->m_startMini = static_cast<float>(frame.vehicleSize) < 0.9f;
+        settings->m_startDual = owner->hadDual;
+        settings->m_isFlipped = frame.upsideDown;
+        settings->m_startsWithStartPos = true;
+        settings->m_disableStartPos = false;
+        settings->m_resetCamera = false;
+
+        const cocos2d::CCPoint startPoint = {
+            static_cast<float>(frame.x),
+            static_cast<float>(frame.y)
+        };
+
+        startPos->m_objectID = 31;
+        startPos->setPosition(startPoint);
+        startPos->setStartPos(startPoint);
+        startPos->updateStartValues();
+        startPos->setSettings(settings);
+
+        clearReplayStartPosOverride_();
+        m_savedStartPosObject = m_pl->m_startPosObject;
+        m_replayStartSettings = settings;
+        m_replayStartPosObject = startPos;
+        m_currentReplayStartPos = startPoint;
+        m_pl->m_currentCheckpoint = nullptr;
+        m_pl->setStartPosObject(startPos);
+
+        log::info(
+            "[Practice replay] temporary start pos placed for route session {} at ({:.2f}, {:.2f}), mode={}, mini={}",
+            m_practiceReplayRouteStartSessionId,
+            static_cast<float>(frame.x),
+            static_cast<float>(frame.y),
+            settings->m_startMode,
+            settings->m_startMini
+        );
+        return true;
+    }
+
     float practicePreloadTargetStartX_() const {
         if (m_filterByStartPosition && std::isfinite(m_currentReplayStartPos.x)) {
             return m_currentReplayStartPos.x;
         }
 
-        if (m_pl && m_pl->m_player1) {
-            return m_pl->m_player1->m_positionX;
-        }
+        if (m_pl && m_pl->m_player1) return m_pl->m_player1->m_positionX;
 
         if (auto const* s = m_checkpointMgr.getPath().selectedSession()) {
             const float sx = CheckpointManager::sessionStartX_(*s);
@@ -8058,6 +8761,28 @@ private:
     bool rebuildPracticePreloadSerialSetForCurrentStart_() {
         m_practiceSerialSet.clear();
 
+        if (!m_requestedPracticeSessionIds.empty()) {
+            size_t reserveCount = 0;
+            for (auto const& session : m_checkpointMgr.getPath().sessions) {
+                if (!m_requestedPracticeSessionIds.contains(session.sessionId)) continue;
+                reserveCount += session.allAttemptSerials.size() + session.segments.size();
+            }
+            m_practiceSerialSet.reserve(reserveCount);
+
+            for (auto const& session : m_checkpointMgr.getPath().sessions) {
+                if (!m_requestedPracticeSessionIds.contains(session.sessionId)) continue;
+
+                for (int serial : session.allAttemptSerials) {
+                    if (serial > 0) m_practiceSerialSet.insert(serial);
+                }
+                for (auto const& seg : session.segments) {
+                    if (seg.ownerSerial > 0) m_practiceSerialSet.insert(seg.ownerSerial);
+                }
+            }
+
+            return !m_practiceSerialSet.empty();
+        }
+
         const float targetX = practicePreloadTargetStartX_();
         if (!std::isfinite(targetX)) {
             log::warn("[Practice preload] no finite target start X");
@@ -8065,32 +8790,20 @@ private:
         }
 
         const int selectedSession =
-            m_checkpointMgr.selectBestSessionForStartX_RankByTime(
-                targetX,
-                kReplayStartTolerance
-            );
+            m_checkpointMgr.selectBestSessionForStartX_RankByTime(targetX, kReplayStartTolerance);
 
         if (selectedSession <= 0 || m_checkpointMgr.noValidSessionForStartX()) {
-            log::warn(
-                "[Practice preload] no valid session for targetX={} xTol={}",
-                targetX,
-                kReplayStartTolerance
-            );
+            log::warn("[Practice preload] no valid session for targetX={} xTol={}", targetX, kReplayStartTolerance);
             return false;
         }
 
         const auto serials =
-            m_checkpointMgr.getPracticeSerialsMatchingStartX_AllSessions(
-                targetX,
-                static_cast<int>(kReplayStartTolerance)
-            );
+            m_checkpointMgr.getPracticeSerialsMatchingStartX_AllSessions(targetX, static_cast<int>(kReplayStartTolerance));
 
         m_practiceSerialSet.reserve(serials.size());
 
         for (int serial : serials) {
-            if (serial > 0) {
-                m_practiceSerialSet.insert(serial);
-            }
+            if (serial > 0) m_practiceSerialSet.insert(serial);
         }
 
         return !m_practiceSerialSet.empty();
@@ -8866,10 +9579,22 @@ private:
 
         if (ownerChanged) {
             seekReplayCursorsToTimeExact_(*owner, sessionTime);
+
             m_lastEmitIdx1 = kNoEmitIdx;
             m_lastEmitIdx2 = kNoEmitIdx;
-            m_lastPoseIdx1 = kNoEmitIdx;
-            m_lastPoseIdx2 = kNoEmitIdx;
+
+            m_lastPoseIdx1 = (!owner->p1.empty() && m_replayIdx1 > 0)
+                    ? m_replayIdx1 - 1
+                    : kNoEmitIdx;
+
+            m_lastPoseIdx2 = (owner->hadDual && !owner->p2.empty() && m_replayIdx2 > 0)
+                    ? m_replayIdx2 - 1
+                    : kNoEmitIdx;
+
+            m_explicitWavePointAddedPrevPoseP1 = false;
+            m_explicitWavePointAddedPrevPoseP2 = false;
+            m_suppressNextExplicitWavePointP1 = false;
+            m_suppressNextExplicitWavePointP2 = false;
         }
         return m_currentOwner;
     }
@@ -9532,7 +10257,9 @@ private:
         m_lastRecordedX = 0.f;
         
         if (m_pl) {
-            m_current.startPercent = m_pl->getCurrentPercent();
+            m_current.startPercent = m_current.practiceAttempt
+                ? getAccuratePercentForX(startX, m_pl->getCurrentPercent())
+                : m_pl->getCurrentPercent();
         } else {
             m_current.startPercent = 0;
         }
@@ -9783,6 +10510,12 @@ private:
             a.endX = 0.f;
         }
 
+        if (a.practiceAttempt) {
+            a.startPercent = getAccuratePercentForX(a.startX, a.startPercent);
+            if (a.completed) a.endPercent = 100.f;
+            else a.endPercent = getAccuratePercentForX(a.endX, a.endPercent);
+        }
+
         //geode::log::info("[pushAttempt] serial {} endPercent {}", a.serial, a.endPercent);
 
         if (isPureRecordingMode_()) {
@@ -9922,13 +10655,13 @@ private:
 
             const auto previousPoint = lastNode->m_point;
 
-            // Exact duplicate
-            if (
-                previousPoint.x == point.x &&
-                previousPoint.y == point.y
-            ) {
-                return false;
-            }
+            // Exact duplicate (now in hardstreak itself)
+            //if (
+            //    previousPoint.x == point.x &&
+            //    previousPoint.y == point.y
+            //) {
+            //    return false;
+            //}
 
             bool goingLeft = false;
 
@@ -9945,7 +10678,7 @@ private:
                 }
             }
 
-            // Reject tiny playback jitter 
+            // Reject tiny playback jitter
             if (!goingLeft && point.x < previousPoint.x) {
                 return false;
             }
@@ -9955,12 +10688,38 @@ private:
             }
         }
 
-        const bool oldAllow =
-            m_allowWavePointAdding;
-
+        const bool oldAllow = m_allowWavePointAdding;
         m_allowWavePointAdding = true;
+
         waveTrail->addPoint(point);
+
         m_allowWavePointAdding = oldAllow;
+
+        /*
+        log::info(
+            "Wave trail point array: {} points",
+            arr->count()
+        );
+
+        for (unsigned int i = 0; i < arr->count(); ++i) {
+            auto* node = static_cast<PointNode*>(
+                arr->objectAtIndex(i)
+            );
+
+            if (!node) {
+                log::info("  [{}] NULL", i);
+                continue;
+            }
+
+            const auto& p = node->m_point;
+
+            log::info(
+                "  [{}] x={}, y={}",
+                i,
+                p.x,
+                p.y
+            );
+        }*/
 
         return true;
     }
@@ -10061,23 +10820,6 @@ private:
         else movementDirectionVar = MovementDirection::Flat;
     }
 
-    inline bool explicitWavePointNear(const std::vector<Frame>& v, size_t i) {
-        if (i < v.size() && v[i].wavePointThisFrame) {
-            //log::info("conflict this frame");
-            return true;
-        }
-        if (i > 0 && v[i-1].wavePointThisFrame) {
-            //log::info("conflict previous frame");
-            return true;
-        }
-        if (i+1 < v.size() && v[i+1].wavePointThisFrame) {
-            //log::info("conflict next frame");
-            return true;
-        }
-
-        return false;
-    }
-
     inline void markWavePoint(const cocos2d::CCPoint& pt, bool isP1) {
         bool& hasWavePoint = isP1 ? m_wavePointLastFrameP1 : m_wavePointLastFrameP2;
         cocos2d::CCPoint&  lastPoint = isP1 ? m_lastWavePointP1 : m_lastWavePointP2;
@@ -10113,13 +10855,15 @@ private:
         }
 
         // Starts at 3 so loop over all frames 0, 1, 2, 3
-        if (startIdx == 3) startIdx = 0;
+        if (startIdx == 3 && replayIdx <= 1) startIdx = 0;
 
         bool& botPrevHold = isP1 ? botPrevHold1 : botPrevHold2;
         bool& botPrevHoldL = isP1 ? botPrevHoldL1 : botPrevHoldL2;
         bool& botPrevHoldR = isP1 ? botPrevHoldR1 : botPrevHoldR2;
 
-        bool setClicks = (isP1 || (!isP1 && m_isTwoPlayer)) && m_allowSetPlayerClickState;
+        bool setClicks =
+            (isP1 || (!isP1 && m_isTwoPlayer)) &&
+            m_allowSetPlayerClickState;
 
         for (size_t poseI = startIdx; poseI <= endIdx; ++poseI) {
             // Click state
@@ -10128,203 +10872,432 @@ private:
                 v.size() - 1,
                 poseI + kClickLeadFrames
             );
-            //log::info("poseI: {}, clickI: {}", poseI, clickI);
+
+            // log::info("poseI: {}, clickI: {}", poseI, clickI);
 
             const Frame& F = v[clickI];
             const Frame& C = v[poseI];
+
             if (setClicks && (isP1 || m_isTwoPlayer)) {
-                if (F.hold  != botPrevHold) {
+                if (F.hold != botPrevHold) {
                     // best method but might not work due to Click Between Frames
-                    m_pl->handleButton(F.hold, /*btn=*/1, /*isP1=*/isP1);
+                    m_pl->handleButton(
+                        F.hold,
+                        /*btn=*/1,
+                        /*isP1=*/isP1
+                    );
 
                     // if didn't work
                     if (F.hold != p1Hold) {
-                        if (F.hold) p->pushButton(PlayerButton::Jump);
-                        else p->releaseButton(PlayerButton::Jump);
+                        if (F.hold) {
+                            p->pushButton(PlayerButton::Jump);
+                        }
+                        else {
+                            p->releaseButton(PlayerButton::Jump);
+                        }
                     }
-                    
-                    botPrevHold  = F.hold;
+
+                    botPrevHold = F.hold;
                 }
+
                 if (F.holdL != botPrevHoldL) {
-                    m_pl->handleButton(F.holdL, /*btn=*/2, /*isP1=*/isP1);
+                    m_pl->handleButton(
+                        F.holdL,
+                        /*btn=*/2,
+                        /*isP1=*/isP1
+                    );
 
                     if (F.holdL != p1LHold) {
-                        if (F.holdL) p->pushButton(PlayerButton::Left);
-                        else p->releaseButton(PlayerButton::Left);
+                        if (F.holdL) {
+                            p->pushButton(PlayerButton::Left);
+                        }
+                        else {
+                            p->releaseButton(PlayerButton::Left);
+                        }
                     }
 
                     botPrevHoldL = F.holdL;
                 }
+
                 if (F.holdR != botPrevHoldR) {
-                    m_pl->handleButton(F.holdR, /*btn=*/3, /*isP1=*/isP1);
+                    m_pl->handleButton(
+                        F.holdR,
+                        /*btn=*/3,
+                        /*isP1=*/isP1
+                    );
 
                     if (F.holdR != p1RHold) {
-                        if (F.holdR) p->pushButton(PlayerButton::Right);
-                        else p->releaseButton(PlayerButton::Right);
+                        if (F.holdR) {
+                            p->pushButton(PlayerButton::Right);
+                        }
+                        else {
+                            p->releaseButton(PlayerButton::Right);
+                        }
                     }
 
                     botPrevHoldR = F.holdR;
                 }
             }
 
-                if (m_allowSetPlayerPos && m_setRealPlayerPosition) {
-                    // position stuff
-                    const Frame& a = C;
-                    const bool haveNext = (poseI + 1 < v.size());
-                    const Frame* b = haveNext ? &v[poseI + 1] : nullptr;
-                    const bool havePrevious = (poseI>0);
-                    const Frame* prev = havePrevious ? &v[poseI - 1] : nullptr;
-                    const bool isWave = (currentMode(p, m_pl->m_isPlatformer) == IconType::Wave);
-                    const bool isMini = (static_cast<float>(a.vehicleSize) < 0.9f);
-                    const float ix = a.x;
-                    const float iy = a.y;
-                    float prevY;
-                    float prevX;
-                    if (prev) {
-                        prevY = prev->y;
-                        prevX = prev->x;
+            if (m_allowSetPlayerPos && m_setRealPlayerPosition) {
+                // position stuff
+                const Frame& a = C;
+
+                const bool haveNext = (poseI + 1 < v.size());
+                const Frame* b = haveNext ? &v[poseI + 1] : nullptr;
+
+                const bool havePrevious = (poseI > 0);
+                const Frame* prev = havePrevious ? &v[poseI - 1] : nullptr;
+
+                const bool isWave = (a.mode == IconType::Wave);
+
+                const bool isMini =
+                    static_cast<float>(a.vehicleSize) < 0.9f;
+
+                const float ix = a.x;
+                const float iy = a.y;
+
+                float prevY;
+                float prevX;
+
+                if (prev) {
+                    prevY = prev->y;
+                    prevX = prev->x;
+                }
+                else {
+                    prevY = p->getPositionY();
+                    prevX = p->getPositionX();
+                }
+
+                float fliptime = mirrorFlipT_();
+
+                bool blockWaveAddPoint = false;
+
+                if (
+                    isWave &&
+                    p->m_waveTrail &&
+                    fliptime != 1 &&
+                    fliptime != 0
+                ) {
+                    p->m_waveTrail->reset();
+                    blockWaveAddPoint = true;
+                }
+
+                /*
+                log::info(
+                    "[replay P{}] owner={} ia={} i={} last={} replay={} size={} t={} y={} exp={}",
+                    isP1 ? 1 : 2,
+                    m_currentOwner ? m_currentOwner->serial : -1,
+                    ia,
+                    poseI,
+                    lastEmitIdx,
+                    replayIdx,
+                    v.size(),
+                    static_cast<double>(F.t),
+                    static_cast<float>(F.y),
+                    static_cast<int>(F.wavePointThisFrame)
+                );
+                */
+
+                if (p->m_isDashing != a.isDashing) {
+                    if (a.isDashing) {
+                        p->startDashing(attemptplayback::p0d());
                     }
                     else {
-                        prevY = p->getPositionY();
-                        prevX = p->getPositionX();
+                        p->stopDashing();
                     }
+                }
 
-                    float fliptime = mirrorFlipT_();
-                    bool blockWaveAddPoint = false;
-                    if (isWave && p->m_waveTrail && fliptime != 1 && fliptime != 0) {
-                        p->m_waveTrail->reset();
-                        blockWaveAddPoint = true;
-                    }
+                if (p->m_isUpsideDown != a.upsideDown) {
+                    p->flipGravity(a.upsideDown, true);
+                }
 
-                    /*
-                    log::info(
-                        "[replay P{}] owner={} ia={} i={} last={} replay={} size={} t={} y={} exp={}",
-                        isP1 ? 1 : 2,
-                        m_currentOwner ? m_currentOwner->serial : -1,
-                        ia,
-                        poseI,
-                        lastEmitIdx,
-                        replayIdx,
-                        v.size(),
-                        static_cast<double>(F.t),
-                        static_cast<float>(F.y),
-                        static_cast<int>(F.wavePointThisFrame)
-                    );*/
+                if (
+                    currentMode(p, m_pl->m_isPlatformer) != a.mode
+                ) {
+                    forceMode(
+                        p,
+                        a.mode,
+                        /*isRealPlayer=*/true
+                    );
+                }
 
-                    if (p->m_isDashing != a.isDashing) {
-                        if (a.isDashing) p->startDashing(attemptplayback::p0d());
-                        else p->stopDashing();
-                    }
+                bool addedWavePoint = false;
+                bool addedExplicitWavePoint = false;
 
-                    if (p->m_isUpsideDown != a.upsideDown) p->flipGravity(a.upsideDown, true);
+                const bool explicitPoint = a.wavePointThisFrame;
 
-                    if (currentMode(p, m_pl->m_isPlatformer) != a.mode) {
-                        forceMode(p, a.mode, /*isRealPlayer*/ true);
-                    }
+                const bool canAddWavePoint =
+                    isWave &&
+                    p->m_waveTrail &&
+                    !blockWaveAddPoint;
 
-                    bool addedWavePoint = false;
+                MovementDirection& storedMovementDir =
+                    isP1
+                        ? m_movementDirectionP1
+                        : m_movementDirectionP2;
 
-                    const bool explicitPoint = a.wavePointThisFrame;
+                bool& explicitWavePointAddedPrevPose =
+                    isP1
+                        ? m_explicitWavePointAddedPrevPoseP1
+                        : m_explicitWavePointAddedPrevPoseP2;
 
-                    const bool canAddWavePoint = isWave && p->m_waveTrail && !blockWaveAddPoint;
+                bool& suppressNextExplicitWavePoint =
+                    isP1
+                        ? m_suppressNextExplicitWavePointP1
+                        : m_suppressNextExplicitWavePointP2;
 
-                    bool shouldAddWavePoint = false;
+                const bool suppressExplicitThisPose =
+                    suppressNextExplicitWavePoint;
 
-                    if (prevX != ix) {
-                        MovementDirection movementDir = MovementDirection::Flat;
-                        setMovementDirection(prevY, iy, movementDir);
+                suppressNextExplicitWavePoint = false;
 
-                        MovementDirection& storedMovementDir = isP1
-                            ? m_movementDirectionP1
-                            : m_movementDirectionP2;
+                if (!isWave) {
+                    storedMovementDir = MovementDirection::Flat;
+                    explicitWavePointAddedPrevPose = false;
+                }
 
-                        const bool directionChanged = movementDir != storedMovementDir;
+                bool directionChanged = false;
 
-                        //if (directionChanged) log::info("movement dir: {}, stored dir: {}, x {}, pewvx {}", (int)movementDir, (int)storedMovementDir, ix, prevX);
+                const bool prevWasWave =
+                    prev &&
+                    prev->mode == IconType::Wave;
+
+                if (
+                    isWave &&
+                    prevWasWave &&
+                    prevX != ix
+                ) {
+                    MovementDirection movementDir =
+                        MovementDirection::Flat;
+
+                    setMovementDirection(
+                        prevY,
+                        iy,
+                        movementDir
+                    );
+
+                    if (
+                        movementDir !=
+                        MovementDirection::Flat
+                    ) {
+                        directionChanged =
+                            storedMovementDir !=
+                                MovementDirection::Flat &&
+                            movementDir != storedMovementDir;
 
                         storedMovementDir = movementDir;
-
-                        const bool syntheticPoint = directionChanged && !explicitWavePointNear(v, poseI);
-
-                        //log::info("exp: {}, change: {}, synth: {}", explicitPoint, directionChanged, syntheticPoint);
-
-                        shouldAddWavePoint = canAddWavePoint && (explicitPoint || syntheticPoint);
                     }
+                }
+                else if (
+                    isWave &&
+                    !prevWasWave
+                ) {
+                    storedMovementDir =
+                        MovementDirection::Flat;
+                }
 
-                    if (shouldAddWavePoint) {
-                        m_hasWavePointData = true;
+                auto tryAddWavePoint =
+                    [&](cocos2d::CCPoint raw) -> bool {
+                        bool& snapHave =
+                            isP1
+                                ? m_haveLastSnappedWavePointP1
+                                : m_haveLastSnappedWavePointP2;
 
-                        cocos2d::CCPoint raw = cocos2d::CCPoint(ix, iy);
+                        cocos2d::CCPoint& snapLast =
+                            isP1
+                                ? m_lastSnappedWavePointP1
+                                : m_lastSnappedWavePointP2;
 
-                        if (auto snapped = snapWavePointSimple_(raw, isMini, isP1)) {
-                            //log::info("point add");
-                            addedWavePoint = waveTrailAddPointToPlayer(
+                        bool& snapLastMini =
+                            isP1
+                                ? m_lastSnappedWaveMiniP1
+                                : m_lastSnappedWaveMiniP2;
+
+                        bool& snapLastDir =
+                            isP1
+                                ? m_lastSnappedWaveDirP1
+                                : m_lastSnappedWaveDirP2;
+
+                        const bool oldSnapHave =
+                            snapHave;
+
+                        const cocos2d::CCPoint oldSnapLast =
+                            snapLast;
+
+                        const bool oldSnapLastMini =
+                            snapLastMini;
+
+                        const bool oldSnapLastDir =
+                            snapLastDir;
+
+                        auto snapped =
+                            snapWavePointSimple_(
+                                raw,
+                                isMini,
+                                isP1
+                            );
+
+                        if (!snapped) {
+                            return false;
+                        }
+
+                        if (
+                            waveTrailAddPointToPlayer(
                                 p->m_waveTrail,
                                 *snapped,
                                 isP1,
                                 m_p2JustSpawned
-                                //ix < prevX
+                            )
+                        ) {
+                            markWavePoint(
+                                *snapped,
+                                isP1
                             );
-                            if (addedWavePoint) markWavePoint(*snapped, isP1);
+
+                            return true;
                         }
-                    }
 
-                    if (canAddWavePoint) {
-                        p->m_waveTrail->setVisible(true);
-                        p->m_waveTrail->setOpacity(255);
-                        p->m_waveTrail->resumeStroke();
-                    }
+                        snapHave = oldSnapHave;
+                        snapLast = oldSnapLast;
+                        snapLastMini = oldSnapLastMini;
+                        snapLastDir = oldSnapLastDir;
 
-                    // Teleport goop
-                    bool& playerPrevTeleported = isP1
+                        return false;
+                    };
+
+                if (
+                    canAddWavePoint &&
+                    explicitPoint &&
+                    !suppressExplicitThisPose
+                ) {
+                    m_hasWavePointData = true;
+
+                    addedExplicitWavePoint =
+                        tryAddWavePoint({
+                            ix,
+                            iy
+                        });
+
+                    addedWavePoint =
+                        addedExplicitWavePoint;
+                }
+
+                if (
+                    canAddWavePoint &&
+                    directionChanged &&
+                    !addedWavePoint &&
+                    !explicitWavePointAddedPrevPose
+                ) {
+                    m_hasWavePointData = true;
+
+                    if (
+                        tryAddWavePoint({
+                            prevX,
+                            prevY
+                        })
+                    ) {
+                        addedWavePoint = true;
+                        suppressNextExplicitWavePoint = true;
+                    }
+                }
+
+                explicitWavePointAddedPrevPose =
+                    addedExplicitWavePoint;
+
+                if (canAddWavePoint) {
+                    p->m_waveTrail->setVisible(true);
+                    p->m_waveTrail->setOpacity(255);
+                    p->m_waveTrail->resumeStroke();
+                }
+
+                // Teleport goop
+                bool& playerPrevTeleported =
+                    isP1
                         ? m_playerPrevTeleportedP1
                         : m_playerPrevTeleportedP2;
 
-                    if (playerPrevTeleported) {
-                        if (canAddWavePoint) {
-                            p->m_waveTrail->reset();
-                            p->m_waveTrail->resumeStroke();
+                if (playerPrevTeleported) {
+                    if (canAddWavePoint) {
+                        p->m_waveTrail->reset();
+                        p->m_waveTrail->resumeStroke();
 
-                            if (!addedWavePoint) {
-                                addedWavePoint = waveTrailAddPointToPlayer(
+                        if (!addedWavePoint) {
+                            addedWavePoint =
+                                waveTrailAddPointToPlayer(
                                     p->m_waveTrail,
-                                    { ix, iy },
+                                    {
+                                        ix,
+                                        iy
+                                    },
                                     isP1,
-                                    !isP1 && m_p2JustSpawned
-                                    //ix < prevX
+                                    !isP1 &&
+                                        m_p2JustSpawned
+                                    // ix < prevX
                                 );
-                            }
                         }
-
-                        playerPrevTeleported = false;
                     }
 
-                    bool teleported = (b && std::fabs(static_cast<float>(b->y) - iy) > kWaveTeleportedTolerance);
-
-                    if (teleported) {
-                        if (isWave && p->m_waveTrail) {
-                            p->m_waveTrail->stopStroke();
-                        }
-
-                        playerPrevTeleported = true;
-                    }
-
-                    p->setVisible(a.isVisible);
-                    if (a.isVisible) p->setOpacity(255);
-
-                    p->setPosition({ a.x, a.y });
-
-                    if (std::fabs(iy - prevY) > kWaveTeleportedTolerance*8) m_speedUpCameraAnimationAfterTeleportForNFrames = 5;
-
-                    if (m_speedUpCameraAnimationAfterTeleportForNFrames > 0) {
-                        if (m_gl) m_gl->updateCamera(20.0f);
-                        m_speedUpCameraAnimationAfterTeleportForNFrames--;
-                    }
-
-                    p->setRotation(a.rot);
-                    if (m_p2JustSpawned) m_p2JustSpawned = false;
+                    playerPrevTeleported = false;
                 }
+
+                bool teleported =
+                    b &&
+                    std::fabs(
+                        static_cast<float>(b->y) -
+                        iy
+                    ) >
+                        kWaveTeleportedTolerance;
+
+                if (teleported) {
+                    if (
+                        isWave &&
+                        p->m_waveTrail
+                    ) {
+                        p->m_waveTrail->stopStroke();
+                    }
+
+                    playerPrevTeleported = true;
+                }
+
+                p->setVisible(a.isVisible);
+
+                if (a.isVisible) {
+                    p->setOpacity(255);
+                }
+
+                p->setPosition({
+                    a.x,
+                    a.y
+                });
+
+                if (
+                    std::fabs(iy - prevY) >
+                    kWaveTeleportedTolerance * 8
+                ) {
+                    m_speedUpCameraAnimationAfterTeleportForNFrames =
+                        5;
+                }
+
+                if (
+                    m_speedUpCameraAnimationAfterTeleportForNFrames >
+                    0
+                ) {
+                    if (m_gl) {
+                        m_gl->updateCamera(20.0f);
+                    }
+
+                    m_speedUpCameraAnimationAfterTeleportForNFrames--;
+                }
+
+                p->setRotation(a.rot);
+
+                if (m_p2JustSpawned) {
+                    m_p2JustSpawned = false;
+                }
+            }
         }
+
         lastPoseIdx = endIdx;
     }
 

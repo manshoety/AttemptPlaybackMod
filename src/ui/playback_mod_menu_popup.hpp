@@ -14,7 +14,69 @@
 #include "../core/ghost_manager.hpp"
 
 #include <vector>
+#include <unordered_set>
 #include <chrono>
+
+class PracticeRunSelectPopup : public geode::Popup {
+public:
+    static PracticeRunSelectPopup* create();
+    bool init(float width, float height);
+
+protected:
+    void onClose(cocos2d::CCObject* sender) override;
+
+private:
+    enum class SortMode { Recent, Furthest, Attempts };
+
+    struct RunInfo {
+        int sessionId = 0;
+        int attempts = 0;
+        float startPercent = 0.f;
+        float endPercent = 0.f;
+        float startX = 0.f;
+        float endX = 0.f;
+        double replayEndTime = 0.0;
+        bool completed = false;
+    };
+
+    std::vector<RunInfo> m_allRuns;
+    std::vector<RunInfo> m_runs;
+    std::unordered_set<int> m_selectedSessionIds;
+    SortMode m_sortMode = SortMode::Recent;
+    int m_page = 0;
+    bool m_continuing = false;
+    bool m_onlyCurrentStart = false;
+    bool m_haveCurrentStart = false;
+    float m_currentStartX = 0.f;
+    float m_currentStartPercent = 0.f;
+
+    cocos2d::CCNode* m_rowsRoot = nullptr;
+    cocos2d::CCLabelBMFont* m_sortValueLabel = nullptr;
+    cocos2d::CCLabelBMFont* m_selectionLabel = nullptr;
+    CCMenuItemSpriteExtra* m_continueBtn = nullptr;
+    CCMenuItemSpriteExtra* m_prevBtn = nullptr;
+    CCMenuItemSpriteExtra* m_prevEndBtn = nullptr;
+    CCMenuItemSpriteExtra* m_nextBtn = nullptr;
+    CCMenuItemSpriteExtra* m_nextEndBtn = nullptr;
+    CCMenuItemToggler* m_currentStartToggle = nullptr;
+    cocos2d::CCLabelBMFont* m_currentStartLabel = nullptr;
+
+private:
+    void loadRuns_();
+    void applyCurrentStartFilter_();
+    void sortRuns_();
+    void rebuildRows_();
+    void refreshFooter_();
+    int maxPage_() const;
+    bool selectedRunsHaveGap_(float& gapEndPercent, float& nextStartPercent) const;
+
+    void onToggleRun(cocos2d::CCObject* sender);
+    void onToggleCurrentStart(cocos2d::CCObject* sender);
+    void onCycleSort(cocos2d::CCObject* sender);
+    void onPrevPage(cocos2d::CCObject* sender);
+    void onNextPage(cocos2d::CCObject* sender);
+    void onContinue(cocos2d::CCObject* sender);
+};
 
 class PreloadAttemptsPopup : public geode::Popup {
 public:

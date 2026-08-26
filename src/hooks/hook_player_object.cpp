@@ -241,6 +241,16 @@ class $modify(MyPlayerObject, PlayerObject) {
         }
     }
 
+    void setVisible(bool visible) {
+
+        auto& G = Ghosts::I();
+        if (G.isModEnabled() && G.isBotActive() && this->isVisible() != visible) {
+            if (this->m_waveTrail) this->m_waveTrail->reset();
+        }
+        
+        PlayerObject::setVisible(visible);
+    }
+
     
 
     //void flipGravity(bool p0, bool p1) {

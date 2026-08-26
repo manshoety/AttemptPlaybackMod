@@ -104,37 +104,12 @@ namespace {
             dead = 123;
         }
 
-        const auto replaceAll = [](
-            std::string& value,
-            std::string const& token,
-            std::string const& replacement
-        ) {
-            size_t pos = 0;
-
-            while ((pos = value.find(token, pos)) != std::string::npos) {
-                value.replace(pos, token.size(), replacement);
-                pos += replacement.size();
-            }
-        };
-
-        const double alivePercent = total
-            ? 100.0 * static_cast<double>(alive) / static_cast<double>(total)
-            : 0.0;
-
-        const double deadPercent = total
-            ? 100.0 * static_cast<double>(dead) / static_cast<double>(total)
-            : 0.0;
-
-        replaceAll(formatText, "{alive}", std::to_string(alive));
-        replaceAll(formatText, "{Alive}", std::to_string(alive));
-        replaceAll(formatText, "{dead}", std::to_string(dead));
-        replaceAll(formatText, "{Dead}", std::to_string(dead));
-        replaceAll(formatText, "{total}", std::to_string(total));
-        replaceAll(formatText, "{Total}", std::to_string(total));
-        replaceAll(formatText, "{percent_alive}", fmt::format("{:.0f}", alivePercent));
-        replaceAll(formatText, "{percent_dead}", fmt::format("{:.0f}", deadPercent));
-
-        return formatText;
+        return Ghosts::I().formatGhostTextForCounts_(
+            formatText,
+            alive,
+            dead,
+            total
+        );
     }
 
     void addDarkRow_(CCNode* root, float y, float width = 390.f) {
@@ -792,7 +767,9 @@ void GhostTextPopup::onVariables(CCObject*) {
         "<cy>{dead}</c>  attempts that died\n"
         "<cy>{total}</c>  total loaded attempts\n"
         "<cy>{percent_alive}</c>  alive percent\n"
-        "<cy>{percent_dead}</c>  dead percent",
+        "<cy>{percent_dead}</c>  dead percent\n"
+        "add decimal places with <cy>:#</c>\n"
+        "ex: 2 decimal places: <cy>{percent_alive:2}</c>\n",
         "OK"
     )->show();
 }

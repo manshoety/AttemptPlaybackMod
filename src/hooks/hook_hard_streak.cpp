@@ -16,6 +16,27 @@ class $modify(HardStreakHook, HardStreak) {
     void addPoint(cocos2d::CCPoint point) {
         auto& G = Ghosts::I();
 
+        if (G.isBotActive()) {
+            auto* arr = this->m_pointArray;
+            
+            // Already has that wave point
+            if (arr->count() > 0) {
+                auto* lastNode = static_cast<PointNode*>(
+                    arr->lastObject()
+                );
+
+                if (lastNode) {
+                    const auto previousPoint = lastNode->m_point;
+
+                    if (previousPoint.x == point.x && previousPoint.y == point.y) {
+                        return;
+                    }
+                }
+            }
+
+            this->m_currentPoint = point;
+        }
+
         if (
             G.allowWaveHook() &&
             !G.skipHardStreakCheck() &&

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 #include "types.hpp"
 
@@ -40,6 +41,7 @@ public:
     
     void restorePath(const PracticePath& path) {
         m_path = path;
+        m_replayOverrideSegments.clear();
         m_dirty = false;
         m_noValidSessionForStartX = false;
 
@@ -114,6 +116,22 @@ public:
             m_path.selectedSessionId = 0;
             m_path.activeSessionId = 0;
             return -1;
+        }
+
+        m_noValidSessionForStartX = true;
+        m_path.selectedSessionId = 0;
+        m_path.activeSessionId = 0;
+        return -1;
+    }
+
+    int selectSessionById(int sessionId) {
+        currentFurthestSegment = PracticeSegment{};
+
+        if (sessionId > 0 && sessionById_(sessionId)) {
+            m_noValidSessionForStartX = false;
+            m_path.selectedSessionId = sessionId;
+            m_path.activeSessionId = sessionId;
+            return sessionId;
         }
 
         m_noValidSessionForStartX = true;
@@ -285,10 +303,10 @@ public:
     }
     
     int findOwnerSerialForTime(double t) const {
-        const PracticeSession* session = m_path.selectedSession();
-        if (!session || session->segments.empty()) return -1;
+        auto const* segsPtr = replaySegments_();
+        if (!segsPtr || segsPtr->empty()) return -1;
 
-        const auto& segs = session->segments;
+        const auto& segs = *segsPtr;
 
         if (t < segs.front().absStart()) return segs.front().ownerSerial;
 
@@ -311,10 +329,10 @@ public:
     }
 
     int findOwnerSerialForTimeWithBridge(double t, double tick) const {
-        const PracticeSession* session = m_path.selectedSession();
-        if (!session || session->segments.empty()) return -1;
+        auto const* segsPtr = replaySegments_();
+        if (!segsPtr || segsPtr->empty()) return -1;
 
-        const auto& segs = session->segments;
+        const auto& segs = *segsPtr;
 
         if (t < segs.front().absStart()) {
             return segs.front().ownerSerial;
@@ -352,22 +370,39 @@ public:
     }
     
     double replayEndTime() const {
-        const PracticeSession* session = m_path.selectedSession();
-        if (!session || session->segments.empty()) return 0.0;
+        auto const* segs = replaySegments_();
+        if (!segs || segs->empty()) return 0.0;
         
         double maxEnd = 0.0;
-        for (const auto& seg : session->segments) {
+        for (auto const& seg : *segs) {
             maxEnd = std::max(maxEnd, seg.absEnd());
         }
         return maxEnd;
     }
     
     std::vector<PracticeSegment> getReplaySequence() const {
-        const PracticeSession* session = m_path.selectedSession();
-        if (!session) return {};
-
-        return session->segments;
+        auto const* segs = replaySegments_();
+        if (!segs) return {};
+        return *segs;
     }
+
+    void setReplayOverrideSegments(std::vector<PracticeSegment> segments) {
+        std::sort(segments.begin(), segments.end(),
+            [](PracticeSegment const& a, PracticeSegment const& b) {
+                return a.absStart() < b.absStart();
+            }
+        );
+        mergeAdjacentSegments_(segments);
+        m_replayOverrideSegments = std::move(segments);
+    }
+
+    void clearReplayOverrideSegments() {
+        m_replayOverrideSegments.clear();
+    }
+
+    bool hasReplayOverrideSegments() const {
+        return !m_replayOverrideSegments.empty();
+     }
 
     std::vector<int> getPracticeSerialsInCurrentSession() const {
         const PracticeSession* session = m_path.selectedSession();
@@ -410,6 +445,7 @@ public:
     
 private:
     PracticePath m_path;
+    std::vector<PracticeSegment> m_replayOverrideSegments;
     bool m_dirty = false;
     int m_nextSessionId = 1;
     bool m_noValidSessionForStartX = false;
@@ -428,6 +464,13 @@ private:
             if (s.sessionId == id) return &s;
         }
         return nullptr;
+    }
+
+    const std::vector<PracticeSegment>* replaySegments_() const {
+        if (!m_replayOverrideSegments.empty()) return &m_replayOverrideSegments;
+        const PracticeSession* session = m_path.selectedSession();
+        if (!session) return nullptr;
+        return &session->segments;
     }
 
     void addAttemptSerialIfMissing_(PracticeSession& session, int serial) {
