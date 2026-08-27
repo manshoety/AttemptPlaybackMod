@@ -1,3 +1,6 @@
+# 1.5.3
+FIXES: 
+- Hitbox positional issues (especially in wave)
 # 1.5.2
 ADDITIONS:
 - Practice playback menu for selecting which runs to use

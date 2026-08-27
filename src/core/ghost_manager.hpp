@@ -5764,69 +5764,6 @@ public:
 
         applyFrameAndClickToPlayerOverRange(isPlayer1);
 
-        // geode::log::warn("[applySegmentBasedReplay_] updateFreezeX");
-
-        /*
-        
-        if (m_replayKind == ReplayKind::BestSingle) {
-            // geode::log::warn("[applySegmentBasedReplay_] ReplayKind::BestSingle");
-            if (m_compOwnerIdx < attempts.size()) {
-                m_currentOwner = &attempts[m_compOwnerIdx];
-            }
-            if (!m_currentOwner || m_currentOwner->p1.empty()) {
-                // geode::log::warn("[applySegmentBasedReplay_] No owner");
-                return;
-            }
-            
-            // Use the maintained index instead of recalculating
-            size_t idx1 = m_replayIdx1 + 2;
-            if (idx1 >= m_currentOwner->p1.size()) idx1 = m_currentOwner->p1.size() - 1;
-            
-            if (isPlayer1) applyFrameToPlayerOverRange(m_pl->m_player1, m_currentOwner->p1, idx1, m_currentSessionTime, true);
-            else {
-                if (m_currentOwner->hadDual && m_pl->m_player2 && !m_currentOwner->p2.empty()) {
-                    size_t idx2 = m_replayIdx2 + 2;
-                    if (idx2 >= m_currentOwner->p2.size()) idx2 = m_currentOwner->p2.size() - 1;
-                    applyFrameToPlayerOverRange(m_pl->m_player2, m_currentOwner->p2, idx2, m_currentSessionTime, false);
-                }
-            }
-            checkIfPlayerIsDonePlaybackThingMaybePerhapsYeah();
-            return;
-        }
-
-        // geode::log::warn("[applySegmentBasedReplay_] (!m_currentOwner) {}", (!m_currentOwner));
-
-        if (!m_currentOwner) {
-            geode::log::warn("NO CURRENT OWNER");
-            return;
-        }
-
-        // geode::log::warn("[applySegmentBasedReplay_] (m_currentOwner->serial <= 0) {}", (m_currentOwner->serial <= 0));
-        if (m_currentOwner->serial <= 0) {
-            geode::log::warn("NEGATIVE OWNER SERIAL");
-            return;
-        }
-
-        // geode::log::warn("[applySegmentBasedReplay_] (m_currentOwner->p1.empty()) {}", (m_currentOwner->p1.empty()));
-        if (m_currentOwner->p1.empty()) {
-            geode::log::warn("EMPTY OWNER DATA");
-            return;
-        }
-
-        // Use maintained indices for PracticeComposite as well
-        size_t idx1 = m_replayIdx1 + 2;
-        if (idx1 >= m_currentOwner->p1.size()) idx1 = m_currentOwner->p1.size() - 1;
-        
-        if (isPlayer1) applyFrameToPlayerOverRange(m_pl->m_player1, m_currentOwner->p1, idx1, m_currentSessionTime, true);
-        else {
-            if (m_currentOwner->hadDual && m_pl->m_player2 && !m_currentOwner->p2.empty()) {
-                size_t idx2 = m_replayIdx2 + 2;
-                if (idx2 >= m_currentOwner->p2.size()) idx2 = m_currentOwner->p2.size() - 1;
-                applyFrameToPlayerOverRange(m_pl->m_player2, m_currentOwner->p2, idx2, m_currentSessionTime, false);
-            }
-        }
-        */
-
         checkIfPlayerIsDonePlaybackThingMaybePerhapsYeah();
         m_allowSetPlayerClickState = false;
     }
@@ -6760,6 +6697,12 @@ private:
     size_t minKeepDead = 50;
     uint64_t m_tickId = 0;
     uint64_t m_lastWorkTickId = 0;
+
+    struct ReplayPose {
+        cocos2d::CCPoint position = {0.f, 0.f};
+        float rotation = 0.f;
+        bool valid = false;
+    };
 
     cocos2d::CCPoint m_playerMirrorVisualOffsetP1 = {0.f, 0.f};
     cocos2d::CCPoint m_playerMirrorVisualOffsetP2 = {0.f, 0.f};
@@ -10839,23 +10782,14 @@ private:
         PlayerObject* p = isP1 ? m_pl->m_player1 : m_pl->m_player2;
         if (!p || v.empty()) return;
 
-        size_t& lastPoseIdx = isP1 ? m_lastPoseIdx1 : m_lastPoseIdx2;
-        const size_t endIdx = std::min(replayIdx + 2, v.size() - 1);
+        size_t& lastPoseIdx =
+            isP1 ? m_lastPoseIdx1 : m_lastPoseIdx2;
 
-        size_t startIdx = endIdx;
+        const size_t startIdx =
+            std::min(replayIdx, v.size() - 1);
 
-        if (lastPoseIdx != kNoEmitIdx &&
-            lastPoseIdx < endIdx &&
-            lastPoseIdx < v.size()) {
-            startIdx = lastPoseIdx + 1;
-        }
-
-        if (endIdx == 2 || lastPoseIdx == kNoEmitIdx) {
-            startIdx = 0;
-        }
-
-        // Starts at 3 so loop over all frames 0, 1, 2, 3
-        if (startIdx == 3 && replayIdx <= 1) startIdx = 0;
+        const size_t endIdx =
+            startIdx;
 
         bool& botPrevHold = isP1 ? botPrevHold1 : botPrevHold2;
         bool& botPrevHoldL = isP1 ? botPrevHoldL1 : botPrevHoldL2;
@@ -10877,67 +10811,6 @@ private:
 
             const Frame& F = v[clickI];
             const Frame& C = v[poseI];
-
-            if (setClicks && (isP1 || m_isTwoPlayer)) {
-                if (F.hold != botPrevHold) {
-                    // best method but might not work due to Click Between Frames
-                    m_pl->handleButton(
-                        F.hold,
-                        /*btn=*/1,
-                        /*isP1=*/isP1
-                    );
-
-                    // if didn't work
-                    if (F.hold != p1Hold) {
-                        if (F.hold) {
-                            p->pushButton(PlayerButton::Jump);
-                        }
-                        else {
-                            p->releaseButton(PlayerButton::Jump);
-                        }
-                    }
-
-                    botPrevHold = F.hold;
-                }
-
-                if (F.holdL != botPrevHoldL) {
-                    m_pl->handleButton(
-                        F.holdL,
-                        /*btn=*/2,
-                        /*isP1=*/isP1
-                    );
-
-                    if (F.holdL != p1LHold) {
-                        if (F.holdL) {
-                            p->pushButton(PlayerButton::Left);
-                        }
-                        else {
-                            p->releaseButton(PlayerButton::Left);
-                        }
-                    }
-
-                    botPrevHoldL = F.holdL;
-                }
-
-                if (F.holdR != botPrevHoldR) {
-                    m_pl->handleButton(
-                        F.holdR,
-                        /*btn=*/3,
-                        /*isP1=*/isP1
-                    );
-
-                    if (F.holdR != p1RHold) {
-                        if (F.holdR) {
-                            p->pushButton(PlayerButton::Right);
-                        }
-                        else {
-                            p->releaseButton(PlayerButton::Right);
-                        }
-                    }
-
-                    botPrevHoldR = F.holdR;
-                }
-            }
 
             if (m_allowSetPlayerPos && m_setRealPlayerPosition) {
                 // position stuff
@@ -11266,10 +11139,27 @@ private:
                     p->setOpacity(255);
                 }
 
-                p->setPosition({
+                const cocos2d::CCPoint replayPosition = {
                     a.x,
                     a.y
-                });
+                };
+
+                p->setPosition(replayPosition);
+                p->m_position = replayPosition;
+
+                if (prev) {
+                    p->m_lastPosition.x = prev->x;
+                    p->m_lastPosition.y = prev->y;
+                }
+                else {
+                    p->m_lastPosition = replayPosition;
+                }
+
+                // const float recordedDY = static_cast<float>(b->y) - static_cast<float>(a.y);
+
+                //p->m_yVelocity = recordedDY;
+
+                // log::info("recordedDY: {}", recordedDY);
 
                 if (
                     std::fabs(iy - prevY) >
@@ -11294,6 +11184,67 @@ private:
 
                 if (m_p2JustSpawned) {
                     m_p2JustSpawned = false;
+                }
+            }
+
+            if (setClicks && (isP1 || m_isTwoPlayer)) {
+                if (F.hold != botPrevHold) {
+                    // best method but might not work due to Click Between Frames
+                    m_pl->handleButton(
+                        F.hold,
+                        /*btn=*/1,
+                        /*isP1=*/isP1
+                    );
+
+                    // if didn't work
+                    if (F.hold != p1Hold) {
+                        if (F.hold) {
+                            p->pushButton(PlayerButton::Jump);
+                        }
+                        else {
+                            p->releaseButton(PlayerButton::Jump);
+                        }
+                    }
+
+                    botPrevHold = F.hold;
+                }
+
+                if (F.holdL != botPrevHoldL) {
+                    m_pl->handleButton(
+                        F.holdL,
+                        /*btn=*/2,
+                        /*isP1=*/isP1
+                    );
+
+                    if (F.holdL != p1LHold) {
+                        if (F.holdL) {
+                            p->pushButton(PlayerButton::Left);
+                        }
+                        else {
+                            p->releaseButton(PlayerButton::Left);
+                        }
+                    }
+
+                    botPrevHoldL = F.holdL;
+                }
+
+                if (F.holdR != botPrevHoldR) {
+                    m_pl->handleButton(
+                        F.holdR,
+                        /*btn=*/3,
+                        /*isP1=*/isP1
+                    );
+
+                    if (F.holdR != p1RHold) {
+                        if (F.holdR) {
+                            p->pushButton(PlayerButton::Right);
+                        }
+                        else {
+                            p->releaseButton(PlayerButton::Right);
+                        }
+                    }
+
+                    botPrevHoldR = F.holdR;
                 }
             }
         }
