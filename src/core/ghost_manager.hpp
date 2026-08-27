@@ -6698,12 +6698,6 @@ private:
     uint64_t m_tickId = 0;
     uint64_t m_lastWorkTickId = 0;
 
-    struct ReplayPose {
-        cocos2d::CCPoint position = {0.f, 0.f};
-        float rotation = 0.f;
-        bool valid = false;
-    };
-
     cocos2d::CCPoint m_playerMirrorVisualOffsetP1 = {0.f, 0.f};
     cocos2d::CCPoint m_playerMirrorVisualOffsetP2 = {0.f, 0.f};
 
