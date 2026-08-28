@@ -1,3 +1,6 @@
+# 1.5.4
+FIXES: 
+- iOS crash since iOS playerObject setVisible hook is evil
 # 1.5.3
 FIXES: 
 - Hitbox positional issues (especially in wave)

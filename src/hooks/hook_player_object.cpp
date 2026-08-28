@@ -241,6 +241,8 @@ class $modify(MyPlayerObject, PlayerObject) {
         }
     }
 
+    #if !defined(GEODE_IS_IOS) && !defined(GEODE_IS_ANDROID)
+
     void setVisible(bool visible) {
 
         auto& G = Ghosts::I();
@@ -251,7 +253,7 @@ class $modify(MyPlayerObject, PlayerObject) {
         PlayerObject::setVisible(visible);
     }
 
-    
+    #endif
 
     //void flipGravity(bool p0, bool p1) {
         // log::info("[PlayerObject] flipGravity({}, {})", p0, p1);
