@@ -1192,16 +1192,20 @@ bool scanAPXFileCatalog(
                 APXAttemptDiskInfo entry{};
                 bool usedLegacy = false;
                 if (!buildCatalogEntryFromATT3_(
-                        buf.data(),
-                        buf.size(),
-                        static_cast<uint64_t>(chunkOffset),
-                        chunkSize,
-                        entry,
-                        &usedLegacy
-                    )) {
-                    log::warn("[SAVE FILE] failed scanning ATT3 chunk");
-                    return false;
-                }
+                    buf.data(),
+                    buf.size(),
+                    static_cast<uint64_t>(chunkOffset),
+                    chunkSize,
+                    entry,
+                    &usedLegacy
+                )) {
+                log::warn(
+                    "[SAVE FILE] skipping malformed ATT3 chunk offset={} size={}",
+                    static_cast<long long>(chunkOffset),
+                    chunkSize
+                );
+                continue;
+            }
 
                 out.loadedLegacy = out.loadedLegacy || usedLegacy;
                 out.maxSerialSeen = std::max(out.maxSerialSeen, static_cast<uint32_t>(entry.serial));

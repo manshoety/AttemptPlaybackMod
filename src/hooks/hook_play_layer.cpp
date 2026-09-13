@@ -38,9 +38,13 @@ class $modify(PLHook, PlayLayer) {
             // log::info("Attaching to level");
             int lvlId = level ? level->m_levelID : 0;
             G.prepareLevelPersistence(lvlId, this);
+
             G.m_levelIDOnAttach = lvlId;
+
             G.attach(this);
+
             createGhostTextLabel_();
+
             if (G.isRecording()) {
                 G.renumberCurrentAttemptIfFresh();
             }

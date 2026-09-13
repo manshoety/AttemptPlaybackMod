@@ -3328,7 +3328,12 @@ public:
             if (type == kChunk_ATT3) {
                 Attempt a{};
                 if (!readAPXAttemptCompact(in, sz, a)) {
-                    break;
+                    log::warn(
+                        "[APX load] skipping malformed ATT3 chunk size={} after {} successfully loaded attempts",
+                        sz,
+                        loaded
+                    );
+                    continue;
                 }
 
                 if (oldWavePointBitMeaning) {
@@ -3715,10 +3720,7 @@ public:
     }
 
     void attach(PlayLayer* pl) {
-        //log::info("[Ghosts] attach(entry)");
-
         clearPlayLayerGhostTextLabel();
-
         setdisablePlayerMove(false);
 
         onQuit();
@@ -3727,6 +3729,7 @@ public:
             a.g1 = nullptr;
             a.g2 = nullptr;
         }
+
         m_current.g1 = nullptr;
         m_current.g2 = nullptr;
         m_replayOwnerIndex = -1;
@@ -3735,23 +3738,29 @@ public:
         m_pl = pl;
         m_gl = GJBaseGameLayer::get();
 
-        m_isTwoPlayer = m_pl && m_pl->m_levelSettings && m_pl->m_levelSettings->m_twoPlayerMode;
-        // log::info("is two player mode: {}", m_isTwoPlayer);
+        m_isTwoPlayer =
+            m_pl &&
+            m_pl->m_levelSettings &&
+            m_pl->m_levelSettings->m_twoPlayerMode;
 
         m_ghostRoot = cocos2d::CCNode::create();
         m_ghostRoot->ignoreAnchorPointForPosition(true);
         m_ghostRoot->setPosition({0, 0});
-        
-        cocos2d::CCNode* objectLayer = (m_pl && m_pl->m_player1) 
-            ? m_pl->m_player1->getParent() : m_pl;
-        
+
+        cocos2d::CCNode* objectLayer =
+            (m_pl && m_pl->m_player1)
+                ? m_pl->m_player1->getParent()
+                : m_pl;
+
         if (objectLayer) {
             objectLayer->addChild(m_ghostRoot, 5);
         }
+
         ensureDeathMarkerLayer_();
         redrawDeathMarkers_();
-        
+
         m_ghostPool.initialize(pl, m_ghostRoot, 1);
+
         m_fmodEngine = FMODAudioEngine::sharedEngine();
 
         clearGhostBatches_();
@@ -3973,6 +3982,7 @@ public:
         }
 
         startNewAttempt();
+
         m_lastRecordedX = 0.f;
         updateGhostVisibility();
 
@@ -4049,6 +4059,15 @@ public:
         m_currentSessionTime = m_baseTime;
         m_prevSessionTime = m_baseTime;
         seekReplayCursorsToTimeExact_(*owner, m_currentSessionTime);
+
+        m_lastEmitIdx1 = (!owner->p1.empty() && m_replayIdx1 > 0)
+            ? m_replayIdx1 - 1
+            : kNoEmitIdx;
+        m_lastEmitIdx2 = (owner->hadDual && !owner->p2.empty() && m_replayIdx2 > 0)
+            ? m_replayIdx2 - 1
+            : kNoEmitIdx;
+        m_lastPoseIdx1 = m_lastEmitIdx1;
+        m_lastPoseIdx2 = m_lastEmitIdx2;
 
         const Frame& f1 = owner->p1[m_replayIdx1];
         if (!naturalPracticeStart) {
@@ -4357,6 +4376,7 @@ public:
     void onQuit() {
         m_is_quitting = true;
         g_disableUpdate = false;
+        m_justDied = false;
 
         clearReplayStartPosOverride_();
         clearPracticeReplaySessionSelection();
@@ -5501,15 +5521,33 @@ public:
     }
 
     void preUpdateP2() {
-        // if (!m_allowWorkThisTick || m_is_quitting || !m_pl) return;
         if (m_is_quitting || !m_pl || !m_pl->m_player2) return;
+
+        // during replay don't start p2 early (start time)
+        if (botActive && m_currentOwner && !m_currentOwner->p2.empty()) {
+            const uint32_t nowTQ = runtimeQuantTimeQ_(m_currentSessionTime);
+
+            const uint32_t firstP2TQ = m_currentOwner->p2.front().t.q;
+
+            if (nowTQ < firstP2TQ) {
+                m_prevHadP2 = false;
+                m_p2JustSpawned = false;
+                return;
+            }
+        }
+
         m_prevpx2 = m_px2;
+
         const float p2pos = m_pl->m_player2->getPositionX();
-        m_px2 = (p2pos != 0.f) ? p2pos : m_px;
+
+        m_px2 = (p2pos != 0.f)
+            ? p2pos
+            : m_px;
+
         if (!m_prevHadP2) m_p2JustSpawned = true;
+
         setFirstNonzeroPosP2();
-        // m_p2JustSpawned = (hasP2Now && !m_prevHadP2); Now set this in applyFrameToPlayer_Only_
-        // log::info("m_p2JustSpawned: {} p2pos: {}, newpos: {}", m_p2JustSpawned, p2pos, m_pl->m_player2->getPositionX());
+
         m_prevHadP2 = true;
         m_noP2Check = false;
     }
@@ -6008,7 +6046,7 @@ public:
             ++m_frameCounter; 
             return; 
         }
-
+                
         if (m_pendingPracticeStartPosInit) {
             if (!botActive || !m_pl->m_player1 || !m_replayStartPosObject) {
                 m_pendingPracticeStartPosInit = false;
@@ -8639,7 +8677,11 @@ private:
         settings->m_level = m_pl->m_level;
         settings->m_startMode = startModeForReplayFrame_(frame.mode);
         settings->m_startMini = static_cast<float>(frame.vehicleSize) < 0.9f;
-        settings->m_startDual = owner->hadDual;
+        const uint32_t startTQ = runtimeQuantTimeQ_(firstSegment.absStart());
+
+        const bool dualAtReplayStart = owner->hadDual && !owner->p2.empty() && owner->p2.front().t.q <= startTQ;
+
+        settings->m_startDual = dualAtReplayStart;
         settings->m_isFlipped = frame.upsideDown;
         settings->m_startsWithStartPos = true;
         settings->m_disableStartPos = false;
@@ -9140,7 +9182,9 @@ private:
             a.primedP1 = true;
         }
 
-        const bool p2HasStarted = a.hadDual && !a.p2.empty() &&
+        const bool p2HasStarted =
+            a.hadDual &&
+            !a.p2.empty() &&
             ghostTime >= static_cast<double>(a.p2.front().t) - 0.0001;
 
         if (!p2HasStarted) {
@@ -9517,16 +9561,16 @@ private:
         if (ownerChanged) {
             seekReplayCursorsToTimeExact_(*owner, sessionTime);
 
-            m_lastEmitIdx1 = kNoEmitIdx;
-            m_lastEmitIdx2 = kNoEmitIdx;
+            m_lastEmitIdx1 = (!owner->p1.empty() && m_replayIdx1 > 0)
+                     ? m_replayIdx1 - 1
+                     : kNoEmitIdx;
 
-            m_lastPoseIdx1 = (!owner->p1.empty() && m_replayIdx1 > 0)
-                    ? m_replayIdx1 - 1
-                    : kNoEmitIdx;
+            m_lastEmitIdx2 = (owner->hadDual && !owner->p2.empty() && m_replayIdx2 > 0)
+                     ? m_replayIdx2 - 1
+                     : kNoEmitIdx;
 
-            m_lastPoseIdx2 = (owner->hadDual && !owner->p2.empty() && m_replayIdx2 > 0)
-                    ? m_replayIdx2 - 1
-                    : kNoEmitIdx;
+            m_lastPoseIdx1 = m_lastEmitIdx1;
+            m_lastPoseIdx2 = m_lastEmitIdx2;
 
             m_explicitWavePointAddedPrevPoseP1 = false;
             m_explicitWavePointAddedPrevPoseP2 = false;
@@ -10779,6 +10823,9 @@ private:
         size_t& lastPoseIdx =
             isP1 ? m_lastPoseIdx1 : m_lastPoseIdx2;
 
+        size_t& lastEmitIdx =
+            isP1 ? m_lastEmitIdx1 : m_lastEmitIdx2;
+
         const size_t startIdx =
             std::min(replayIdx, v.size() - 1);
 
@@ -10793,17 +10840,18 @@ private:
             (isP1 || (!isP1 && m_isTwoPlayer)) &&
             m_allowSetPlayerClickState;
 
+
+        if (!isP1) {
+            const uint32_t nowTQ = runtimeQuantTimeQ_(m_currentSessionTime);
+            const uint32_t firstP2TQ = v.front().t.q;
+
+            // P2 does not exist in the replay yet
+            if (nowTQ < firstP2TQ) {
+                return;
+            }
+        }
+
         for (size_t poseI = startIdx; poseI <= endIdx; ++poseI) {
-            // Click state
-            constexpr size_t kClickLeadFrames = 1;
-            const size_t clickI = std::min(
-                v.size() - 1,
-                poseI + kClickLeadFrames
-            );
-
-            // log::info("poseI: {}, clickI: {}", poseI, clickI);
-
-            const Frame& F = v[clickI];
             const Frame& C = v[poseI];
 
             if (m_allowSetPlayerPos && m_setRealPlayerPosition) {
@@ -10879,9 +10927,7 @@ private:
                     p->flipGravity(a.upsideDown, true);
                 }
 
-                if (
-                    currentMode(p, m_pl->m_isPlatformer) != a.mode
-                ) {
+                if (currentMode(p, m_pl->m_isPlatformer) != a.mode) {
                     forceMode(
                         p,
                         a.mode,
@@ -11138,6 +11184,18 @@ private:
                     a.y
                 };
 
+                /*
+                log::info(
+                    "setpos P{} owner={} t={} idx={} pos=({}, {})",
+                    isP1 ? 1 : 2,
+                    m_currentOwner ? m_currentOwner->serial : -1,
+                    m_currentSessionTime,
+                    replayIdx,
+                    replayPosition.x,
+                    replayPosition.y
+                );*/
+                
+
                 p->setPosition(replayPosition);
                 p->m_position = replayPosition;
 
@@ -11180,8 +11238,34 @@ private:
                     m_p2JustSpawned = false;
                 }
             }
+        }
 
             if (setClicks && (isP1 || m_isTwoPlayer)) {
+                const size_t clickEnd = endIdx;
+
+                size_t clickStart = 0;
+                if (lastEmitIdx != kNoEmitIdx) {
+                    if (lastEmitIdx < clickEnd) {
+                        clickStart = lastEmitIdx + 1;
+                    }
+                    else if (lastEmitIdx == clickEnd) {
+                        clickStart = clickEnd + 1;
+                    }
+                    else {
+                        // Replay time moved backwards
+                        clickStart = clickEnd;
+                    }
+                }
+
+                constexpr size_t kClickLeadFrames = 1;
+
+                for (size_t i = clickStart; i <= clickEnd && i < v.size(); ++i) {
+                const size_t clickI = std::min(
+                    v.size() - 1,
+                    i + kClickLeadFrames
+                );
+
+                const Frame& F = v[clickI];
                 if (F.hold != botPrevHold) {
                     // best method but might not work due to Click Between Frames
                     m_pl->handleButton(
@@ -11191,13 +11275,11 @@ private:
                     );
 
                     // if didn't work
-                    if (F.hold != p1Hold) {
-                        if (F.hold) {
-                            p->pushButton(PlayerButton::Jump);
-                        }
-                        else {
-                            p->releaseButton(PlayerButton::Jump);
-                        }
+                    const bool actualHold = isP1 ? p1Hold : p2Hold;
+
+                    if (F.hold != actualHold) {
+                        if (F.hold) p->pushButton(PlayerButton::Jump);
+                        else p->releaseButton(PlayerButton::Jump);
                     }
 
                     botPrevHold = F.hold;
@@ -11210,13 +11292,11 @@ private:
                         /*isP1=*/isP1
                     );
 
-                    if (F.holdL != p1LHold) {
-                        if (F.holdL) {
-                            p->pushButton(PlayerButton::Left);
-                        }
-                        else {
-                            p->releaseButton(PlayerButton::Left);
-                        }
+                    const bool actualHoldL = isP1 ? p1LHold : p2LHold;
+
+                    if (F.holdL != actualHoldL) {
+                        if (F.holdL) p->pushButton(PlayerButton::Left);
+                        else p->releaseButton(PlayerButton::Left);
                     }
 
                     botPrevHoldL = F.holdL;
@@ -11229,18 +11309,17 @@ private:
                         /*isP1=*/isP1
                     );
 
-                    if (F.holdR != p1RHold) {
-                        if (F.holdR) {
-                            p->pushButton(PlayerButton::Right);
-                        }
-                        else {
-                            p->releaseButton(PlayerButton::Right);
-                        }
+                    const bool actualHoldR = isP1 ? p1RHold : p2RHold;
+
+                    if (F.holdR != actualHoldR) {
+                        if (F.holdR) p->pushButton(PlayerButton::Right);
+                        else p->releaseButton(PlayerButton::Right);
                     }
 
                     botPrevHoldR = F.holdR;
                 }
             }
+            lastEmitIdx = clickEnd;
         }
 
         lastPoseIdx = endIdx;

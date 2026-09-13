@@ -1,3 +1,7 @@
+# 1.5.5
+FIXSES:
+- Not recording sometimes
+- Practice mode playback camera bug when there's a dual
 # 1.5.4
 FIXES: 
 - iOS crash since iOS playerObject setVisible hook is evil
