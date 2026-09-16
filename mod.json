@@ -8,7 +8,7 @@
   },
   "id": "manshoety.attemptplayback",
   "name": "Attempt Playback",
-  "version": "v1.5.5",
+  "version": "v1.5.6",
   "developer": "manshoety",
   "description": "Allows you to see all past attempts as ghosts",
   "dependencies": {
@@ -55,8 +55,14 @@
       "type": "bool",
       "default": true
     },
+    "accurate-high-tps-replay": {
+      "name": "Accurate High TPS Replay",
+      "description": "Processes every recorded frame crossed during replay so rapid clicks are less likely to be skipped. May reduce playback performance, especially on high TPS recordings.",
+      "type": "bool",
+      "default": false
+    },
     "cbf-wave-fix": {
-      "name": "CBF wave fix",
+      "name": "CBF wave fix (Does Nothing)",
       "description": "NOT CURRENTLY ENABLED (this done nothing for now). Attempts to fix the buggy wave trail during playback of CBF recordings",
       "type": "bool",
       "default": false

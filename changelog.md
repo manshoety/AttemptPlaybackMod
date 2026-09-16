@@ -1,5 +1,7 @@
+# 1.5.6
+- High TPS replay precision is not the default to help performance
 # 1.5.5
-FIXSES:
+FIXES:
 - Not recording sometimes
 - Practice mode playback camera bug when there's a dual
 # 1.5.4

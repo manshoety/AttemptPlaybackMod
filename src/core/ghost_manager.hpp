@@ -3836,6 +3836,7 @@ public:
         }
 
         recordInPractice = getSettingBoolOrDefault_(mod, "record-in-practice", true);
+        m_accurateHighTPSReplay = getSettingBoolOrDefault_(mod, "accurate-high-tps-replay", false);
         // showWhilePlaying = getSettingBoolOrDefault_(mod, "show-while-playing", false);
         showWhilePlaying = false;
         // onlyBestGhost = getSettingBoolOrDefault_(mod, "only-best-ghost", false);
@@ -6731,6 +6732,7 @@ private:
     bool m_allowWorkThisTick = false;
     bool m_allowSetPlayerPos = false;
     bool m_allowSetPlayerClickState = false;
+    bool m_accurateHighTPSReplay = false;
     bool m_allowClearOldPlayerObjectsWhenMoreNeeded = false;
     size_t minKeepDead = 50;
     uint64_t m_tickId = 0;
@@ -11243,17 +11245,22 @@ private:
             if (setClicks && (isP1 || m_isTwoPlayer)) {
                 const size_t clickEnd = endIdx;
 
-                size_t clickStart = 0;
-                if (lastEmitIdx != kNoEmitIdx) {
-                    if (lastEmitIdx < clickEnd) {
-                        clickStart = lastEmitIdx + 1;
-                    }
-                    else if (lastEmitIdx == clickEnd) {
-                        clickStart = clickEnd + 1;
-                    }
-                    else {
-                        // Replay time moved backwards
-                        clickStart = clickEnd;
+                // Default mode
+                size_t clickStart = clickEnd;
+
+                if (m_accurateHighTPSReplay) {
+                    // Accurate mode
+                    if (lastEmitIdx != kNoEmitIdx) {
+                        if (lastEmitIdx < clickEnd) {
+                            clickStart = lastEmitIdx + 1;
+                        }
+                        else if (lastEmitIdx == clickEnd) {
+                            clickStart = clickEnd + 1;
+                        }
+                        else {
+                            // Replay time moved backwards
+                            clickStart = clickEnd;
+                        }
                     }
                 }
 
