@@ -1,3 +1,6 @@
+# 1.5.7
+FIXES:
+- Crash fixes
 # 1.5.6
 - High TPS replay precision is not the default to help performance
 # 1.5.5

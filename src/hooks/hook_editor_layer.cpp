@@ -11,12 +11,11 @@ class $modify(MyLevelEditorLayer, LevelEditorLayer) {
         auto& G = Ghosts::I();
 
         if (G.hasStoredPlayLayerAttachment()) {
-            G.clearPlayLayerGhostTextLabel();
             G.saveNewAttemptsForCurrentLevel();
+            G.abandonStoredPlayLayerAttachment();
             G.onQuit();
         }
         if (!LevelEditorLayer::init(level, noUI)) return false;
-        
         
         return true;
     }

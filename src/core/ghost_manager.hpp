@@ -2757,6 +2757,20 @@ public:
         return m_pl != nullptr;
     }
 
+    bool isStoredPlayLayer(PlayLayer* pl) const {
+        return pl && pl == m_pl;
+    }
+
+    void abandonStoredPlayLayerAttachment() {
+        clearPlayLayerGhostTextLabel();
+
+        m_pl = nullptr;
+        m_gl = nullptr;
+
+        m_ghostRoot = nullptr;
+        m_deathMarkerDrawNode = nullptr;
+    }
+
     bool isAttachedPlayLayer(PlayLayer* pl) const {
         if (!pl || pl != m_pl) return false;
         auto* active = GJBaseGameLayer::get();
@@ -3723,6 +3737,7 @@ public:
         clearPlayLayerGhostTextLabel();
         setdisablePlayerMove(false);
 
+        abandonStoredPlayLayerAttachment();
         onQuit();
 
         for (auto& a : attempts) {

@@ -34,13 +34,7 @@ class $modify(PLHook, PlayLayer) {
         auto& G = Ghosts::I();
         G.clearPlayLayerGhostTextLabel();
         G.updateModEnabled();
-        if (G.isModEnabled()) {
-            // log::info("Attaching to level");
-            int lvlId = level ? level->m_levelID : 0;
-            G.prepareLevelPersistence(lvlId, this);
-
-            G.m_levelIDOnAttach = lvlId;
-
+        if (G.isModEnabledForPlayLayer(this)) {
             G.attach(this);
 
             createGhostTextLabel_();
@@ -76,7 +70,7 @@ class $modify(PLHook, PlayLayer) {
     $override void onQuit() {
         auto& G = Ghosts::I();
 
-        if (G.isAttachedPlayLayer(this)) {
+        if (G.isStoredPlayLayer(this)) {
             G.clearPlayLayerGhostTextLabel();
             G.saveNewAttemptsForCurrentLevel();
             G.onQuit();
