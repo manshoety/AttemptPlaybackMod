@@ -1,35 +1,20 @@
-// playback_mod_menu_popup.cpp
 #include "playback_mod_menu_popup.hpp"
 
-#include <Geode/loader/Mod.hpp>
-#include <Geode/loader/Log.hpp>
-
-#include <Geode/ui/Layout.hpp>
-#include <Geode/ui/General.hpp>
-
-#include <Geode/binding/ButtonSprite.hpp>
-#include <Geode/binding/CCMenuItemSpriteExtra.hpp>
-
-#include <Geode/cocos/CCDirector.h>
-#include <Geode/cocos/menu_nodes/CCMenu.h>
-#include <Geode/cocos/sprite_nodes/CCSprite.h>
-#include <Geode/cocos/label_nodes/CCLabelBMFont.h>
-#include <Geode/cocos/extensions/GUI/CCControlExtension/CCScale9Sprite.h>
-
-#include <Geode/utils/file.hpp>
-#include <Geode/utils/string.hpp>
-#include <Geode/utils/general.hpp>
-
-#include <Geode/ui/BasedButtonSprite.hpp>
+#include <Geode/Geode.hpp>
 #include <UIBuilder.hpp>
-#include "ghost_distance_popup.hpp"
+#include "animated_switch.hpp"
+#include "ghost_preview_stuff.hpp"
+#include "inset_world_view.hpp"
+#include "../core/random_color_ids.hpp"
 #include "color_selector_popup.hpp"
 #include "ghost_settings_popup.hpp"
+#include "tabbed_settings_popup.hpp"
 #include "attempt_manager_popup.hpp"
 #include "../core/types.hpp"
 #include "../utils/ui_utils.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <cmath>
 #include <sstream>
 #include <vector>
@@ -142,7 +127,7 @@ bool PlaybackModMenu::init(float width, float height) {
         m_opacitySlider->setValue(v / 255.f);
     }
     if (m_opacityLabel) {
-        m_opacityLabel->setString(("Ghost Opacity (" + std::to_string((int)(v/2.55)) + ")").c_str());
+        m_opacityLabel->setString(("Ghost Opacity (" + std::to_string((int)(v/2.55)) + "%)").c_str());
     }
     Ghosts::I().setOpacityVar((GLubyte)v);
 
@@ -167,325 +152,389 @@ void PlaybackModMenu::syncUIFromRuntime() {
     v = std::clamp(v, 0, 255);
 
     if (m_opacitySlider) m_opacitySlider->setValue(v / 255.f);
-    if (m_opacityLabel)  m_opacityLabel->setString(("Ghost Opacity (" + std::to_string((int)(v/2.55)) + ")").c_str());
+    if (m_opacityLabel)  m_opacityLabel->setString(("Ghost Opacity (" + std::to_string((int)(v/2.55)) + "%)").c_str());
 
+    if (m_distanceSlider) {
+        m_distanceSlider->setValue(std::clamp(Ghosts::I().getGhostDistance() / 174.f, 0.f, 1.f));
+    }
+    refreshPreview_();
     cacheReplayButtons_();
     refreshReplayButtons_();
 }
 
 CCMenuItemToggler* mkToggler(CCObject* target, SEL_MenuHandler sel) {
-    auto on  = CCSprite::createWithSpriteFrameName("GJ_checkOn_001.png");
-    auto off = CCSprite::createWithSpriteFrameName("GJ_checkOff_001.png");
-    auto toggler = CCMenuItemToggler::create(off, on, target, sel);
-    toggler->setSizeMult(kPopupButtonSizeMult);
+    auto* toggler = attemptplayback::ui::AnimatedSwitch::create(target, sel);
+    if (toggler) toggler->setSizeMult(kPopupButtonSizeMult);
     return toggler;
 }
 
 void PlaybackModMenu::buildTemplateUI_() {
     m_mainLayer->setLayout(AnchorLayout::create());
 
-    CCSprite* gradient = createFullscreenGradient_();
+    auto* root = CCNode::create();
+    root->setPosition(m_mainLayer->getContentSize() * 0.5f);
+    m_mainLayer->addChild(root);
 
-    Build<CCMenu>::create()
-        .contentSize(0.f, 0.f)
-        .layoutOpts(Build<AnchorLayoutOptions>::create().anchor(Anchor::Center))
-        .children(
-            Build<CCSprite>(gradient)
-                .color(100, 86, 255)
-                .anchorPoint(0.5f, 0.5f)
-                .zOrder(-1)
-                .scaleX(38.f).scaleY(2.f),
+    auto* background = createFullscreenGradient_();
+    const auto win = CCDirector::sharedDirector()->getWinSize();
+    const float uiScale = std::min({1.f, (win.width - 22.f) / kPopupW, (win.height - 18.f) / kPopupH});
+    if (uiScale > 0.f) {
+        background->setScaleX((win.width + 30.f) / (std::max(1.f, background->getContentSize().width) * uiScale));
+        background->setScaleY((win.height + 30.f) / (std::max(1.f, background->getContentSize().height) * uiScale));
+    }
+    background->setColor({40, 84, 220});
+    background->setPosition({0.f, 0.f});
+    root->addChild(background, -20);
 
-            Build<CCLabelBMFont>::create("Attempt Playback Mod", "bigFont.fnt")
-                .pos(0.f, 140.f)
-                .anchorPoint(0.5f, 0.5f),
+    auto addLabel = [root](const char* text, float x, float y, float scale,
+                           ccColor3B color = {255, 255, 255}) {
+        auto* label = CCLabelBMFont::create(text, "bigFont.fnt");
+        label->setPosition({x, y});
+        label->setScale(scale);
+        label->setColor(color);
+        root->addChild(label);
+        return label;
+    };
 
-            Build<CCMenu>::create()
-                .id("playbackButtonsRow"_spr)
-                .pos(0.f, 94.f)
-                .contentSize(485.f, 40.f)
-                .layout(Build<AxisLayout>::create()
-                    .axis(Axis::Row)
-                    .gap(54.f)
-                    .autoScale(false)
-                    .autoGrow(0.f))
-                .children(
-                    createTextButton_(
-                    this,
-                    /*spriteFrame*/"GJ_button_01.png",
-                    /*text*/"Replay Best",
-                    /*callback*/menu_selector(PlaybackModMenu::onReplayBest),
-                    /*node_id*/"replay-best-button"_spr,
-                    /*pos*/{0.f, 0.f},
-                    /*width*/190.f,
-                    /*height*/40.f,
-                    /*spriteScale*/1.f,
-                    /*labelScale*/0.8f,
-                    /*sizeMult*/kPopupBigButtonSizeMult
-                    ),
+    auto addPanel = [root](float x, float y, float w, float h) {
+        auto* bg = CCScale9Sprite::create("square02b_001.png");
+        if (!bg) return;
+        bg->setContentSize({w, h});
+        bg->setColor({136, 70, 39});
+        bg->setOpacity(255);
+        bg->setPosition({x, y});
+        root->addChild(bg, -1);
+    };
 
-                    createTextButton_(
-                    this,
-                    /*spriteFrame*/"GJ_button_01.png",
-                    /*text*/"Replay Practice",
-                    /*callback*/menu_selector(PlaybackModMenu::onReplayPractice),
-                    /*node_id*/"replay-practice-button"_spr,
-                    /*pos*/{0.f, 0.f},
-                    /*width*/241.f,
-                    /*height*/40.f,
-                    /*spriteScale*/1.f,
-                    /*labelScale*/0.8f,
-                    /*sizeMult*/kPopupBigButtonSizeMult
-                    ))
-                .updateLayout()
-                .ignoreAnchorPointForPos(false)
-                .anchorPoint(0.5f, 0.5f),
-            
-            createTextButton_(
-                    this,
-                    /*spriteFrame*/"GJ_button_01.png",
-                    /*text*/"Stop Replay",
-                    /*callback*/menu_selector(PlaybackModMenu::onStopReplay),
-                    /*node_id*/"stop-replay-button"_spr,
-                    /*pos*/{0.f, 94.f},
-                    /*width*/485.f,
-                    /*height*/40.f,
-                    /*spriteScale*/1.f,
-                    /*labelScale*/0.8f,
-                    /*sizeMult*/kPopupBigButtonSizeMult
-                    ).visible(false),
+    addLabel("Attempt Playback Mod", 0.f, 140.f, 1.f);
+    auto* version = addLabel(
+        fmt::format("Beta v{}", Mod::get()->getVersion().toNonVString()).c_str(),
+        195.f, 136.f, 0.475f
+    );
+    version->setAnchorPoint({0.f, 0.5f});
 
-            Build<CCLabelBMFont>::create("Ghost Opacity (100)", "bigFont.fnt")
-                        .scale(0.5f)
-                        .pos(125.f, 60.f)
-                        .store(m_opacityLabel),
+    auto* menu = CCMenu::create();
+    menu->setPosition({0.f, 0.f});
+    root->addChild(menu, 5);
 
-            Build<Slider>::create(this, menu_selector(PlaybackModMenu::onSliderInt), 0.9f)
-                        .id("ghost-opacity"_spr)
-                        .scale(0.78f)
-                        .pos(125.f, 40.f)
-                        .anchorPoint(0.f, 0.f)
-                        .store(m_opacitySlider),
+    auto addButton = [this, menu](const char* text, SEL_MenuHandler callback,
+                                  const char* id, float x, float y, float w,
+                                  float h, const char* texture, float labelScale, float textOffsetX=0.f) {
+        auto* button = createTextButton_(
+            this, texture, text, callback, id, {x, y}, w, h,
+            1.f, labelScale, kPopupBigButtonSizeMult, textOffsetX
+        ).collect();
+        menu->addChild(button);
+        return button;
+    };
 
-            Build<CCMenu>::create()
-                .id("togglesColumn"_spr)
-                .pos(-240.f, 63.f)
-                .scale(0.75f)
-                .contentSize(35.f, 74.f)
-                .layout(Build<AxisLayout>::create()
-                    .axis(Axis::Column)
-                    .reverse(true)
-                    .autoScale(false)
-                    .autoGrow(0.f))
-                .children(
-                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleRandomIcons)))
-                        .id("RandomIconsToggle"_spr)
-                        .store(m_tgRandomIcons)
-                        .scale(1.f)
-                        .children(
-                            Build<CCLabelBMFont>::create("Random Icons", "bigFont.fnt")
-                                .pos(38.f, 5.f)
-                                .anchorPoint(0.f, 0.f)
-                                .scale(0.725f)
-                        ),
-                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleGhostsExplodeSFX)))
-                        .id("GhostsExplodeSFXToggle"_spr)
-                        .store(m_tgGhostsExplodeSFX)
-                        .scale(1.f)
-                        .children(
-                            Build<CCLabelBMFont>::create("Ghost Death Sound", "bigFont.fnt")
-                                .pos(38.f, 5.f)
-                                .anchorPoint(0.f, 0.f)
-                                .scale(0.725f)
-                        ),
-                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleGhostsExplode)))
-                        .id("GhostsExplodeToggle"_spr)
-                        .store(m_tgGhostsExplode)
-                        .scale(1.f)
-                        .children(
-                            Build<CCLabelBMFont>::create("Ghosts Explode", "bigFont.fnt")
-                                .pos(38.f, 5.f)
-                                .anchorPoint(0.f, 0.f)
-                                .scale(0.725f)
-                        ),
-                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleBlockRecording)))
-                        .id("BlockRecordingToggle"_spr)
-                        .store(m_tgBlockRecording)
-                        .scale(1.f)
-                        .children(
-                            Build<CCLabelBMFont>::create("Disable Recording", "bigFont.fnt")
-                                .pos(38.f, 5.f)
-                                .anchorPoint(0.f, 0.f)
-                                .scale(0.725f)
-                        ),
-                    Build<CCMenuItemToggler>(mkToggler(this, menu_selector(PlaybackModMenu::onToggleBlockRecordingOnNoclip)))
-                        .id("BlockRecordingOnNoclipToggle"_spr)
-                        .store(m_tgBlockRecordingOnNoclip)
-                        .scale(1.f)
-                        .children(
-                            Build<CCLabelBMFont>::create("Don't record Noclip attempts", "bigFont.fnt")
-                                .pos(38.f, 5.f)
-                                .anchorPoint(0.f, 0.f)
-                                .scale(0.725f)
-                        )
-                    
-                    )
-                .updateLayout()
-                .ignoreAnchorPointForPos(false)
-                .anchorPoint(0.f, 1.f),
+    auto* replayMenu = CCMenu::create();
+    replayMenu->setID("playbackButtonsRow"_spr);
+    replayMenu->setPosition({0.f, 0.f});
+    root->addChild(replayMenu, 6);
 
-                
+    // Replay Best
+    auto* replayBestButton = createTextButton_(
+        this,
+        "GJ_button_01.png",
+        "Replay Best",
+        menu_selector(PlaybackModMenu::onReplayBest),
+        "replay-best-button"_spr,
+        {-141.f, 83.f},
+        252.f,
+        55.f,
+        1.f,
+        0.69f,
+        kPopupBigButtonSizeMult
+    ).collect();
 
-            Build<CCLabelBMFont>::create("Mod by manshoety", "bigFont.fnt")
-                .pos(-275.f, -150.f)
-                .anchorPoint(0.f, 0.f)
-                .scale(0.4f),
+    replayMenu->addChild(replayBestButton);
 
-            Build<CCLabelBMFont>::create(fmt::format("Beta {}", geode::Mod::get()->getVersion().toNonVString()).c_str(),"bigFont.fnt")
-                .pos(195.f, 136.f)
-                .anchorPoint(0.f, 0.5f)
-                .scale(0.475f),
+    if (auto* frame = CCSpriteFrameCache::sharedSpriteFrameCache()->spriteFrameByName("GJ_featuredIcon_001.png")) {
+        auto* icon = CCSprite::createWithSpriteFrame(frame);
+        icon->setPosition({29.f, 27.5f});
+        icon->setScale(std::min(1.30f, 34.f / std::max(1.f, icon->getContentSize().height)));
 
-            Build<CCMenu>::create()
-                .id("MoreOptionsColumn"_spr)
-                .pos(168.f, -149.f)
-                .contentSize(234.5f, 146.9187f)
-                .scale(0.8f)
-                .layout(Build<AxisLayout>::create()
-                    .axis(Axis::Column)
-                    .reverse(true)
-                    .autoScale(false)
-                    .autoGrow(0.f))
-                .children(
-                    Build<CCLabelBMFont>::create("More Options", "bigFont.fnt"),
+        if (auto* visual = replayBestButton->getNormalImage()) {
+            visual->addChild(icon, 2);
+            if (auto* label = findLabelRecursive(visual)) {
+                label->setPositionX(label->getPositionX() + 15.f);
+            }
+        }
+    }
 
-                    Build<EditorButtonSprite>::create(
-                        Build<CCSprite>::createSpriteName("geode.loader/update.png"),
-                        EditorBaseColor::LightBlue,
-                        EditorBaseSize::Normal
-                    )
-                        .intoMenuItem(this, menu_selector(PlaybackModMenu::onCycleGhostColors))
-                        .ignoreAnchorPointForPos(false)
-                        .anchorPoint(0.5f, 0.5f)
-                        .scaleMult(kPopupButtonSizeMult)
-                        .layoutOpts(Build<AxisLayoutOptions>::create()
-                            .crossAlign(AxisAlignment::Start)
-                        )
-                        .id("ColorModeButton"_spr)
-                        .children(
-                            Build<CCLabelBMFont>::create("Color Mode: Player", "bigFont.fnt")
-                                .alignment(kCCTextAlignmentCenter)
-                                .pos(35.f, 17.f)
-                                .anchorPoint(0.f, 0.5f)
-                                .scale(0.625f)
-                                .store(m_colorModeLabel)
-                        ),
-                    Build<EditorButtonSprite>::create(
-                        Build<CCSprite>::createSpriteName("GJ_colorBtn_001.png"),
-                        EditorBaseColor::LightBlue,
-                        EditorBaseSize::Normal
-                    )
-                        .intoMenuItem(this, menu_selector(PlaybackModMenu::onOpenGhostSettings))
-                        .ignoreAnchorPointForPos(false)
-                        .anchorPoint(0.5f, 0.5f)
-                        .scaleMult(kPopupButtonSizeMult)
-                        .layoutOpts(Build<AxisLayoutOptions>::create()
-                            .crossAlign(AxisAlignment::Start)
-                        )
-                        .id("GhostSettingsButton"_spr)
-                        .children(
-                            Build<CCLabelBMFont>::create("Ghost Settings", "bigFont.fnt")
-                                .alignment(kCCTextAlignmentCenter)
-                                .pos(35.f, 17.f)
-                                .anchorPoint(0.f, 0.5f)
-                                .scale(0.625f)
-                        ),
+    // Replay Practice
+    auto* replayPracticeButton = createTextButton_(
+        this,
+        "GJ_button_02.png",
+        "Replay Practice",
+        menu_selector(PlaybackModMenu::onReplayPractice),
+        "replay-practice-button"_spr,
+        {-141.f, 21.f},
+        252.f,
+        55.f,
+        1.f,
+        0.65f,
+        kPopupBigButtonSizeMult
+    ).collect();
 
-                    Build<EditorButtonSprite>::create(
-                        Build<CCSprite>::createSpriteName("geode.loader/settings.png"),
-                        EditorBaseColor::LightBlue,
-                        EditorBaseSize::Normal
-                    )
-                        .intoMenuItem(this, menu_selector(PlaybackModMenu::onOpenPlaybackSettings))
-                        .ignoreAnchorPointForPos(false)
-                        .anchorPoint(0.5f, 0.5f)
-                        .scaleMult(kPopupButtonSizeMult)
-                        .layoutOpts(Build<AxisLayoutOptions>::create()
-                            .crossAlign(AxisAlignment::Start)
-                        )
-                        .id("PlaybackSettingsButton"_spr)
-                        .children(
-                            Build<CCLabelBMFont>::create("Playback Settings", "bigFont.fnt")
-                                .alignment(kCCTextAlignmentCenter)
-                                .pos(35.f, 17.f)
-                                .anchorPoint(0.f, 0.5f)
-                                .scale(0.625f)
-                        ),
+    replayMenu->addChild(replayPracticeButton);
 
-                    Build<CCSprite>::createSpriteName("geode.loader/tag-paid.png")
-                        .scale(0.775f)
-                        .intoMenuItem(this, menu_selector(PlaybackModMenu::onFreeRobux))
-                        .ignoreAnchorPointForPos(false)
-                        .anchorPoint(0.5f, 0.5f)
-                        .scaleMult(kPopupButtonSizeMult)
-                        .pos(-100.f, 0)
-                        .layoutOpts(Build<AxisLayoutOptions>::create()
-                            .crossAlign(AxisAlignment::Start)
-                        )
-                        .id("FreeRobuxButton"_spr)
-                        .children(
-                            Build<CCLabelBMFont>::create("Free Robux", "bigFont.fnt")
-                                .alignment(kCCTextAlignmentCenter)
-                                .pos(35.f, 17.f)
-                                .anchorPoint(0.f, 0.5f)
-                                .scale(0.625f)
-                        ),
-                        
-                    Build<CircleButtonSprite>::create(Build<CCSprite>::createSpriteName("edit_delBtn_001.png"), CircleBaseColor::Gray, CircleBaseSize::Small)
-                        .scale(0.775f)
-                        .intoMenuItem(this, menu_selector(PlaybackModMenu::onOpenAttemptManager))
-                        .ignoreAnchorPointForPos(false)
-                        .anchorPoint(0.5f, 0.5f)
-                        .scaleMult(kPopupButtonSizeMult)
-                        .pos(-100.f, 0)
-                        .layoutOpts(Build<AxisLayoutOptions>::create()
-                            .crossAlign(AxisAlignment::Start)
-                        )
-                        .id("DeleteSaveFileButton"_spr)
-                        .children(
-                            Build<CCLabelBMFont>::create("Manage Attempts", "bigFont.fnt")
-                                .alignment(kCCTextAlignmentCenter)
-                                .pos(35.f, 17.f)
-                                .anchorPoint(0.f, 0.5f)
-                                .scale(0.625f)
-                        ))
-                .updateLayout()
-                .ignoreAnchorPointForPos(false)
-                .anchorPoint(0.5f, 0.f),
+    if (auto* frame = CCSpriteFrameCache::sharedSpriteFrameCache()->spriteFrameByName("checkpoint_01_001.png")) {
+        auto* icon = CCSprite::createWithSpriteFrame(frame);
+        icon->setPosition({17.f, 27.5f});
+        icon->setScale(std::min(1.30f, 34.f / std::max(1.f, icon->getContentSize().height)));
 
-            Build(CircleButtonSprite::createWithSpriteFrameName(
-                "geode.loader/close.png",
-                0.85f,
-                CircleBaseColor::Green
-            ))
-                .intoMenuItem(this, menu_selector(PlaybackModMenu::onExitButton))
-                .ignoreAnchorPointForPos(false)
-                .anchorPoint(0.f, 1.f)
-                .scaleMult(0.8)
-                .id("ExitButton"_spr)
-                .pos(-283.f, 158.f)
-                .scale(0.75f)
-        )
-        .updateLayout()
-        .ignoreAnchorPointForPos(false)
-        .anchorPoint(0.5f, 0.5f)
-        .parentAtPos(m_mainLayer, Anchor::Center)
-        .collect();
+        if (auto* visual = replayPracticeButton->getNormalImage()) {
+            visual->addChild(icon, 2);
+            if (auto* label = findLabelRecursive(visual)) {
+                label->setPositionX(label->getPositionX() + 15.f);
+            }
+        }
+    }
 
-        scaleUIForThatOneTabletUser(kPopupW, kPopupH);
+    auto* stop = addButton(
+        "Stop Replay", menu_selector(PlaybackModMenu::onStopReplay),
+        "stop-replay-button"_spr, -141.f, 52.f, 252.f, 116.f,
+        "GJ_button_06.png", 0.69f
+    );
+    stop->setVisible(false);
 
-        cacheReplayButtons_();
-        refreshReplayButtons_();
+    addPanel(-141.f, -69.f, 255.f, 104.f);
+    addPanel(138.f, -2.5f, 268.f, 237.f);
+
+    auto addControlRow = [root](float x, float y, float w, float h) {
+        auto* band = CCScale9Sprite::create("square02b_001.png");
+        if (!band) return;
+        band->setContentSize({w, h});
+        band->setScaleY(0.5f);
+        band->setColor({87, 43, 29});
+        band->setOpacity(115);
+        band->setPosition({x, y});
+        root->addChild(band, 0);
+    };
+    addControlRow(-141.f, -60.f, 240.f, 55.f);
+    addControlRow(-141.f, -92.f, 240.f, 55.f);
+    addControlRow(138.f, -48.f, 252.f, 280.f);
+    addLabel("Recording", -141.f, -30.f, 0.52f, {255, 255, 255});
+    addLabel("Ghost Preview", 138.f, 101.f, 0.53f, {255, 255, 255});
+
+    auto addToggle = [this, menu, root](CCMenuItemToggler*& field,
+                                        SEL_MenuHandler callback,
+                                        const char* id, const char* text,
+                                        float x, float y, float labelScale) {
+        field = attemptplayback::ui::AnimatedSwitch::create(this, callback);
+        field->setID(id);
+        field->setPosition({x, y});
+        menu->addChild(field);
+
+        auto* label = CCLabelBMFont::create(text, "bigFont.fnt");
+        label->setAnchorPoint({0.f, 0.5f});
+        // if on left side of screen: -253, if right: 18
+        label->setPosition({x < 0.f ? -253.f : 18.f, y});
+        label->setScale(labelScale);
+        root->addChild(label);
+    };
+
+    addToggle(m_tgBlockRecording,
+        menu_selector(PlaybackModMenu::onToggleBlockRecording),
+        "BlockRecordingToggle"_spr, "Recording", -44.f, -60.f, 0.45f);
+    addToggle(m_tgBlockRecordingOnNoclip,
+        menu_selector(PlaybackModMenu::onToggleBlockRecordingOnNoclip),
+        "BlockRecordingOnNoclipToggle"_spr, "Record Noclip Attempts", -44.f, -92.f, 0.45f);
+
+    auto* previewBorder = CCScale9Sprite::create("square02b_001.png");
+    if (previewBorder) {
+        previewBorder->setContentSize({257.f, 66.f});
+        previewBorder->setPosition({138.f, 59.f});
+        previewBorder->setColor({63, 43, 32});
+        previewBorder->setOpacity(245);
+        root->addChild(previewBorder, 0);
+    }
+    auto* preview = CCScale9Sprite::create("square02b_001.png");
+    if (preview) {
+        preview->setContentSize({244.f, 54.f});
+        preview->setPosition({138.f, 59.f});
+        preview->setColor({20, 63, 155});
+        preview->setOpacity(255);
+        root->addChild(preview);
+
+        // Ghost preview shenanigans
+        auto inset = attemptplayback::ui::createInsetWorldView({244.f, 54.f});
+        preview->addChild(inset.root, 1);
+        m_previewWorld = inset.world;
+        m_previewActors = inset.actors;
+        m_previewWorld->setContentSize({900.f, 68.f});
+        m_previewActors->setContentSize({900.f, 68.f});
+
+        attemptplayback::ui::addGDPreviewBackground(inset.backupGround, 244.f, 54.f);
+        attemptplayback::ui::addGDPreviewGround(m_previewWorld, 900.f);
+        auto* belowGround = CCLayerColor::create(ccc4(0, 0, 0, 255), 244.f, 15.f);
+        if (belowGround) inset.backupGround->addChild(belowGround, -1);
+
+        auto* gm = GameManager::sharedState();
+        const int icon = gm ? gm->getPlayerFrame() : 1;
+        m_previewBehind = SimplePlayer::create(icon);
+        m_previewAhead = SimplePlayer::create(icon);
+        m_previewPlayer = SimplePlayer::create(icon);
+
+        for (auto* player : {m_previewBehind, m_previewAhead, m_previewPlayer}) {
+            if (!player) continue;
+            player->setScale(1.f);
+            m_previewActors->addChild(player, 3);
+        }
+    }
+
+    // Color mode for ghost preview
+    m_colorModeLabel = addLabel("Color Mode: Player", 104.f, 82.f, 0.27f);
+    auto* colorModeNext = addButton(
+        "Next", menu_selector(PlaybackModMenu::onCycleGhostColors),
+        "ghost-color-mode-main"_spr, 227.f, 82.f, 60.f, 18.f,
+        "GJ_button_04.png", 0.31f
+    );
+    colorModeNext->setSizeMult(1.05f);
+
+    // Opacity and Distance
+    m_opacityLabel = addLabel("Ghost Opacity (100%)", 18.f, 10.f, 0.45f);
+    m_opacityLabel->setAnchorPoint({0.0f, 0.5f});
+    m_opacitySlider = Slider::create(this, menu_selector(PlaybackModMenu::onSliderInt), 0.82f);
+    m_opacitySlider->setID("ghost-opacity"_spr);
+    attemptplayback::ui::placeSlider(m_opacitySlider, root, 100.f, -8, .95f);
+
+    m_distanceLabel = addLabel("Ghost Distance (45px)", 18.f, -25, 0.45f);
+    m_distanceLabel->setAnchorPoint({0.0f, 0.5f});
+    m_distanceSlider = Slider::create(this, menu_selector(PlaybackModMenu::onDistanceSlider), 0.82f);
+    m_distanceSlider->setID("ghost-distance-main"_spr);
+    attemptplayback::ui::placeSlider(m_distanceSlider, root, 100.f, -43, .95f);
+    m_distanceSlider->setValue(std::clamp(Ghosts::I().getGhostDistance() / 174.f, 0.f, 1.f));
+
+    addToggle(m_tgRandomIcons,
+        menu_selector(PlaybackModMenu::onToggleRandomIcons),
+        "RandomIconsToggle"_spr, "Random Icons", 237.f, -67, 0.45f);
+    addToggle(m_tgGhostsExplodeSFX,
+        menu_selector(PlaybackModMenu::onToggleGhostsExplodeSFX),
+        "GhostsExplodeSFXToggle"_spr, "Ghost Death Sound", 237.f, -87, 0.45f);
+    addToggle(m_tgGhostsExplode,
+        menu_selector(PlaybackModMenu::onToggleGhostsExplode),
+        "GhostsExplodeToggle"_spr, "Ghosts Explode", 237.f, -107, 0.45f);
+
+    auto* ghostButton = addButton("Ghost Appearance",
+        menu_selector(PlaybackModMenu::onOpenGhostSettings),
+        "GhostSettingsButton"_spr, -186.f, -147.f, 165.f, 29.f,
+        "GJ_button_02.png", 0.4f, 7.f);
+    auto* playbackButton = addButton("Playback Settings",
+        menu_selector(PlaybackModMenu::onOpenPlaybackSettings),
+        "PlaybackSettingsButton"_spr, 0.f, -147.f, 165.f, 29.f,
+        "GJ_button_02.png", 0.4f, 7.f);
+    if (auto* gm = GameManager::sharedState()) {
+        if (auto* icon = SimplePlayer::create(gm->getPlayerFrame())) {
+            icon->setScale(0.5f);
+            icon->setPosition({14.f, 15.f});
+            if (auto* visual = ghostButton->getNormalImage()) {
+                visual->addChild(icon, 3);
+            }
+        }
+    }
+    if (auto* icon = CCSprite::createWithSpriteFrameName("GJ_optionsBtn_001.png")) {
+        icon->setScale(0.35f);
+        icon->setPosition({14, 15});
+        if (auto* visual = playbackButton->getNormalImage()) {
+            visual->addChild(icon, 3);
+        }
+    }
+    auto* manageButton = addButton("Manage Attempts",
+        menu_selector(PlaybackModMenu::onOpenAttemptManager),
+        "DeleteSaveFileButton"_spr, 186.f, -147.f, 165.f, 29.f,
+        "GJ_button_01.png", 0.4f);
+    CCSprite* manageIcon = nullptr;
+    auto const resourceDir = Mod::get()->getResourcesDir();
+    auto const manageIconPath = resourceDir / "resources" / "ui" / "menu.png";
+    {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(manageIconPath, ec)) {
+            manageIcon = CCSprite::create(manageIconPath.string().c_str());
+        }
+    }
+    if (manageIcon) {
+        manageIcon->setRotation(-90.f);
+        manageIcon->setScale(std::min(0.28f, 16.f / std::max(1.f, manageIcon->getContentSize().height)));
+        manageIcon->setPosition({17.f, 14.5f});
+        if (auto* visual = manageButton->getNormalImage()) visual->addChild(manageIcon, 3);
+    }
+
+    // I will save you free robux button
+
+    auto* close = CircleButtonSprite::createWithSpriteFrameName(
+        "geode.loader/close.png", 0.85f, CircleBaseColor::Green
+    );
+    auto* closeButton = CCMenuItemSpriteExtra::create(
+        close, this, menu_selector(PlaybackModMenu::onExitButton)
+    );
+    closeButton->setID("ExitButton"_spr);
+    // Restore the original anchor/placement from the old menu layout.
+    closeButton->ignoreAnchorPointForPosition(false);
+    closeButton->setAnchorPoint({0.f, 1.f});
+    closeButton->setPosition({-283.f, 158.f});
+    closeButton->setScale(0.75f);
+    menu->addChild(closeButton);
+
+    scaleUIForThatOneTabletUser(kPopupW, kPopupH);
+    refreshPreview_();
+    cacheReplayButtons_();
+    refreshReplayButtons_();
+}
+
+void PlaybackModMenu::refreshPreview_() {
+    const int opacity = std::clamp(
+        Mod::get()->hasSavedValue("ghost-opacity")
+            ? static_cast<int>(Mod::get()->getSavedValue<int64_t>("ghost-opacity"))
+            : 255,
+        0, 255
+    );
+    const int distancePx = Ghosts::I().getGhostDistance();
+    if (m_distanceSlider) {
+        const float target = std::clamp(distancePx / 174.f, 0.f, 1.f);
+        if (std::fabs(m_distanceSlider->getValue() - target) > 0.009f) {
+            m_distanceSlider->setValue(target);
+        }
+    }
+    if (m_distanceLabel && m_lastPreviewDistance != distancePx) {
+        m_distanceLabel->setString(fmt::format("Ghost Distance ({}px)", distancePx).c_str());
+        m_lastPreviewDistance = distancePx;
+    }
+    if (m_opacityLabel && m_lastPreviewOpacity != opacity) {
+        const int alpha = static_cast<int>(std::lround(opacity * 100.f / 255.f));
+        m_opacityLabel->setString(fmt::format("Ghost Opacity ({}%)", alpha).c_str());
+        m_lastPreviewOpacity = opacity;
+    }
+
+    auto* gm = GameManager::sharedState();
+    if (!gm || !m_previewPlayer) return;
+
+    attemptplayback::ui::updateGhostPreviewAppearance(
+        m_previewPlayer, m_previewBehind, m_previewAhead, m_previewAppearance, opacity
+    );
+
+    // The gameplay offset window: -100 behind, +174 ahead
+    attemptplayback::ui::positionGhostsInInset(
+        m_previewWorld, m_previewPlayer, m_previewBehind, m_previewAhead,
+        {244.f, 54.f}, 94.f, static_cast<float>(distancePx));
+    if (m_previewWorld && m_previewActors) {
+        // Copy camera transform
+        // Position fitting keeps bounds inside viewport
+        m_previewActors->setScale(m_previewWorld->getScale());
+        m_previewActors->setPosition(m_previewWorld->getPosition());
+    }
+}
+
+void PlaybackModMenu::onDistanceSlider(CCObject*) {
+    if (!m_distanceSlider) return;
+    const int px = static_cast<int>(std::lround(
+        std::clamp(m_distanceSlider->getValue(), 0.f, 1.f) * 174.f
+    ));
+    Ghosts::I().setGhostDistance(px);
+    Mod::get()->setSavedValue("ghost-distance", static_cast<int64_t>(px));
+    refreshPreview_();
 }
 
 void PlaybackModMenu::onOpenGhostSettings(CCObject*) {
@@ -498,9 +547,12 @@ void PlaybackModMenu::onOpenGhostSettings(CCObject*) {
 void PlaybackModMenu::scaleUIForThatOneTabletUser(float designWidth, float designHeight) {
     if (!m_mainLayer) return;
 
-    const auto size = fitPopupToWindow_(designWidth, designHeight);
-    const float scale = computeFitScale_(size.width, size.height, designWidth, designHeight);
-
+    const auto win = CCDirector::sharedDirector()->getWinSize();
+    const float scale = std::min({
+        1.f,
+        std::max(0.01f, win.width - 22.f) / designWidth,
+        std::max(0.01f, win.height - 18.f) / designHeight
+    });
     m_mainLayer->setScale(scale);
 }
 
@@ -584,6 +636,7 @@ void PlaybackModMenu::onStopReplay(CCObject*) {
 }
 
 void PlaybackModMenu::update(float dt) {
+    refreshPreview_();
     if (m_suppressReplayPollFrames > 0) {
         --m_suppressReplayPollFrames;
         if (m_suppressReplayPollFrames == 0) {
@@ -740,15 +793,8 @@ void PlaybackModMenu::onOpenColorSelector(CCObject*) {
     }
 }
 
-void PlaybackModMenu::onOpenGhostDistance(CCObject*) {
-    if (auto* p = GhostDistancePopup::create()) {
-        p->m_noElasticity = true;
-        p->show();
-    }
-}
-
 void PlaybackModMenu::onOpenPlaybackSettings(CCObject*) {
-    if (auto* p = PlaybackSettingsPopup::create()) {
+    if (auto* p = TabbedPlaybackSettingsPopup::create()) {
         p->m_noElasticity = true;
         p->show();
     }
@@ -776,7 +822,7 @@ void PlaybackModMenu::onSliderInt(CCObject*) {
     Ghosts::I().setOpacityVar((GLubyte)v);
 
     if (m_opacityLabel) {
-        m_opacityLabel->setString(("Ghost Opacity (" + std::to_string((int)(v/2.55)) + ")").c_str());
+        m_opacityLabel->setString(("Ghost Opacity (" + std::to_string((int)(v/2.55)) + "%)").c_str());
     }
 }
 
@@ -797,8 +843,8 @@ void PlaybackModMenu::refreshToggles_() {
     if (m_tgRandomIcons) m_tgRandomIcons->toggle(G.isRandomIconsEnabled());
     if (m_tgGhostsExplode) m_tgGhostsExplode->toggle(G.isGhostsExplodeEnabled());
     if (m_tgGhostsExplodeSFX) m_tgGhostsExplodeSFX->toggle(G.isGhostsExplodeSFXEnabled());
-    if (m_tgBlockRecording) m_tgBlockRecording->toggle(G.isRecordingBlocked());
-    if (m_tgBlockRecording) m_tgBlockRecordingOnNoclip->toggle(G.isRecordingBlockedOnNoclip());
+    if (m_tgBlockRecording) m_tgBlockRecording->toggle(!G.isRecordingBlocked());
+    if (m_tgBlockRecordingOnNoclip) m_tgBlockRecordingOnNoclip->toggle(!G.isRecordingBlockedOnNoclip());
     if (m_tgReplayPreventCompletion) m_tgReplayPreventCompletion->toggle(G.isReplayPreventCompletionEnabled());
 }
 
@@ -957,7 +1003,16 @@ bool PracticeRunSelectPopup::init(float width, float height) {
         m_currentStartToggle->setOpacity(110);
     }
 
-    makeLabel("INCLUDE", -118.f, 51.f, 0.235f, {205, 214, 255});
+    makeButton(
+        "All",
+        menu_selector(PracticeRunSelectPopup::onToggleAllRuns),
+        -118.f,
+        52.f,
+        44.f,
+        25.f,
+        "GJ_button_02.png",
+        &m_selectAllLabel
+    );
     makeLabel("START", -61.f, 51.f, 0.235f, {205, 214, 255});
     makeLabel("END", 15.f, 51.f, 0.235f, {205, 214, 255});
     makeLabel("ATTEMPTS", 94.f, 51.f, 0.235f, {205, 214, 255});
@@ -1233,6 +1288,14 @@ void PracticeRunSelectPopup::rebuildRows_() {
 
 void PracticeRunSelectPopup::refreshFooter_() {
     const int pages = maxPage_() + 1;
+    if (m_selectAllLabel) {
+        const bool allSelected = !m_runs.empty() && std::all_of(
+            m_runs.begin(), m_runs.end(), [this](RunInfo const& run) {
+                return m_selectedSessionIds.contains(run.sessionId);
+            }
+        );
+        m_selectAllLabel->setString(allSelected ? "None" : "All");
+    }
     if (m_selectionLabel) {
         if (m_runs.empty()) m_selectionLabel->setString("0 selected  |  0 runs");
         else {
@@ -1327,6 +1390,24 @@ void PracticeRunSelectPopup::onToggleRun(CCObject* sender) {
 
     if (m_selectedSessionIds.contains(sessionId)) m_selectedSessionIds.erase(sessionId);
     else m_selectedSessionIds.insert(sessionId);
+
+    rebuildRows_();
+    refreshFooter_();
+}
+
+void PracticeRunSelectPopup::onToggleAllRuns(CCObject*) {
+    if (m_runs.empty()) return;
+
+    const bool allSelected = std::all_of(
+        m_runs.begin(), m_runs.end(), [this](RunInfo const& run) {
+            return m_selectedSessionIds.contains(run.sessionId);
+        }
+    );
+
+    for (auto const& run : m_runs) {
+        if (allSelected) m_selectedSessionIds.erase(run.sessionId);
+        else m_selectedSessionIds.insert(run.sessionId);
+    }
 
     rebuildRows_();
     refreshFooter_();

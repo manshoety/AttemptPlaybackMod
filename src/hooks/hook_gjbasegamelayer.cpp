@@ -1,4 +1,3 @@
-// hook_gjbasegamelayer.cpp
 #include <Geode/DefaultInclude.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/binding/GJBaseGameLayer.hpp>

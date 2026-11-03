@@ -1,6 +1,5 @@
 #include "ui_utils.hpp"
-#include <Geode/cocos/CCDirector.h>
-#include <Geode/utils/cocos.hpp>
+#include <Geode/Geode.hpp>
 
 using namespace geode::prelude;
 cocos2d::CCPoint screenToMenu(cocos2d::CCMenu* menu, cocos2d::CCPoint screen) {
@@ -84,7 +83,7 @@ void setChildrenInvisible(cocos2d::CCNode* root) {
 CCSprite* createFullscreenGradient_() {
     ccColor3B color = { 69, 60, 177 };
     CCSprite* gradient = CCSprite::create("GJ_gradientBG.png");
-    if (!gradient) gradient = CCSprite::create("GJ_gradientBG-hd.png");
+    if (!gradient) gradient = CCSprite::create("GJ_gradientBG-hd.png"); // Pretty sure this doesn't even exist (HD version)
 
     if (!gradient) {
         log::warn("Failed to load GJ_gradientBG.png / GJ_gradientBG-hd.png. Using empty sprite.");

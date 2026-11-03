@@ -1,4 +1,3 @@
-// hook_CCScheduler.cpp
 #include <Geode/DefaultInclude.hpp>
 #include <Geode/cocos/CCScheduler.h>
 #include <Geode/modify/CCScheduler.hpp>

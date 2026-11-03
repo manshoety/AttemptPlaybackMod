@@ -1,13 +1,7 @@
 // playback_mod_menu_popup.hpp
 #pragma once
-#include <Geode/DefaultInclude.hpp>
-#include <Geode/ui/Popup.hpp>
-#include <Geode/ui/TextInput.hpp>
-
-#include <Geode/binding/CCMenuItemToggler.hpp>
-#include <Geode/binding/Slider.hpp>
-#include <Geode/cocos/label_nodes/CCLabelBMFont.h>
-#include <Geode/binding/CCMenuItemSpriteExtra.hpp>
+#include "ghost_preview_appearance.hpp"
+#include <Geode/Geode.hpp>
 
 #include <cue/RadioLogic.hpp>
 
@@ -53,6 +47,7 @@ private:
     cocos2d::CCNode* m_rowsRoot = nullptr;
     cocos2d::CCLabelBMFont* m_sortValueLabel = nullptr;
     cocos2d::CCLabelBMFont* m_selectionLabel = nullptr;
+    cocos2d::CCLabelBMFont* m_selectAllLabel = nullptr;
     CCMenuItemSpriteExtra* m_continueBtn = nullptr;
     CCMenuItemSpriteExtra* m_prevBtn = nullptr;
     CCMenuItemSpriteExtra* m_prevEndBtn = nullptr;
@@ -71,6 +66,7 @@ private:
     bool selectedRunsHaveGap_(float& gapEndPercent, float& nextStartPercent) const;
 
     void onToggleRun(cocos2d::CCObject* sender);
+    void onToggleAllRuns(cocos2d::CCObject* sender);
     void onToggleCurrentStart(cocos2d::CCObject* sender);
     void onCycleSort(cocos2d::CCObject* sender);
     void onPrevPage(cocos2d::CCObject* sender);
@@ -144,6 +140,16 @@ private:
     CCMenuItemToggler* m_tgReplayPreventCompletion    = nullptr;
 
     Slider* m_opacitySlider = nullptr;
+    Slider* m_distanceSlider = nullptr;
+    cocos2d::CCLabelBMFont* m_distanceLabel = nullptr;
+    int m_lastPreviewDistance = -1;
+    int m_lastPreviewOpacity = -1;
+    attemptplayback::ui::GhostPreviewAppearanceState m_previewAppearance;
+    cocos2d::CCNode* m_previewWorld = nullptr;
+    cocos2d::CCNode* m_previewActors = nullptr; // outside stencil: icons always render // shared zoom for ground and players
+    SimplePlayer* m_previewPlayer = nullptr;
+    SimplePlayer* m_previewAhead = nullptr;
+    SimplePlayer* m_previewBehind = nullptr;
     cocos2d::CCLabelBMFont* m_opacityLabel  = nullptr;
 
     cocos2d::CCLabelBMFont* m_colorModeLabel = nullptr;
@@ -170,13 +176,14 @@ private:
     void onToggleReplayPreventCompletion(cocos2d::CCObject*);
     void onCycleGhostColors(cocos2d::CCObject*);
     void onOpenColorSelector(cocos2d::CCObject*);
-    void onOpenGhostDistance(cocos2d::CCObject*);
     void onOpenGhostSettings(cocos2d::CCObject*);
     void onOpenPlaybackSettings(cocos2d::CCObject*);
     void onFreeRobux(cocos2d::CCObject*);
     void onExitButton(cocos2d::CCObject*);
 
     void onSliderInt(cocos2d::CCObject*);
+    void onDistanceSlider(cocos2d::CCObject*);
+    void refreshPreview_();
     
     void onStopReplay(cocos2d::CCObject*);
     void cacheReplayButtons_();

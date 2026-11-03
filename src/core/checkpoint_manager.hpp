@@ -1,4 +1,3 @@
-// checkpoint_manager.hpp
 #pragma once
 
 #include <algorithm>
@@ -159,7 +158,7 @@ public:
             }
         }
 
-        // Most-progress and longest replay sessions first
+        // Most progress and longest replay sessions first
         std::sort(matches.begin(), matches.end(),
             [](PracticeSession const* a, PracticeSession const* b) {
                 const double ae = sessionAbsEnd_(*a);

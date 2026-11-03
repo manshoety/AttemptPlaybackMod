@@ -1,3 +1,28 @@
+# v1.6.0
+- FULL CODEBASE REFACTOR (this was pain and suffering)
+ADDITIONS:
+- UI redesign (will probably make more changes)
+- Added some settings to the UI (were only in mod settings before)
+- Added better ghost preview (will improve later)
+- Indexed APX metadata catalogs to vastly improve level load times when you have tons of attempts (only loads small catalog)
+- Select all button in practice replay
+
+FIXES:
+- Death markers not clearing properly
+- Death markers not mirroring properly
+- Repeated building of attempt lookup indexes during preloading
+- Improved safety with replacing APX files
+- Ghost shifting when distance it set to 0
+- Real player not correctly switching normal and mini size
+- Dual mode detection
+- Ghost text position menu not hiding the pause menu
+
+CHANGES:
+- Faster attempt preloading
+- Better Attempt Manager performance with cached data and whatnot
+- PlayerObject capacity can be changed while playing
+- Probably more stuff I forgot about during the refactor
+
 # 1.5.7
 FIXES:
 - Crash fixes

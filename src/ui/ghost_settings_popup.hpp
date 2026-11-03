@@ -1,14 +1,6 @@
 #pragma once
 
-#include <Geode/DefaultInclude.hpp>
-#include <Geode/ui/Popup.hpp>
-#include <Geode/ui/TextInput.hpp>
-#include <Geode/binding/Slider.hpp>
-#include <Geode/binding/CCMenuItemToggler.hpp>
-#include <Geode/binding/CCMenuItemSpriteExtra.hpp>
-#include <Geode/cocos/label_nodes/CCLabelBMFont.h>
-#include <Geode/cocos/menu_nodes/CCMenu.h>
-#include <Geode/cocos/draw_nodes/CCDrawNode.h>
+#include <Geode/Geode.hpp>
 
 #include "../core/ghost_manager.hpp"
 
@@ -23,6 +15,7 @@ protected:
     void onEnter() override;
     void onExit() override;
     void onClose(cocos2d::CCObject* sender) override;
+    void update(float dt) override;
 
 private:
     struct HiddenNodeState {
@@ -36,6 +29,7 @@ private:
     cocos2d::CCLabelBMFont* m_yValueLabel = nullptr;
     std::vector<HiddenNodeState> m_hiddenNodes;
     bool m_previewModeActive = false;
+    int m_previewCheckFrames = 0;
 
     void onXSlider(cocos2d::CCObject*);
     void onYSlider(cocos2d::CCObject*);
@@ -44,6 +38,7 @@ private:
     void refreshPositionControls_();
     void beginPreviewMode_();
     void endPreviewMode_();
+    void refreshPreviewHiddenNodes_();
     void hideNodeForPreview_(cocos2d::CCNode* node);
 };
 
@@ -83,6 +78,19 @@ private:
     void setModeVariantVisible_(const char* id, bool visible);
 };
 
+class GhostDeathSoundsPopup : public geode::Popup {
+public:
+    static GhostDeathSoundsPopup* create();
+    bool init(float width, float height);
+
+private:
+    cocos2d::CCLabelBMFont* m_statusLabel = nullptr;
+    void refreshStatus_();
+    void onOpenFolder(cocos2d::CCObject*);
+    void onInstallBundled(cocos2d::CCObject*);
+    void onRefresh(cocos2d::CCObject*);
+};
+
 class DeathMarkerSettingsPopup : public geode::Popup {
 public:
     static DeathMarkerSettingsPopup* create();
@@ -120,13 +128,14 @@ protected:
 private:
     CCMenuItemToggler* m_ghostTextToggle = nullptr;
     CCMenuItemToggler* m_deathMarkersToggle = nullptr;
-    cocos2d::CCLabelBMFont* m_distanceValue = nullptr;
+    CCMenuItemToggler* m_customSoundsToggle = nullptr;
 
     void onOpenColorSelector(cocos2d::CCObject*);
-    void onOpenGhostDistance(cocos2d::CCObject*);
     void onToggleGhostText(cocos2d::CCObject*);
     void onConfigureGhostText(cocos2d::CCObject*);
     void onToggleDeathMarkers(cocos2d::CCObject*);
     void onConfigureDeathMarkers(cocos2d::CCObject*);
+    void onToggleCustomSounds(cocos2d::CCObject*);
+    void onConfigureGhostSounds(cocos2d::CCObject*);
     void refresh_();
 };

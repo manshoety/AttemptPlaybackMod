@@ -1,29 +1,28 @@
 #include "ghost_settings_popup.hpp"
+#include "animated_switch.hpp"
 
 #include <Geode/Geode.hpp>
-#include <Geode/cocos/draw_nodes/CCDrawNode.h>
-#include <Geode/cocos/extensions/GUI/CCControlExtension/CCScale9Sprite.h>
-#include <Geode/loader/Mod.hpp>
-#include <Geode/binding/PauseLayer.hpp>
-#include <Geode/ui/BasedButtonSprite.hpp>
-#include <Geode/ui/Layout.hpp>
 #include <UIBuilder.hpp>
 
 #include "color_selector_popup.hpp"
-#include "ghost_distance_popup.hpp"
+#include "../core/sfx_handling.hpp"
+#include <Geode/utils/file.hpp>
 #include "../utils/ui_utils.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cctype>
 
 using namespace geode::prelude;
 using namespace cocos2d;
 using namespace cocos2d::extension;
 
 namespace {
-    constexpr float kGhostSettingsW = 430.f;
-    constexpr float kGhostSettingsH = 250.f;
+    constexpr float kGhostSettingsW = 344.f;
+    constexpr float kGhostSettingsH = 234.f;
+    constexpr float kGhostSoundsW = 362.f;
+    constexpr float kGhostSoundsH = 214.f;
     constexpr float kGhostTextW = 440.f;
     constexpr float kGhostTextH = 300.f;
     constexpr float kGhostTextPosW = 300.f;
@@ -65,20 +64,8 @@ namespace {
     }
 
     CCMenuItemToggler* makeToggle_(CCObject* target, SEL_MenuHandler callback) {
-        auto* onSprite = CCSprite::createWithSpriteFrameName("GJ_checkOn_001.png");
-        auto* offSprite = CCSprite::createWithSpriteFrameName("GJ_checkOff_001.png");
-
-        auto* toggle = CCMenuItemToggler::create(
-            offSprite,
-            onSprite,
-            target,
-            callback
-        );
-
-        if (toggle) {
-            toggle->setSizeMult(kButtonMult);
-        }
-
+        auto* toggle = attemptplayback::ui::AnimatedSwitch::create(target, callback);
+        if (toggle) toggle->setSizeMult(kButtonMult);
         return toggle;
     }
 
@@ -116,7 +103,8 @@ namespace {
         auto* background = CCScale9Sprite::create("square02b_001.png");
         if (!background) return;
 
-        setScale9VisualSize_(background, { width, 42.f });
+        background->setContentSize({ width, 55.f });
+        background->setScaleY(0.5f);
         background->setColor({ 60, 25, 15 });
         background->setOpacity(85);
         background->setPosition({ 0.f, y });
@@ -179,105 +167,76 @@ bool GhostSettingsPopup::init(float width, float height) {
     if (!Popup::init(width, height)) return false;
 
     setID("ghost-settings-popup"_spr);
-    setTitle("Ghost Settings");
+    setTitle("Ghost Appearance");
 
     auto* root = CCNode::create();
     root->setPosition(m_mainLayer->getContentSize() * 0.5f);
     m_mainLayer->addChild(root);
 
-    for (float y : { 58.f, 14.f, -30.f, -74.f }) {
-        addDarkRow_(root, y);
-    }
-
     auto* menu = CCMenu::create();
-    menu->setPosition({ 0.f, 0.f });
-    root->addChild(menu);
+    menu->setPosition({0.f, 0.f});
+    root->addChild(menu, 3);
 
-    auto addLabel = [&](const char* text, float y) {
-        auto* label = CCLabelBMFont::create(text, "bigFont.fnt");
-        label->setAnchorPoint({ 0.f, 0.5f });
-        label->setPosition({ -150.f, y });
-        label->setScale(0.52f);
+    constexpr float rows[] = {68.f, 24.f, -20.f, -64.f};
+    for (float y : rows) addDarkRow_(root, y, 316.f);
+
+    auto addLabel = [root](char const* value, float x, float y, float scale) {
+        auto* label = CCLabelBMFont::create(value, "bigFont.fnt");
+        label->setAnchorPoint({0.f, 0.5f});
+        label->setPosition({x, y});
+        label->setScale(scale);
         root->addChild(label);
+        return label;
     };
 
-    addLabel("Color Selector", 58.f);
-    addLabel("Ghost Distance", 14.f);
-    addLabel("Ghost Text", -30.f);
-    addLabel("Death Markers", -74.f);
+    addLabel("Color Selector", -148.f, rows[0], .38f);
+    addLabel("Ghost Text", -148.f, rows[1], .38f);
+    addLabel("Death Markers", -148.f, rows[2], .38f);
+    addLabel("Custom Death Sounds", -148.f, rows[3], .315f);
 
-    auto addActionButton = [&] (
-        const char* text,
-        SEL_MenuHandler callback,
-        float y,
-        const char* id
-    ) {
-        auto* node = createTextButton_(
-            this,
-            "GJ_button_02.png",
-            text,
-            callback,
-            id,
-            { 142.f, y },
-            125.f,
-            34.f,
-            0.62f,
-            0.38f,
-            1.05f
+    auto addAction = [this, menu](char const* label, SEL_MenuHandler callback,
+                                  float y, char const* id) {
+        auto* item = createTextButton_(
+            this, "GJ_button_02.png", label, callback, id,
+            {103.f, y}, 94.f, 28.f, 1.f, .36f, 1.05f
         ).collect();
-
-        menu->addChild(node);
+        menu->addChild(item);
     };
 
-    addActionButton(
-        "Open",
-        menu_selector(GhostSettingsPopup::onOpenColorSelector),
-        58.f,
-        "ghost-settings-color"_spr
-    );
-
-    addActionButton(
-        "Edit",
-        menu_selector(GhostSettingsPopup::onOpenGhostDistance),
-        14.f,
-        "ghost-settings-distance"_spr
-    );
-
-    addActionButton(
-        "Configure",
-        menu_selector(GhostSettingsPopup::onConfigureGhostText),
-        -30.f,
-        "ghost-settings-text"_spr
-    );
-
-    addActionButton(
-        "Configure",
-        menu_selector(GhostSettingsPopup::onConfigureDeathMarkers),
-        -74.f,
-        "ghost-settings-markers"_spr
-    );
-
-    m_distanceValue = CCLabelBMFont::create("45 px", "goldFont.fnt");
-    m_distanceValue->setAnchorPoint({ 1.f, 0.5f });
-    m_distanceValue->setPosition({ 72.f, 14.f });
-    m_distanceValue->setScale(0.5f);
-    root->addChild(m_distanceValue);
+    addAction("Open", menu_selector(GhostSettingsPopup::onOpenColorSelector),
+              rows[0], "ghost-settings-color"_spr);
+    addAction("Configure", menu_selector(GhostSettingsPopup::onConfigureGhostText),
+              rows[1], "ghost-settings-text"_spr);
+    addAction("Configure", menu_selector(GhostSettingsPopup::onConfigureDeathMarkers),
+              rows[2], "ghost-settings-markers"_spr);
+    addAction("Configure", menu_selector(GhostSettingsPopup::onConfigureGhostSounds),
+              rows[3], "ghost-settings-custom-sounds"_spr);
 
     m_ghostTextToggle = makeToggle_(
-        this,
-        menu_selector(GhostSettingsPopup::onToggleGhostText)
+        this, menu_selector(GhostSettingsPopup::onToggleGhostText)
     );
-    m_ghostTextToggle->setPosition({ 70.f, -30.f });
-    m_ghostTextToggle->setScale(0.72f);
-    menu->addChild(m_ghostTextToggle);
+    if (m_ghostTextToggle) {
+        m_ghostTextToggle->setPosition({31.f, rows[1]});
+        m_ghostTextToggle->setScale(.8f);
+        menu->addChild(m_ghostTextToggle);
+    }
 
     m_deathMarkersToggle = makeToggle_(
-        this,
-        menu_selector(GhostSettingsPopup::onToggleDeathMarkers)
+        this, menu_selector(GhostSettingsPopup::onToggleDeathMarkers)
     );
-    m_deathMarkersToggle->setPosition({ 70.f, -74.f });
-    m_deathMarkersToggle->setScale(0.72f);
-    menu->addChild(m_deathMarkersToggle);
+    if (m_deathMarkersToggle) {
+        m_deathMarkersToggle->setPosition({31.f, rows[2]});
+        m_deathMarkersToggle->setScale(.8f);
+        menu->addChild(m_deathMarkersToggle);
+    }
+
+    m_customSoundsToggle = makeToggle_(this, menu_selector(GhostSettingsPopup::onToggleCustomSounds));
+
+    if (m_customSoundsToggle) {
+        m_customSoundsToggle->setPosition({31.f, rows[3]});
+        m_customSoundsToggle->setScale(.8f);
+        menu->addChild(m_customSoundsToggle);
+     }
 
     refresh_();
     scheduleUpdate();
@@ -290,34 +249,23 @@ void GhostSettingsPopup::update(float) {
 
 void GhostSettingsPopup::refresh_() {
     auto& ghosts = Ghosts::I();
-
-    if (
-        m_ghostTextToggle &&
-        m_ghostTextToggle->isToggled() != ghosts.isPlayLayerGhostTextEnabled()
-    ) {
+    if (m_ghostTextToggle &&
+        m_ghostTextToggle->isToggled() != ghosts.isPlayLayerGhostTextEnabled()) {
         m_ghostTextToggle->toggle(ghosts.isPlayLayerGhostTextEnabled());
     }
-
-    if (
-        m_deathMarkersToggle &&
-        m_deathMarkersToggle->isToggled() != ghosts.areDeathMarkersEnabled()
-    ) {
+    if (m_deathMarkersToggle &&
+        m_deathMarkersToggle->isToggled() != ghosts.areDeathMarkersEnabled()) {
         m_deathMarkersToggle->toggle(ghosts.areDeathMarkersEnabled());
     }
 
-    if (m_distanceValue) {
-        m_distanceValue->setString(
-            fmt::format("{} px", ghosts.getGhostDistance()).c_str()
-        );
+    if (m_customSoundsToggle &&
+        m_customSoundsToggle->isToggled() != ghosts.getPlaybackCustomDeathSoundEnabled()) {
+        m_customSoundsToggle->toggle(ghosts.getPlaybackCustomDeathSoundEnabled());
     }
 }
 
 void GhostSettingsPopup::onOpenColorSelector(CCObject*) {
     showNoElasticity_(ColorSelectorPopup::create());
-}
-
-void GhostSettingsPopup::onOpenGhostDistance(CCObject*) {
-    showNoElasticity_(GhostDistancePopup::create());
 }
 
 void GhostSettingsPopup::onConfigureGhostText(CCObject*) {
@@ -326,6 +274,10 @@ void GhostSettingsPopup::onConfigureGhostText(CCObject*) {
 
 void GhostSettingsPopup::onConfigureDeathMarkers(CCObject*) {
     showNoElasticity_(DeathMarkerSettingsPopup::create());
+}
+
+void GhostSettingsPopup::onConfigureGhostSounds(CCObject*) {
+    showNoElasticity_(GhostDeathSoundsPopup::create());
 }
 
 void GhostSettingsPopup::onToggleGhostText(CCObject*) {
@@ -339,6 +291,101 @@ void GhostSettingsPopup::onToggleDeathMarkers(CCObject*) {
     auto& ghosts = Ghosts::I();
     ghosts.setDeathMarkersEnabled(!ghosts.areDeathMarkersEnabled());
 }
+
+void GhostSettingsPopup::onToggleCustomSounds(CCObject*) {
+    auto& ghosts = Ghosts::I();
+    ghosts.setPlaybackCustomDeathSoundEnabled(!ghosts.getPlaybackCustomDeathSoundEnabled());
+    refresh_();
+}
+
+GhostDeathSoundsPopup* GhostDeathSoundsPopup::create() {
+    auto* popup = new GhostDeathSoundsPopup();
+    if (popup && popup->init(kGhostSoundsW, kGhostSoundsH)) {
+        popup->autorelease();
+        return popup;
+    }
+    CC_SAFE_DELETE(popup);
+    return nullptr;
+}
+
+bool GhostDeathSoundsPopup::init(float width, float height) {
+    if (!Popup::init(width, height)) return false;
+    setID("ghost-death-sounds-popup"_spr);
+    setTitle("Custom Death Sounds");
+
+    auto* root = CCNode::create();
+    root->setPosition(m_mainLayer->getContentSize() * .5f);
+    m_mainLayer->addChild(root);
+
+    auto* menu = CCMenu::create();
+    menu->setPosition({0.f, 0.f});
+    root->addChild(menu, 2);
+
+    auto addLabel = [root](char const* str, float x, float y, float scale) {
+        auto* label = CCLabelBMFont::create(str, "bigFont.fnt");
+        label->setScale(scale);
+        label->setPosition({x, y});
+        root->addChild(label, 2);
+        return label;
+    };
+
+    addLabel("Sounds play when a ghost dies", 0.f, 44.f, .37f);
+    addLabel(".ogg, .mp3, or .wav files", 0.f, 24.f, .30f);
+
+    m_statusLabel = addLabel("", 0.f, -18.f, .30f);
+
+    auto addAction = [this, menu](char const* text, SEL_MenuHandler callback,
+                                  float x, float y, float width, char const* id) {
+        auto* item = createTextButton_(
+            this, "GJ_button_02.png", text, callback, id,
+            {x, y}, width, 30.f, 1.f, .35f, 1.05f
+        ).collect();
+        menu->addChild(item);
+    };
+
+    addAction("Open Folder", menu_selector(GhostDeathSoundsPopup::onOpenFolder),
+              -89.f, -46.f, 152.f, "ghost-sfx-open-folder"_spr);
+    addAction("Install Bundled", menu_selector(GhostDeathSoundsPopup::onInstallBundled),
+              89.f, -46.f, 152.f, "ghost-sfx-install-bundled"_spr);
+    addAction("Refresh Sounds", menu_selector(GhostDeathSoundsPopup::onRefresh),
+              0.f, -79.f, 170.f, "ghost-sfx-refresh"_spr);
+
+    refreshStatus_();
+    return true;
+}
+
+void GhostDeathSoundsPopup::refreshStatus_() {
+    if (!m_statusLabel) return;
+    std::vector<std::string> files;
+    std::filesystem::file_time_type lastWrite{};
+    refreshCustomExplodeSfx_(files, lastWrite);
+    m_statusLabel->setString(fmt::format(
+        "{} custom sound file{} found", files.size(), files.size() == 1 ? "" : "s"
+    ).c_str());
+}
+
+void GhostDeathSoundsPopup::onOpenFolder(CCObject*) {
+    auto const dir = explodeSfxDir_();
+    if (dir.empty() || !geode::utils::file::openFolder(dir)) {
+        FLAlertLayer::create("Custom Death Sounds", "Could not open the sound folder.", "OK")->show();
+    }
+}
+
+void GhostDeathSoundsPopup::onInstallBundled(CCObject*) {
+    // Copies missing bundled presets, never overwriting user-edited sounds.
+    auto const result = syncBundledExplodeSfxIntoCustomDir_(false, true);
+    Ghosts::I().refreshCustomDeathSfxNow(false);
+    refreshStatus_();
+    FLAlertLayer::create("Custom Death Sounds",
+        gd::string(fmt::format("Installed {} sound(s). {} already existed. {} bundled file(s) missing.",
+                               result.copied + result.overwritten, result.skipped, result.missing)),
+        "OK")->show();
+}
+
+void GhostDeathSoundsPopup::onRefresh(CCObject*) {
+    Ghosts::I().refreshCustomDeathSfxNow(false);
+    refreshStatus_();
+ }
 
 // Ghost text popup
 
@@ -657,8 +704,6 @@ void GhostTextPopup::refreshModeButtons_() {
         m_customInput->setEnabled(customSelected);
     }
 
-    // Variables and Reset only apply to the custom format, so keep the whole
-    // custom-format strip out of the way for the Alive / Dead presets.
     const auto setCustomButtonVisible = [this, customSelected](const char* id) {
         if (auto* item = typeinfo_cast<CCMenuItem*>(
             m_rootMenu->getChildByIDRecursive(id)
@@ -922,11 +967,25 @@ void GhostTextPositionPopup::onEnter() {
     Popup::onEnter();
     setOpacity(0);
     beginPreviewMode_();
+    m_previewCheckFrames = 3;
+    scheduleUpdate();
 }
 
 void GhostTextPositionPopup::onExit() {
+    unscheduleUpdate();
     endPreviewMode_();
     Popup::onExit();
+}
+
+void GhostTextPositionPopup::update(float) {
+    if (!m_previewModeActive || m_previewCheckFrames <= 0) {
+        unscheduleUpdate();
+        return;
+    }
+
+    --m_previewCheckFrames;
+    refreshPreviewHiddenNodes_();
+    if (m_previewCheckFrames == 0) unscheduleUpdate();
 }
 
 void GhostTextPositionPopup::onClose(CCObject* sender) {
@@ -964,6 +1023,12 @@ void GhostTextPositionPopup::beginPreviewMode_() {
     if (m_previewModeActive) return;
     m_previewModeActive = true;
 
+    refreshPreviewHiddenNodes_();
+    Ghosts::I().setGhostTextPositionPreview(true);
+    refreshPositionControls_();
+}
+
+void GhostTextPositionPopup::refreshPreviewHiddenNodes_() {
     auto* director = CCDirector::sharedDirector();
     auto* scene = director ? director->getRunningScene() : nullptr;
 
@@ -984,9 +1049,6 @@ void GhostTextPositionPopup::beginPreviewMode_() {
             hideNodeForPreview_(pauseLayer);
         }
     }
-
-    Ghosts::I().setGhostTextPositionPreview(true);
-    refreshPositionControls_();
 }
 
 void GhostTextPositionPopup::endPreviewMode_() {

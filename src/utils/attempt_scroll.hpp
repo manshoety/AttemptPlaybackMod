@@ -1,8 +1,6 @@
 #pragma once
 
-#include <Geode/DefaultInclude.hpp>
-#include <Geode/ui/ScrollLayer.hpp>
-#include <Geode/ui/Scrollbar.hpp>
+#include <Geode/Geode.hpp>
 
 namespace attemptplayback::ui {
 

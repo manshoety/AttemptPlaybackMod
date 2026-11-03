@@ -6,7 +6,6 @@
 #include <unordered_map>
 #include <chrono>
 #include <deque>
-#include <Geode/ui/BasedButtonSprite.hpp>
 #include <UIBuilder.hpp>
 
 #include <string>

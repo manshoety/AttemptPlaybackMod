@@ -1,4 +1,3 @@
-// dashing_args.cpp
 #include "dashing_args.hpp"
 
 namespace attemptplayback {

@@ -1,4 +1,3 @@
-// hook_player_object.cpp
 #include <Geode/DefaultInclude.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/binding/PlayerObject.hpp>
@@ -127,7 +126,6 @@ class $modify(MyPlayerObject, PlayerObject) {
     }
 
     void update(float p0) { //  is p0 the frac of real GJ update?
-        // start time here
         auto& G = Ghosts::I();
         if (G.isModEnabled()) {
             if (auto* pl = attachedPlayLayerForThis_()) {
@@ -184,7 +182,6 @@ class $modify(MyPlayerObject, PlayerObject) {
                 }
             }
         }
-        // end time here
         PlayerObject::update(p0);
     }
 

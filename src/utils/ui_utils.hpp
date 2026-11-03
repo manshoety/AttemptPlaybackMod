@@ -1,26 +1,8 @@
 #pragma once
 
-#include <Geode/DefaultInclude.hpp>
 #include <Geode/Geode.hpp>
 
 #include <UIBuilder.hpp>
-#include <Geode/ui/Layout.hpp>
-#include <Geode/ui/Popup.hpp>
-#include <Geode/ui/BasedButtonSprite.hpp>
-
-#include <Geode/loader/Log.hpp>
-#include <Geode/loader/Mod.hpp>
-#include <Geode/utils/file.hpp>
-#include <Geode/utils/async.hpp>
-
-#include <Geode/binding/ButtonSprite.hpp>
-#include <Geode/binding/CCMenuItemSpriteExtra.hpp>
-
-#include <Geode/cocos/base_nodes/CCNode.h>
-#include <Geode/cocos/menu_nodes/CCMenu.h>
-#include <Geode/cocos/sprite_nodes/CCSprite.h>
-#include <Geode/cocos/label_nodes/CCLabelBMFont.h>
-#include <Geode/cocos/extensions/GUI/CCControlExtension/CCScale9Sprite.h>
 
 using namespace geode::prelude;
 
@@ -47,7 +29,8 @@ auto createTextButton_(
     float height = 40.f,
     float spriteScale = 0.55f,
     float labelScale = 0.4f,
-    float sizeMult = 1.15f
+    float sizeMult = 1.15f,
+    float textOffsetX = 0.f
 ) {
     return Build<cocos2d::extension::CCScale9Sprite>::create(spriteFrame)
         .contentSize(width, height)
@@ -64,9 +47,7 @@ auto createTextButton_(
                 .id(fmt::format("{}-label", node_id))
                 .anchorPoint(0.5f, 0.5f)
                 .scale(labelScale)
-                .layoutOpts(
-                    Build<AnchorLayoutOptions>::create().anchor(Anchor::Center)
-                )
+                .setAnchorOpts(Anchor::Center, {textOffsetX, 0.f})
         )
         .updateLayout();
 }

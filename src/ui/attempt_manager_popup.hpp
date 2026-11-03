@@ -1,15 +1,6 @@
-// attempt_manager_popup.hpp
 #pragma once
 
-#include <Geode/DefaultInclude.hpp>
-#include <Geode/ui/Popup.hpp>
-#include <Geode/ui/TextInput.hpp>
-
-#include <Geode/binding/CCMenuItemSpriteExtra.hpp>
-#include <Geode/binding/CCMenuItemToggler.hpp>
-#include <Geode/cocos/menu_nodes/CCMenu.h>
-#include <Geode/cocos/label_nodes/CCLabelBMFont.h>
-#include <Geode/cocos/extensions/GUI/CCControlExtension/CCScale9Sprite.h>
+#include <Geode/Geode.hpp>
 
 #include "../core/ghost_manager.hpp"
 #include "../utils/attempt_scroll.hpp"

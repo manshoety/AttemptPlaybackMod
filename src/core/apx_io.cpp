@@ -1,4 +1,3 @@
-// apx_io.cpp
 #include <ostream>
 #include <istream>
 #include <fstream>
@@ -10,6 +9,9 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <sstream>
+#include <chrono>
+#include "apx_catalog_cache.hpp"
 #include "types.hpp"
 #include "apx_format.hpp"
 #include "apx_io.hpp"
@@ -545,7 +547,7 @@ bool writeAPXPracticePath(std::ostream& out, const PracticePath& path) {
     if (!out.good()) return false;
 
     APXPathHeaderV2 hdr{};
-    hdr.version = kAPXPathVersion_V5;  // Version 5 without saved checkpoints / active chain
+    hdr.version = kAPXPathVersion_V5;
     hdr.numSessions = static_cast<uint32_t>(path.sessions.size());
     hdr.activeSessionId = path.activeSessionId;
     hdr.selectedSessionId = path.selectedSessionId;
@@ -850,31 +852,104 @@ static bool writeAPXFileCurrent_(
     return out.good();
 }
 
-static bool replaceFileAtomically_(
+bool replaceAPXFileSafely_(
     std::filesystem::path const& tmpPath,
     std::filesystem::path const& finalPath
 ) {
+    auto backupPath = finalPath;
+    backupPath += ".bak";
+
     std::error_code ec;
+    if (!std::filesystem::is_regular_file(tmpPath, ec) || ec) {
+        log::warn("[SAVE FILE] replacement source is not a regular file: {}",
+            geode::utils::string::pathToString(tmpPath));
+        return false;
+    }
 
     ec.clear();
+    const bool destinationExistsBefore = std::filesystem::exists(finalPath, ec);
+    if (ec) return false;
+    if (destinationExistsBefore) {
+        ec.clear();
+        if (!std::filesystem::is_regular_file(finalPath, ec) || ec) {
+            log::warn("[SAVE FILE] replacement destination is not a regular file: {}",
+                geode::utils::string::pathToString(finalPath));
+            return false;
+        }
+    }
+
+    ec.clear();
+    if (std::filesystem::is_symlink(tmpPath, ec) || ec) return false;
+    ec.clear();
+    if (destinationExistsBefore && (std::filesystem::is_symlink(finalPath, ec) || ec)) return false;
+
+    ec.clear();
+    const bool backupExists = std::filesystem::exists(backupPath, ec);
+    if (ec || backupExists) {
+        log::warn(
+            "[SAVE FILE] replacement blocked by existing backup or lookup error: {} ({})",
+            geode::utils::string::pathToString(backupPath),
+            ec ? ec.message() : "backup already exists"
+        );
+        return false;
+    }
+
     std::filesystem::rename(tmpPath, finalPath, ec);
     if (!ec) return true;
+
+    ec.clear();
+    const bool destinationExists = std::filesystem::exists(finalPath, ec);
+    if (ec || !destinationExists) {
+        log::warn(
+            "[SAVE FILE] replacement failed; destination not confirmed: {} ({})",
+            geode::utils::string::pathToString(finalPath),
+            ec ? ec.message() : "destination missing"
+        );
+        return false;
+    }
 
     // remove + rename fallback
     ec.clear();
-    std::filesystem::remove(finalPath, ec);
+    std::filesystem::rename(finalPath, backupPath, ec);
+    if (ec) {
+        log::warn(
+            "[SAVE FILE] could not preserve original at {}: {}",
+            geode::utils::string::pathToString(backupPath),
+            ec.message()
+        );
+        return false;
+    }
 
     ec.clear();
     std::filesystem::rename(tmpPath, finalPath, ec);
-    if (!ec) return true;
+    if (ec) {
+        log::warn(
+            "[SAVE FILE] replacement failed; original preserved at {}: {}",
+            geode::utils::string::pathToString(backupPath),
+            ec.message()
+        );
+        std::error_code restoreEc;
+        std::filesystem::rename(backupPath, finalPath, restoreEc);
+        if (restoreEc) {
+            log::error(
+                "[SAVE FILE] failed to restore original; recover it manually from {}: {}",
+                geode::utils::string::pathToString(backupPath),
+                restoreEc.message()
+            );
+        }
+        return false;
+    }
 
-    log::warn(
-        "[SAVE FILE] atomic replace failed: {} -> {} ({})",
-        geode::utils::string::pathToString(tmpPath),
-        geode::utils::string::pathToString(finalPath),
-        ec.message()
-    );
-    return false;
+    ec.clear();
+    std::filesystem::remove(backupPath, ec);
+    if (ec) {
+        log::warn(
+            "[SAVE FILE] replacement succeeded, but could not remove backup {}: {}",
+            geode::utils::string::pathToString(backupPath),
+            ec.message()
+        );
+    }
+    return true;
 }
 
 static bool rewriteAPXFileToCurrent_(
@@ -896,7 +971,7 @@ static bool rewriteAPXFileToCurrent_(
         return false;
     }
 
-    if (!replaceFileAtomically_(tmpPath, finalPath)) {
+    if (!replaceAPXFileSafely_(tmpPath, finalPath)) {
         std::error_code ec;
         std::filesystem::remove(tmpPath, ec);
         return false;
@@ -1085,11 +1160,126 @@ bool loadAPXFileWithMigration(
     return true;
 }
 
+static bool serializeAPXCatalogIndex_(APXCatalogScanResult const& scan, std::vector<uint8_t>& payload) {
+    if (scan.attempts.size() > 1'000'000) return false;
+
+    payload.clear();
+    const uint32_t version = 1;
+    const uint32_t count = static_cast<uint32_t>(scan.attempts.size());
+    appendPod_(payload, version);
+    appendPod_(payload, count);
+    appendPod_(payload, scan.maxSerialSeen);
+
+    for (auto const& a : scan.attempts) {
+        const int32_t serial = a.serial;
+        const uint8_t flags = (a.practiceAttempt ? 1 : 0) |
+            (a.completed ? 2 : 0) | (a.hadDual ? 4 : 0);
+        const uint64_t seed = static_cast<uint64_t>(a.seed);
+        appendPod_(payload, serial);
+        appendPod_(payload, a.startPercent);
+        appendPod_(payload, a.endPercent);
+        appendPod_(payload, flags);
+        appendPod_(payload, a.startX);
+        appendPod_(payload, a.startY);
+        appendPod_(payload, a.endX);
+        appendPod_(payload, a.endTime);
+        appendPod_(payload, a.baseTimeOffset);
+        appendPod_(payload, seed);
+        appendPod_(payload, a.p1Count);
+        appendPod_(payload, a.p2Count);
+        appendPod_(payload, a.chunkFileOffset);
+        appendPod_(payload, a.chunkSize);
+    }
+
+    std::ostringstream stream(std::ios::binary | std::ios::out);
+    if (!writeAPXPracticePath(stream, scan.practicePath)) return false;
+    const auto bytes = stream.str();
+    if (payload.size() + bytes.size() > 128u * 1024u * 1024u) return false;
+    payload.insert(payload.end(), bytes.begin(), bytes.end());
+    return true;
+}
+
+static bool deserializeAPXCatalogIndex_(
+    std::vector<uint8_t> const& payload,
+    uint64_t apxSize,
+    APXCatalogScanResult& out
+) {
+    if (payload.size() < 20) return false;
+    const uint8_t* cur = payload.data();
+    const uint8_t* end = cur + payload.size();
+
+    uint32_t version = 0, count = 0, maxSerial = 0;
+    if (!readPod_(cur, end, version) || version != 1 ||
+        !readPod_(cur, end, count) || count > 1'000'000 ||
+        !readPod_(cur, end, maxSerial) || count > payload.size() / 64) return false;
+
+    APXCatalogScanResult decoded{};
+    decoded.attempts.reserve(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        APXAttemptDiskInfo a{};
+        int32_t serial = 0;
+        uint8_t flags = 0;
+        uint64_t seed = 0;
+        if (!readPod_(cur, end, serial) ||
+            !readPod_(cur, end, a.startPercent) ||
+            !readPod_(cur, end, a.endPercent) ||
+            !readPod_(cur, end, flags) || (flags & ~7u) ||
+            !readPod_(cur, end, a.startX) ||
+            !readPod_(cur, end, a.startY) ||
+            !readPod_(cur, end, a.endX) ||
+            !readPod_(cur, end, a.endTime) ||
+            !readPod_(cur, end, a.baseTimeOffset) ||
+            !readPod_(cur, end, seed) ||
+            !readPod_(cur, end, a.p1Count) ||
+            !readPod_(cur, end, a.p2Count) ||
+            !readPod_(cur, end, a.chunkFileOffset) ||
+            !readPod_(cur, end, a.chunkSize)) return false;
+
+        a.serial = serial;
+        a.practiceAttempt = (flags & 1u) != 0;
+        a.completed = (flags & 2u) != 0;
+        a.hadDual = (flags & 4u) != 0;
+        a.seed = static_cast<uintptr_t>(seed);
+        if (a.chunkFileOffset < sizeof(APXHeader) ||
+            a.chunkFileOffset > apxSize ||
+            apxSize - a.chunkFileOffset < sizeof(uint32_t) * 2 ||
+            a.chunkSize > apxSize - a.chunkFileOffset - sizeof(uint32_t) * 2) return false;
+        decoded.attempts.push_back(a);
+    }
+
+    const std::string remaining(reinterpret_cast<char const*>(cur),
+        static_cast<size_t>(end - cur));
+    std::istringstream stream(remaining, std::ios::binary | std::ios::in);
+    uint32_t type = 0, size = 0;
+    stream.read(reinterpret_cast<char*>(&type), sizeof(type));
+    stream.read(reinterpret_cast<char*>(&size), sizeof(size));
+    if (!stream || type != kChunk_PATH ||
+        size != remaining.size() - sizeof(type) - sizeof(size) ||
+        !readAPXPracticePath(stream, size, decoded.practicePath)) return false;
+
+    decoded.maxSerialSeen = maxSerial;
+    out = std::move(decoded);
+    return true;
+}
+
 bool scanAPXFileCatalog(
     std::filesystem::path const& path,
     APXCatalogScanResult& out
 ) {
     out = APXCatalogScanResult{};
+
+    const auto scanStart = std::chrono::steady_clock::now();
+    std::vector<uint8_t> cachedPayload;
+    if (loadAPXCatalogCache(path, cachedPayload)) {
+        std::error_code cacheEc;
+        const auto apxSize = std::filesystem::file_size(path, cacheEc);
+        if (!cacheEc && deserializeAPXCatalogIndex_(cachedPayload, apxSize, out)) {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - scanStart).count();
+            log::info("[APX catalog] index hit: {} attempts in {} ms", out.attempts.size(), elapsed);
+            return true;
+        }
+    }
 
     std::error_code ec;
     ec.clear();
@@ -1125,6 +1315,9 @@ bool scanAPXFileCatalog(
         );
         return false;
     }
+
+    APXCatalogFileIdentity scanIdentity{};
+    const bool haveScanIdentity = getAPXCatalogFileIdentity(path, scanIdentity);
 
     std::ifstream in(path, std::ios::binary);
     if (!in) {
@@ -1243,11 +1436,21 @@ bool scanAPXFileCatalog(
         }
     }
 
+    if (!out.loadedLegacy && !out.sawLegacyAttemptChunks && haveScanIdentity) {
+        std::vector<uint8_t> indexPayload;
+        if (serializeAPXCatalogIndex_(out, indexPayload)) {
+            saveAPXCatalogCache(path, indexPayload, scanIdentity);
+        }
+    }
+
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - scanStart).count();
+    log::info("[APX catalog] disk scan: {} attempts in {} ms", out.attempts.size(), elapsed);
     return true;
 }
 
 bool loadAPXAttemptByCatalogEntry(
-    std::filesystem::path const& path,
+    std::istream& in,
     APXAttemptDiskInfo const& entry,
     Attempt& attemptOut,
     bool* outUsedLegacy
@@ -1255,14 +1458,7 @@ bool loadAPXAttemptByCatalogEntry(
     attemptOut = Attempt{};
     if (outUsedLegacy) *outUsedLegacy = false;
 
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        log::warn(
-            "[SAVE FILE] failed to open file for ATT3 lazy load: {}",
-            geode::utils::string::pathToString(path)
-        );
-        return false;
-    }
+    in.clear();
 
     in.seekg(static_cast<std::streamoff>(entry.chunkFileOffset), std::ios::beg);
     if (!in) return false;
@@ -1278,6 +1474,23 @@ bool loadAPXAttemptByCatalogEntry(
 
     return readAPXAttemptCompact(in, chunkSize, attemptOut, outUsedLegacy);
 }
+
+bool loadAPXAttemptByCatalogEntry(
+    std::filesystem::path const& path,
+    APXAttemptDiskInfo const& entry,
+    Attempt& attemptOut,
+    bool* outUsedLegacy
+) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        log::warn(
+            "[SAVE FILE] failed to open file for ATT3 lazy load: {}",
+            geode::utils::string::pathToString(path)
+        );
+        return false;
+    }
+    return loadAPXAttemptByCatalogEntry(in, entry, attemptOut, outUsedLegacy);
+ }
 
 bool saveAPXFileCurrent(
     std::filesystem::path const& path,

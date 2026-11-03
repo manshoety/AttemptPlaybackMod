@@ -1,4 +1,3 @@
-// apx_io.hpp
 #pragma once
 #include <vector>
 #include <iosfwd>
@@ -14,8 +13,15 @@ bool readAPXAttemptCompact(std::istream& in, uint32_t chunkSize, Attempt& attemp
 
 bool loadAPXFileWithMigration(std::filesystem::path const& path, std::vector<Attempt>& attemptsOut, PracticePath& practicePathOut, bool rewriteLegacy = true);
 bool saveAPXFileCurrent(std::filesystem::path const& path, std::vector<Attempt> const& attempts, PracticePath const& practicePath);
+bool replaceAPXFileSafely_(std::filesystem::path const& tmpPath, std::filesystem::path const& finalPath);
 
 bool scanAPXFileCatalog(std::filesystem::path const& path, APXCatalogScanResult& out);
+bool loadAPXAttemptByCatalogEntry(
+    std::istream& in,
+    APXAttemptDiskInfo const& entry,
+    Attempt& attemptOut,
+    bool* outUsedLegacy = nullptr
+);
 bool loadAPXAttemptByCatalogEntry(
     std::filesystem::path const& path,
     APXAttemptDiskInfo const& entry,

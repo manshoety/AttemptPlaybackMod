@@ -1,8 +1,6 @@
-// dashing_args.hpp
 #pragma once
 #include <variant>
-#include <Geode/DefaultInclude.hpp>
-#include <Geode/cocos/cocoa/CCGeometry.h>
+#include <Geode/Geode.hpp>
 
 class DashRingObject;
 

@@ -1,4 +1,3 @@
-// hook_play_layer.cpp
 #include <Geode/DefaultInclude.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/binding/PlayLayer.hpp>

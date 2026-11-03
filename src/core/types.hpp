@@ -1,4 +1,3 @@
-// types.hpp
 #pragma once
 
 #include <cstdint>
@@ -9,11 +8,7 @@
 #include <thread>
 #include <future>
 #include <atomic>
-#include <Geode/DefaultInclude.hpp>
-#include <Geode/binding/PlayerObject.hpp>
-#include <Geode/loader/Log.hpp>
 #include <Geode/Geode.hpp>
-#include <Geode/loader/Mod.hpp>
 
 using namespace geode::prelude;
 
@@ -199,65 +194,6 @@ struct FrameAccelTime {
     }
 };
 
-/*
-struct Frame {
-    float x=0;
-    float y=0;
-    float rot=0;
-    float vehicleSize=1.f;
-    float waveSize=1.f;
-    bool upsideDown=false;
-    bool hold=false;
-    bool holdL=false;
-    bool holdR=false;
-    bool isDashing=false;
-    bool isVisible=true;
-    IconType mode = IconType::Cube;
-    size_t frame=0;
-    bool stateDartSlide=false;
-    double t = 0;
-};
-
-struct FrameAccelTime {
-    double baseT = 0.0;
-    double binW = 0.0125;
-    double invBinW = 80.0;
-    int bins = 0;
-
-    struct BinRange { uint32_t lo, hi; };
-    std::vector<BinRange> range;
-
-    std::vector<uint32_t> idx;
-
-    std::vector<double> times;  // times[i] == v[i].t
-
-    inline int binOf(double t) const {
-        if (t <= baseT) return 0;
-        int b = (int)((t - baseT) * invBinW);
-        if (b < 0) return 0;
-        if (b >= bins) return bins - 1;
-        return b;
-    }
-
-    inline bool valid() const {
-        return bins > 0 && !range.empty();
-    }
-
-    inline bool hasTimes(size_t n) const {
-        return times.size() == n;
-    }
-
-    inline void reset() {
-        bins = 0;
-        baseT = 0.0;
-        binW = 0.0125;
-        invBinW = 80.0;
-        range.clear();
-        idx.clear();
-        times.clear();
-    }
-};
-*/
 struct FrameAccel {
     float baseX = 0.f;
     float invBinW = 1.f / 64.f;
@@ -538,10 +474,6 @@ struct PracticeSegment {
 struct PracticeSession {
     int sessionId = 0;
     std::vector<int> allAttemptSerials;
-    // Invariant for segments:
-    // - kept sorted by absStart()
-    // - kept non-overlapping in absolute time
-    // - overwriteSegmentForAttempt() preserves this
     std::vector<PracticeSegment> segments;
     float startX = 0.f;
     float startY = 0.f;

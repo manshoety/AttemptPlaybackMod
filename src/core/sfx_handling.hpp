@@ -12,9 +12,6 @@
 #include <unordered_set>
 
 #include <Geode/Geode.hpp>
-#include <Geode/binding/FMODAudioEngine.hpp>
-#include <Geode/loader/Log.hpp>
-#include <Geode/utils/string.hpp>
 
 static std::filesystem::path explodeSfxDir_() {
     auto* mod = Mod::get();
@@ -118,7 +115,7 @@ static void refreshCustomExplodeSfx_(
     std::sort(out.begin(), out.end());
 }
 
-// Find a resource file anywhere under the mod's runtime resources directory by filename.
+// Find a resource file anywhere under the mod's runtime resources directory by filename
 static std::optional<std::filesystem::path> findModResourceByFilename_(
     std::filesystem::path const& resDir,
     std::string const& filename

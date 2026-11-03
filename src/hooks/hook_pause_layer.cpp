@@ -1,4 +1,3 @@
-// hook_pause_layer.cpp
 #include <Geode/DefaultInclude.hpp>
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/binding/PauseLayer.hpp>

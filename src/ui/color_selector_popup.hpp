@@ -1,4 +1,3 @@
-// color_selector_popup.hpp
 #pragma once
 #include <array>
 #include <vector>
@@ -11,24 +10,8 @@
 #include <ctime>
 
 #include <Geode/Geode.hpp>
-#include <Geode/ui/Popup.hpp>
-#include <Geode/ui/Layout.hpp>
-#include <Geode/loader/Mod.hpp>
-#include <Geode/loader/Log.hpp>
-#include <Geode/utils/file.hpp>
-#include <Geode/utils/async.hpp>
-
-#include <Geode/binding/ButtonSprite.hpp>
-#include <Geode/binding/CCMenuItemSpriteExtra.hpp>
-
-#include <Geode/cocos/CCDirector.h>
-#include <Geode/cocos/menu_nodes/CCMenu.h>
-#include <Geode/cocos/sprite_nodes/CCSprite.h>
-#include <Geode/cocos/label_nodes/CCLabelBMFont.h>
-#include <Geode/cocos/extensions/GUI/CCControlExtension/CCScale9Sprite.h>
 
 #include "../core/ghost_manager.hpp"
-#include <Geode/ui/BasedButtonSprite.hpp>
 #include <UIBuilder.hpp>
 #include "../core/random_color_ids.hpp"
 #include "../utils/ui_utils.hpp"
@@ -137,7 +120,7 @@ protected:
                     "Player 1",
                     menu_selector(ColorSelectorPopup::onPlayer1Tab_),
                     "player1-color-tab-base"_spr,
-                    {-65.f, 116.f},
+                    {-65.f, 112.f},
                     124.f,
                     34.f,
                     0.55f,

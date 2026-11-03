@@ -8,7 +8,7 @@
 #include <vector>
 #include <cstdint>
 
-#include <Geode/binding/PlayerObject.hpp>
+#include <Geode/Geode.hpp>
 
 #include "../core/ghost_pool.hpp"
 
@@ -118,6 +118,31 @@ public:
         m_ownerToIndex.clear();
         m_activeAttempts.clear();
         m_attemptToActiveIndex.clear();
+    }
+
+    // Resize the slot table without disturbing live PlayerObjects or owner indices.
+    // Shrinking below an occupied slot is deferred until a fresh level attach.
+    bool resizeCapacity(int requested) {
+        requested = std::max(0, requested);
+        if (requested == m_max) return true;
+        if (requested < m_max) {
+            for (int i = requested; i < m_max; ++i) {
+                if (m_slots[static_cast<size_t>(i)].inUse) return false;
+            }
+            m_free.erase(std::remove_if(m_free.begin(), m_free.end(),
+                [requested](int i) { return i >= requested; }), m_free.end());
+            m_slots.resize(static_cast<size_t>(requested));
+        } else {
+            m_slots.resize(static_cast<size_t>(requested));
+            for (int i = m_max; i < requested; ++i) {
+                auto& slot = m_slots[static_cast<size_t>(i)];
+                slot = Slot{};
+                slot.ghostSerial = serialForIndex_(i);
+                m_free.push_back(i);
+            }
+        }
+        m_max = requested;
+        return true;
     }
 
     bool isInitialized() const { return m_max > 0; }

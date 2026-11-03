@@ -22,8 +22,18 @@ else()
     message(STATUS "Found Geode: $ENV{GEODE_SDK}")
 endif()
 
-set(GEODE_DISABLE_PRECOMPILED_HEADERS ON CACHE BOOL "" FORCE)
-add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
+set(GEODE_DISABLE_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
+add_subdirectory("$ENV{GEODE_SDK}" "${CMAKE_CURRENT_BINARY_DIR}/geode")
+
+# Force the standard Geode declarations into generated MSVC binding units
+if (MSVC)
+    get_filename_component(AP_GEODE_BINDINGS_HEADER
+        "$ENV{GEODE_SDK}/loader/include/Geode/Bindings.hpp" ABSOLUTE)
+    if (NOT EXISTS "${AP_GEODE_BINDINGS_HEADER}")
+        message(FATAL_ERROR "Missing Geode header: ${AP_GEODE_BINDINGS_HEADER}")
+    endif()
+    target_compile_options(GeodeBindings PRIVATE "/FI${AP_GEODE_BINDINGS_HEADER}")
+endif()
 
 CPMAddPackage("gh:camila314/UIBuilder#2ab80ad")
 target_link_libraries(${PROJECT_NAME} UIBuilder)
@@ -34,5 +44,17 @@ target_link_libraries(${PROJECT_NAME} cue)
 setup_geode_mod(${PROJECT_NAME})
 
 if (MSVC)
-  target_compile_options(${PROJECT_NAME} PRIVATE /Zc:preprocessor)
+    target_compile_options(${PROJECT_NAME} PRIVATE /Zc:preprocessor)
+endif()
+
+if (MSVC)
+    set_source_files_properties(
+        src/ui/ghost_settings_popup.cpp
+        src/ui/attempt_manager_transfers.cpp
+        src/ui/tabbed_settings_popup.cpp
+        src/ui/playback_mod_menu_popup.cpp
+        PROPERTIES
+            SKIP_PRECOMPILE_HEADERS ON
+            COMPILE_OPTIONS "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/Od>"
+    )
 endif()

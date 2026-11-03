@@ -1,4 +1,3 @@
-// hook_editor_layer.cpp
 #include <Geode/DefaultInclude.hpp>
 #include <Geode/modify/LevelEditorLayer.hpp>
 #include <Geode/binding/LevelEditorLayer.hpp>
