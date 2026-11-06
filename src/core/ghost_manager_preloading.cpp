@@ -1,6 +1,7 @@
 #include "ghost_manager.hpp"
 #include <chrono>
 #include <fstream>
+#include "preload_sort_keys.hpp"
 
 void Ghosts::buildInitialAttemptsFromPreloadOrder(
         const std::vector<uint32_t>& preloadOrder,
@@ -22,13 +23,15 @@ void Ghosts::buildInitialAttemptsFromPreloadOrder(
                 return 0.0;
             };
 
-            std::sort(sorted.begin(), sorted.end(),
-                [&](uint32_t lhs, uint32_t rhs) {
-                    const double tL = getEndT(lhs);
-                    const double tR = getEndT(rhs);
-                    if (tL != tR) return tL < tR;
-                    return lhs < rhs;
-                });
+            auto keys = attemptplayback::makePreloadSortKeys(
+                sorted, [&](uint32_t serial) {
+                    return attemptplayback::PreloadSortKey{serial, 0.f, getEndT(serial)};
+                 });
+            std::sort(keys.begin(), keys.end(), [](auto const& lhs, auto const& rhs) {
+                if (lhs.endT != rhs.endT) return lhs.endT < rhs.endT;
+                return lhs.serial < rhs.serial;
+            });
+            for (size_t i = 0; i < keys.size(); ++i) sorted[i] = keys[i].serial;
         }
 
         const size_t initialCount = std::min(
@@ -53,20 +56,6 @@ void Ghosts::buildPreloadOrderForCount_(int targetCount, std::vector<uint32_t>& 
         std::vector<uint32_t> candidateSerials = m_preloadableSerials;
         if (candidateSerials.empty()) return;
 
-        auto getEndT = [&](uint32_t serial) -> double {
-            float endX = 0.0f;
-            double endT = 0.0;
-            getPreloadSortInfoForSerial_(static_cast<int>(serial), endX, endT);
-            return endT;
-        };
-
-        auto getEndX = [&](uint32_t serial) -> float {
-            float endX = 0.0f;
-            double endT = 0.0;
-            getPreloadSortInfoForSerial_(static_cast<int>(serial), endX, endT);
-            return endX;
-        };
-
         outOrder.reserve(std::min(takeCount, static_cast<int>(candidateSerials.size())));
 
         PreloadSortMode sortMode = m_preloadSortMode;
@@ -74,20 +63,23 @@ void Ghosts::buildPreloadOrderForCount_(int targetCount, std::vector<uint32_t>& 
             sortMode = PreloadSortMode::Spread;
         }
 
+        auto keys = sortMode == PreloadSortMode::Recent
+            ? std::vector<attemptplayback::PreloadSortKey>{}
+            : attemptplayback::makePreloadSortKeys(candidateSerials, [&](uint32_t serial) {
+                attemptplayback::PreloadSortKey key{};
+                key.serial = serial;
+                getPreloadSortInfoForSerial_(static_cast<int>(serial), key.endX, key.endT);
+                return key;
+            });
+
         switch (sortMode) {
             case PreloadSortMode::Best: {
-                std::sort(candidateSerials.begin(), candidateSerials.end(),
-                    [&](int lhs, int rhs) {
-                        const float xL = getEndX(lhs);
-                        const float xR = getEndX(rhs);
-                        if (xL != xR) return xL > xR;
-
-                        const double tL = getEndT(lhs);
-                        const double tR = getEndT(rhs);
-                        if (tL != tR) return tL > tR;
-
-                        return lhs > rhs;
-                    });
+                std::sort(keys.begin(), keys.end(), [](auto const& lhs, auto const& rhs) {
+                    if (lhs.endX != rhs.endX) return lhs.endX > rhs.endX;
+                    if (lhs.endT != rhs.endT) return lhs.endT > rhs.endT;
+                    return lhs.serial > rhs.serial;
+                });
+                for (size_t i = 0; i < keys.size(); ++i) candidateSerials[i] = keys[i].serial;
 
                 outOrder.insert(
                     outOrder.end(),
@@ -114,13 +106,11 @@ void Ghosts::buildPreloadOrderForCount_(int targetCount, std::vector<uint32_t>& 
             case PreloadSortMode::Spread:
             default: {
                 // Sort candidates by endT first
-                std::sort(candidateSerials.begin(), candidateSerials.end(),
-                    [&](int lhs, int rhs) {
-                        const double tL = getEndT(lhs);
-                        const double tR = getEndT(rhs);
-                        if (tL != tR) return tL < tR;
-                        return lhs < rhs;
-                    });
+                std::sort(keys.begin(), keys.end(), [](auto const& lhs, auto const& rhs) {
+                    if (lhs.endT != rhs.endT) return lhs.endT < rhs.endT;
+                    return lhs.serial < rhs.serial;
+                });
+                for (size_t i = 0; i < keys.size(); ++i) candidateSerials[i] = keys[i].serial;
                 
                 // Quantile buckets by sorted rank, bucket sizes balanced even if endT is heavily skewed
                 const int desiredBuckets = std::max(

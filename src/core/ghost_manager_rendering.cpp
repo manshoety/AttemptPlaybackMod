@@ -1186,11 +1186,13 @@ void Ghosts::updateGhostForAttempt_(Attempt& a, float px, float px2, size_t ai,
 
                 if (!inWave) {
                     if (trailActive) {
-                        // hardResetWaveTrail(ghost);
-                        trail->setVisible(false);
-                        trail->setOpacity(0);
+                        if (trail) {
+                            trail->reset();
+                            trail->setVisible(false);
+                            trail->setOpacity(0);
+                        }
                         trailActive = false;
-                    } else if (trail) {
+                    } else if (trail && (trail->isVisible() || trail->getOpacity() != 0)) {
                         trail->reset();
                         trail->setVisible(false);
                         trail->setOpacity(0);

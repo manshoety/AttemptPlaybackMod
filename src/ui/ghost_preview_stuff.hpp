@@ -34,13 +34,30 @@ namespace attemptplayback::ui {
         if (!bg) return;
         const auto size = bg->getContentSize();
         if (size.width <= 0.f || size.height <= 0.f) return;
-        bg->setAnchorPoint({0.f, 0.f});
-        bg->setPosition({0.f, 0.f});
-        // BG fit
-        bg->setScaleX(width / size.width);
-        bg->setScaleY(height / size.height);
-        bg->setColor({40, 126, 255});
-        scene->addChild(bg, -4);
+        if (!(width > 0.f && height > 0.f) ||
+            !std::isfinite(width) || !std::isfinite(height)) return;
+        const float scale = height / size.height;
+        const float tileWidth = size.width * scale;
+        if (!(tileWidth > 0.f) || !std::isfinite(tileWidth)) return;
+
+        const auto sourceRect = bg->getTextureRect();
+        const int tileCount = static_cast<int>(std::min(512.f, std::ceil(width / tileWidth)));
+        for (int i = 0; i < tileCount; ++i) {
+            const float x = i * tileWidth;
+            const float remaining = width - x;
+            if (remaining <= 0.f) break;
+
+            auto* tile = i == 0 ? bg : cocos2d::CCSprite::createWithTexture(bg->getTexture());
+            if (!tile) break;
+            const float sourceWidth = std::min(sourceRect.size.width, remaining / scale);
+            tile->setTextureRect({sourceRect.origin.x, sourceRect.origin.y,
+                                  sourceWidth, sourceRect.size.height});
+            tile->setAnchorPoint({0.f, 0.f});
+            tile->setPosition({x, 0.f});
+            tile->setScale(scale);
+            tile->setColor({40, 126, 255});
+            scene->addChild(tile, -4);
+        }
     }
 
     inline void addGDPreviewGround(cocos2d::CCNode* scene, float width) {

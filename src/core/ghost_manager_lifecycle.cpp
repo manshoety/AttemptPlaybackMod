@@ -78,7 +78,7 @@ void Ghosts::attach(PlayLayer* pl) {
         m_pl = pl;
         m_gl = GJBaseGameLayer::get();
 
-        m_isTwoPlayer =
+        m_separatePlayerInputs =
             m_pl &&
             m_pl->m_levelSettings &&
             m_pl->m_levelSettings->m_twoPlayerMode;

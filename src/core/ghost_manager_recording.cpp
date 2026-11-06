@@ -134,9 +134,9 @@ void Ghosts::recordCurrentFrame_(bool isPlayer1) {
             //}
 
             f.mode = currentMode(p2, m_pl->m_isPlatformer);
-            f.hold = p2Hold;
-            f.holdL = p2LHold;
-            f.holdR = p2RHold;
+            f.hold = m_separatePlayerInputs && p2Hold;
+            f.holdL = m_separatePlayerInputs && p2LHold;
+            f.holdR = m_separatePlayerInputs && p2RHold;
             m_current.p2.push_back(f);
             // p2WavePointThisFrame = false;
         }
@@ -212,9 +212,9 @@ void Ghosts::seedInitialAttemptFrame_() {
             f.wavePointThisFrame = p2WavePointThisFrame;
             f.mode = currentMode(p2, m_pl->m_isPlatformer);
 
-            f.hold = p2Hold;
-            f.holdL = p2LHold;
-            f.holdR = p2RHold;
+            f.hold = m_separatePlayerInputs && p2Hold;
+            f.holdL = m_separatePlayerInputs && p2LHold;
+            f.holdR = m_separatePlayerInputs && p2RHold;
 
             m_current.p2.push_back(f);
             m_current.hadDual = true;

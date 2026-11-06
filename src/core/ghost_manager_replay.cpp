@@ -736,7 +736,7 @@ void Ghosts::updateClickState(bool isPlayer1) {
         }
 
         if (isPlayer1) syncInputsToCurrentIndexP1_();
-        else if (m_isTwoPlayer) syncInputsToCurrentIndexP2_();
+        else if (shouldReplayP2Inputs_()) syncInputsToCurrentIndexP2_();
         else m_lastEmitIdx2 = m_replayIdx2;
 
         m_allowSetPlayerClickState = false;
@@ -812,8 +812,6 @@ void Ghosts::preUpdate() {
         // log::info("didAttemptUseNoclip: {}", didAttemptUseNoclip());
         // if (!m_allowWorkThisTick || m_is_quitting || !m_pl) return;
         if (m_is_quitting || !m_pl || !m_pl->m_player1) return;
-
-        if (m_gl) m_isTwoPlayer = m_gl->m_gameState.m_isDualMode;
 
         if (m_pendingPracticeStartPosInit) {
             m_px = m_pl->m_player1->getPositionX();
@@ -1199,8 +1197,8 @@ void Ghosts::applyFrameAndClickToPlayerOverRange(bool isP1) {
         bool& botPrevHoldL = isP1 ? botPrevHoldL1 : botPrevHoldL2;
         bool& botPrevHoldR = isP1 ? botPrevHoldR1 : botPrevHoldR2;
 
-        bool setClicks =
-            (isP1 || (!isP1 && m_isTwoPlayer)) &&
+        const bool setClicks =
+            (isP1 || shouldReplayP2Inputs_()) &&
             m_allowSetPlayerClickState;
 
 
@@ -1604,7 +1602,7 @@ void Ghosts::applyFrameAndClickToPlayerOverRange(bool isP1) {
             }
         }
 
-            if (setClicks && (isP1 || m_isTwoPlayer)) {
+            if (setClicks) {
                 const size_t clickEnd = endIdx;
 
                 // Default mode

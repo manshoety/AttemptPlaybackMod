@@ -1132,7 +1132,10 @@ private:
     bool m_ghostsExplodeSFX = false;
     bool m_randomIcons = true;
     bool m_IHateMirrorPortalsSoRewind = false;
-    bool m_isTwoPlayer = false;
+    bool m_separatePlayerInputs = false;
+    bool shouldReplayP2Inputs_() const {
+        return m_separatePlayerInputs && m_gl && m_gl->m_gameState.m_isDualMode;
+    }
     float m_px = 0.f;
     float m_px2 = 0.f;
     float m_prevpx2 = 0.f;
