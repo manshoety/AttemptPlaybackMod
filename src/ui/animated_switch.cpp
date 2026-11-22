@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include "../core/geode6_path_compat.hpp"
 
 using namespace cocos2d;
 
@@ -18,7 +19,8 @@ namespace {
 
     // Background yoink correct color
     CCSprite* resourceSprite(const char* file) {
-        auto dir = geode::Mod::get()->getResourcesDir();
+        auto dir = attemptplayback::pathcompat::toStd(geode::Mod::get()->getResourcesDir());
+        if (dir.empty()) return nullptr;
         for (auto const& relative : {
             std::filesystem::path("resources") / "ui" / file,
             std::filesystem::path("ui") / file,
@@ -27,7 +29,7 @@ namespace {
             const auto path = dir / relative;
             std::error_code ec;
             if (std::filesystem::is_regular_file(path, ec)) {
-                if (auto* sprite = CCSprite::create(path.string().c_str())) return sprite;
+                if (auto* sprite = CCSprite::create(attemptplayback::pathcompat::toUtf8(path).c_str())) return sprite;
             }
         }
         return nullptr;

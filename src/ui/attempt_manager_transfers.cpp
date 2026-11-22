@@ -107,7 +107,7 @@ void AttemptManagerPopup::beginExport_(Ghosts::AttemptFileExportMode mode) {
         return;
     }
 
-    std::string base = geode::utils::string::pathToString(G.getCurrentLevelSavePath().stem());
+    std::string base = attemptplayback::pathcompat::toUtf8(G.getCurrentLevelSavePath().stem());
     if (base.empty()) base = "attempts";
 
     std::string suffix;
@@ -131,7 +131,7 @@ void AttemptManagerPopup::beginExport_(Ghosts::AttemptFileExportMode mode) {
 
     async::spawn(
         geode::utils::file::pick(geode::utils::file::PickMode::SaveFile, opt),
-        [self, mode](geode::Result<std::optional<std::filesystem::path>> result) {
+        [self, mode](geode::utils::file::PickResult result) {
             if (result.isErr()) {
                 result.inspectErr([](std::string const& error) {
                     log::info("[APX export] picker cancelled / failed: {}", error);
@@ -141,8 +141,8 @@ void AttemptManagerPopup::beginExport_(Ghosts::AttemptFileExportMode mode) {
             }
 
             std::optional<std::filesystem::path> selectedPath;
-            result.inspect([&](std::optional<std::filesystem::path> const& value) {
-                selectedPath = value;
+            result.inspect([&](std::optional<asp::fs::Path> const& value) {
+                if (value) selectedPath = attemptplayback::pathcompat::toStd(*value);
             });
 
             if (!selectedPath || selectedPath->empty()) {
@@ -156,14 +156,14 @@ void AttemptManagerPopup::beginExport_(Ghosts::AttemptFileExportMode mode) {
                 const std::string message = error.empty()
                     ? "The APX export failed. Check the logs for details."
                     : error;
-                FLAlertLayer::create("Export Failed", gd::string(message.c_str()), "OK")->show();
+                FLAlertLayer::create("Export Failed", std::string(message.c_str()), "OK")->show();
                 self->release();
                 return;
             }
 
             const std::string name = importFileName_(destination);
             const std::string message = "Exported successfully as:\n<cy>" + name + "</c>";
-            FLAlertLayer::create("Export Complete", gd::string(message.c_str()), "OK")->show();
+            FLAlertLayer::create("Export Complete", std::string(message.c_str()), "OK")->show();
             self->release();
         }
     );
@@ -184,7 +184,7 @@ void AttemptManagerPopup::beginImport_(Ghosts::AttemptFileImportMode mode) {
 
     async::spawn(
         geode::utils::file::pick(geode::utils::file::PickMode::OpenFile, opt),
-        [self, mode](geode::Result<std::optional<std::filesystem::path>> result) {
+        [self, mode](geode::utils::file::PickResult result) {
             if (result.isErr()) {
                 result.inspectErr([](std::string const& error) {
                     log::info("[APX import] picker cancelled / failed: {}", error);
@@ -194,8 +194,8 @@ void AttemptManagerPopup::beginImport_(Ghosts::AttemptFileImportMode mode) {
             }
 
             std::optional<std::filesystem::path> selectedPath;
-            result.inspect([&](std::optional<std::filesystem::path> const& value) {
-                selectedPath = value;
+            result.inspect([&](std::optional<asp::fs::Path> const& value) {
+                if (value) selectedPath = attemptplayback::pathcompat::toStd(*value);
             });
 
             if (!selectedPath || selectedPath->empty()) {
@@ -208,7 +208,7 @@ void AttemptManagerPopup::beginImport_(Ghosts::AttemptFileImportMode mode) {
                 const std::string message = preview.error.empty()
                     ? "The selected file is not a valid APX save."
                     : preview.error;
-                FLAlertLayer::create("Import Failed", gd::string(message.c_str()), "OK")->show();
+                FLAlertLayer::create("Import Failed", std::string(message.c_str()), "OK")->show();
                 self->release();
                 return;
             }
@@ -259,7 +259,7 @@ void AttemptManagerPopup::showImportConfirm_(
     this->retain();
     createQuickPopup(
         title.c_str(),
-        gd::string(ss.str().c_str()),
+        std::string(ss.str().c_str()),
         "Cancel",
         confirmText.c_str(),
         [this, source, mode](FLAlertLayer*, bool btn2) {
@@ -287,7 +287,7 @@ void AttemptManagerPopup::showImportConfirm_(
                 const std::string message = error.empty()
                     ? "The APX import failed. Check the logs for details."
                     : error;
-                FLAlertLayer::create("Import Failed", gd::string(message.c_str()), "OK")->show();
+                FLAlertLayer::create("Import Failed", std::string(message.c_str()), "OK")->show();
                 this->release();
                 return;
             }
@@ -305,7 +305,7 @@ void AttemptManagerPopup::showImportConfirm_(
             const char* message = mode == Ghosts::AttemptFileImportMode::ReplaceCurrent
                 ? "The current APX save was replaced successfully.\n\nRecording has been restarted."
                 : "The APX saves were merged successfully.\n\nImported IDs were remapped and recording has been restarted.";
-            FLAlertLayer::create("Import Complete", gd::string(message), "OK")->show();
+            FLAlertLayer::create("Import Complete", std::string(message), "OK")->show();
             this->release();
         }
     );
@@ -410,7 +410,7 @@ void AttemptManagerPopup::showDeleteAttemptConfirm_(int serial) {
 
     createQuickPopup(
         "Confirm Delete",
-        gd::string(ss.str().c_str()),
+        std::string(ss.str().c_str()),
         "Cancel", "Delete",
         [this, serial](FLAlertLayer*, bool btn2) {
             m_confirmOpen = false;
@@ -457,7 +457,7 @@ void AttemptManagerPopup::showDeleteSelectedConfirm_() {
 
     createQuickPopup(
         "Confirm Delete",
-        gd::string(ss.str().c_str()),
+        std::string(ss.str().c_str()),
         "Cancel", "Delete",
         [this](FLAlertLayer*, bool btn2) {
             m_confirmOpen = false;
@@ -512,7 +512,7 @@ void AttemptManagerPopup::showDeletePercentConfirm_(float minPercent, float maxP
         refreshPagingButtons_();
         refreshTabButtons_();
 
-        FLAlertLayer::create("No Attempts Found", gd::string(ss.str().c_str()), "OK")->show();
+        FLAlertLayer::create("No Attempts Found", std::string(ss.str().c_str()), "OK")->show();
         return;
     }
 
@@ -524,7 +524,7 @@ void AttemptManagerPopup::showDeletePercentConfirm_(float minPercent, float maxP
 
     createQuickPopup(
         "Confirm Range Delete",
-        gd::string(ss.str().c_str()),
+        std::string(ss.str().c_str()),
         "Cancel", "Delete",
         [this, minPercent, maxPercent](FLAlertLayer*, bool btn2) {
             m_confirmOpen = false;
@@ -565,13 +565,13 @@ void AttemptManagerPopup::showDeleteAllConfirm_() {
     auto& G = Ghosts::I();
 
     if (!G.hasModAttachedToLevel()) {
-        FLAlertLayer::create("Error", gd::string("Not currently in a level"), "OK")->show();
+        FLAlertLayer::create("Error", std::string("Not currently in a level"), "OK")->show();
         return;
     }
 
     std::string filename = G.getCurrentLevelSaveFileName();
     if (filename.empty()) {
-        FLAlertLayer::create("Error", gd::string("No save file found for this level"), "OK")->show();
+        FLAlertLayer::create("Error", std::string("No save file found for this level"), "OK")->show();
         return;
     }
 
@@ -586,7 +586,7 @@ void AttemptManagerPopup::showDeleteAllConfirm_() {
 
     createQuickPopup(
         "Confirm Delete",
-        gd::string(ss.str().c_str()),
+        std::string(ss.str().c_str()),
         "Cancel", "Delete",
         [this](FLAlertLayer*, bool btn2) {
             m_confirmOpen = false;
@@ -611,7 +611,7 @@ void AttemptManagerPopup::showDeleteAllConfirm_() {
 
                 FLAlertLayer::create(
                     "Success",
-                    gd::string("All saved attempts for this level have been deleted.\n\nRecording has been restarted."),
+                    std::string("All saved attempts for this level have been deleted.\n\nRecording has been restarted."),
                     "OK"
                 )->show();
             }
@@ -622,7 +622,7 @@ void AttemptManagerPopup::showDeleteAllConfirm_() {
 
                 FLAlertLayer::create(
                     "Delete Failed",
-                    gd::string("Failed to delete the save file.\nCheck the logs for more information."),
+                    std::string("Failed to delete the save file.\nCheck the logs for more information."),
                     "OK"
                 )->show();
             }
@@ -649,7 +649,7 @@ void AttemptManagerPopup::showDeleteNormalRunConfirm_(int groupId) {
 
     createQuickPopup(
         "Confirm Run Delete",
-        gd::string(ss.str().c_str()),
+        std::string(ss.str().c_str()),
         "Cancel", "Delete",
         [this, groupId](FLAlertLayer*, bool btn2) {
             m_confirmOpen = false;
@@ -716,7 +716,7 @@ void AttemptManagerPopup::showDeletePracticeSessionConfirm_(int sessionId) {
 
     createQuickPopup(
         "Delete Practice Session",
-        gd::string(ss.str().c_str()),
+        std::string(ss.str().c_str()),
         "Cancel", "Delete",
         [this, sessionId](FLAlertLayer*, bool btn2) {
             m_confirmOpen = false;
@@ -756,7 +756,7 @@ void AttemptManagerPopup::showDeletePracticeSessionConfirm_(int sessionId) {
 void AttemptManagerPopup::showNormalInfo_() {
     FLAlertLayer::create(
         "Normal Runs",
-        gd::string(
+        std::string(
             "Normal attempts are grouped by start position.\n\n"
             "Click a run to edit only attempts from that start position.\n"
             "When editing a run, the arrow next to <cy>Start %</c> takes you back to the run list."
@@ -768,7 +768,7 @@ void AttemptManagerPopup::showNormalInfo_() {
 void AttemptManagerPopup::showPracticeInfo_() {
     FLAlertLayer::create(
         "Practice Sessions",
-        gd::string(
+        std::string(
             "Practice attempts are grouped by practice session.\n\n"
             "Deleting a session removes every attempt and the replay path.\n"
             "Inside a session, only attempts that are not part of the replay path can be deleted."
@@ -780,7 +780,7 @@ void AttemptManagerPopup::showPracticeInfo_() {
 void AttemptManagerPopup::showReplayPathInfo_() {
     FLAlertLayer::create(
         "Replay Path Attempts",
-        gd::string(
+        std::string(
             "These attempts are part of the practice replay path.\n\n"
             "They cannot be deleted individually because they are used to build the full practice replay route.\n"
             "To remove them, delete the full practice session."

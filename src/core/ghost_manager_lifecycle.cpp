@@ -439,7 +439,8 @@ void Ghosts::onDeath() {
         m_justDied = true;
 
         if (m_pl->m_isPracticeMode) {
-            if (recording && !recordingBlocked && recordInPractice && !m_current.p1.empty()) {
+            if (recording && !recordingBlocked && recordInPractice && !m_current.p1.empty() && !block_attempt_push_on_recording_start) {
+                ensurePracticeRecordingSession_();
                 double startTime = m_current.baseTimeOffset;
                 float startX = m_current.p1.front().x;
                 float endX = m_current.p1.back().x;
@@ -460,9 +461,6 @@ void Ghosts::onDeath() {
                     m_current.p1.size(),
                     m_current.p2.size()
                 );
-            }
-
-            if (recording && !recordingBlocked && recordInPractice && !m_current.p1.empty() && !block_attempt_push_on_recording_start) {
                 pushAttempt(std::move(m_current));
             }
 
@@ -521,7 +519,11 @@ void Ghosts::onReset() {
             //    if (!isRecording()) toggleRecording();
             //}
             //else 
-            if (!m_current.p1.empty()) {
+            if (!recordInPractice) {
+                m_current = Attempt{};
+            }
+            else if (!m_current.p1.empty()) {
+                ensurePracticeRecordingSession_();
                 // Only runs when we don't use OnDeath
                 double startTime = m_current.baseTimeOffset;
                 float startX = m_current.p1.front().x;
@@ -541,12 +543,7 @@ void Ghosts::onReset() {
                     m_current.p2.size()
                 );
 
-                if (recordInPractice) {
-                    pushAttempt(std::move(m_current));
-                }
-                else {
-                    m_current = Attempt{};
-                }
+                pushAttempt(std::move(m_current));
             }
         }
         
@@ -744,6 +741,26 @@ void Ghosts::onQuit() {
         death_sound_preloaded = false;
         m_allowWaveHook = false;
 
+        // push current attempt
+        if (recording && !recordingBlocked && !botActive && !playback &&
+            m_current.p1.size() > 1 &&
+            (!(m_current.practiceAttempt || (m_pl && m_pl->m_isPracticeMode)) || recordInPractice)) {
+            if (m_pl && m_pl->m_isPracticeMode) {
+                ensurePracticeRecordingSession_();
+                m_checkpointMgr.overwriteSegmentForAttempt(
+                    m_current.serial,
+                    m_current.baseTimeOffset,
+                    0.0,
+                    static_cast<double>(m_current.p1.back().t) - m_current.baseTimeOffset,
+                    static_cast<float>(m_current.p1.front().x),
+                    static_cast<float>(m_current.p1.back().x),
+                    m_current.p1.size(),
+                    m_current.p2.size()
+                );
+            }
+            pushAttempt(std::move(m_current), false);
+        }
+
         m_current = Attempt{};
         
         flushPendingSaves_();
@@ -898,6 +915,7 @@ void Ghosts::onComplete() {
             const size_t p2Count = m_current.p2.size();
 
             if (m_pl && m_pl->m_isPracticeMode && recording && !recordingBlocked && recordInPractice) {
+                ensurePracticeRecordingSession_();
                 double startTime = m_current.baseTimeOffset;
                 float startX = m_current.p1.front().x;
 
@@ -915,7 +933,9 @@ void Ghosts::onComplete() {
                 );
             }
 
-            m_checkpointMgr.onAttemptCompleted();
+            if (m_pl && m_pl->m_isPracticeMode && recording && !recordingBlocked && recordInPractice) {
+                m_checkpointMgr.onAttemptCompleted();
+            }
 
             m_current.completed = true;
             m_lastWinSerial = serial;

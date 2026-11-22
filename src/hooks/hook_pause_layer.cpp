@@ -1,105 +1,73 @@
 #include <Geode/DefaultInclude.hpp>
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/binding/PauseLayer.hpp>
-#include <Geode/cocos/CCDirector.h>
+#include <Geode/utils/NodeIDs.hpp>
 
-#include "../utils/ui_utils.hpp"
 #include "../ui/playback_mod_menu_popup.hpp"
 #include "../core/ghost_manager.hpp"
 
 using namespace geode::prelude;
-using namespace attemptplayback;
 
 class $modify(MyPauseLayer, PauseLayer) {
-    static void onModify(auto& self) {
-        if (!self.setHookPriorityPost(
-            "PauseLayer::customSetup",
-            Priority::Last
-        )) {
-            geode::log::warn("Failed to set PauseLayer::customSetup hook priority");
-        }
-    }
-
     void customSetup() {
         PauseLayer::customSetup();
 
-        if (!Ghosts::I().isModEnabled())
-            return;
+        NodeIDs::provideFor(this);
+        if (!Ghosts::I().isModEnabled()) return;
 
-        auto* leftMenu = typeinfo_cast<CCMenu*>(this->getChildByID("left-button-menu"));
-        if (!leftMenu) return;
-
-        // Prevent duplicates
-        if (leftMenu->getChildByID("attemptplayback-button"_spr)) return;
-
-        // Create spriteframe icon
-        auto* spr = CCSprite::createWithSpriteFrameName("GJ_sRecentIcon_001.png");
-        if (!spr) {
-            geode::log::warn("Failed to load sprite frame GJ_sRecentIcon_001.png");
+        auto* mainLayer = this->getChildByID("main-layer");
+        auto* leftMenu = mainLayer
+            ? typeinfo_cast<CCMenu*>(mainLayer->getChildByID("left-button-menu"))
+            : nullptr;
+        if (!leftMenu) {
+            log::warn("Attempt Playback: PauseLayer/main-layer/left-button-menu not found");
             return;
         }
 
-        // Circular background like the pause menu buttons
+        if (leftMenu->getChildByID("attemptplayback-button"_spr)) return;
+
+        auto* icon = CCSprite::createWithSpriteFrameName("GJ_sRecentIcon_001.png");
+        if (!icon) {
+            log::warn("Attempt Playback: GJ_sRecentIcon_001.png is unavailable");
+            return;
+        }
+
         auto* btnSprite = CircleButtonSprite::create(
-            spr, CircleBaseColor::Green, CircleBaseSize::Small
+            icon, CircleBaseColor::Green, CircleBaseSize::Small
         );
         if (!btnSprite) return;
 
-        // Create button
         auto* btn = CCMenuItemSpriteExtra::create(
             btnSprite, this, menu_selector(MyPauseLayer::onAttemptPlaybackPopup)
         );
+        if (!btn) return;
         btn->setID("attemptplayback-button"_spr);
 
-        // Add to pause menu + relayout
+        // Match the other side buttons
+        constexpr float kButtonWidth = 27.f;
+        constexpr float kButtonHeight = 28.5f;
+        const CCSize buttonSize{kButtonWidth, kButtonHeight};
+        btn->setContentSize(buttonSize);
+
+        const auto spriteSize = btnSprite->getContentSize();
+        if (spriteSize.width > 0.f && spriteSize.height > 0.f) {
+            const float widthScale = kButtonWidth / spriteSize.width;
+            const float heightScale = kButtonHeight / spriteSize.height;
+            btnSprite->setScale(widthScale < heightScale ? widthScale : heightScale);
+        }
+
+        btnSprite->setAnchorPoint({0.5f, 0.5f});
+        btnSprite->setPosition({kButtonWidth * 0.5f, kButtonHeight * 0.5f});
+
         leftMenu->addChild(btn);
         leftMenu->updateLayout();
     }
 
     void onAttemptPlaybackPopup(CCObject*) {
-        if (!Ghosts::I().isModEnabled())
-            return;
-
-        if (auto* p = PlaybackModMenu::create()) {
-            p->m_noElasticity = true;
-            p->show();
-        }
-    }
-
-private:
-    void addAttemptPlaybackButton_(float) {
         if (!Ghosts::I().isModEnabled()) return;
-        if (!this->getParent()) return;
-
-        CCMenu* host = nullptr;
-
-        if (auto n = this->getChildByIDRecursive("button-menu")) {
-            host = typeinfo_cast<CCMenu*>(n);
+        if (auto* popup = PlaybackModMenu::create()) {
+            popup->m_noElasticity = true;
+            popup->show();
         }
-        if (!host) {
-            host = findLargestMenu(this);
-        }
-
-        if (!host) {
-            host = CCMenu::create();
-            host->setPosition({0.f, 0.f});
-            this->addChild(host, 9000);
-        }
-
-        if (!host->getChildByID("attemptplayback-btn"_spr)) {
-            auto* btn = makeButton("PM", this, menu_selector(MyPauseLayer::openMenu), 0.75f);
-            btn->setID("attemptplayback-btn"_spr);
-
-            btn->setPosition({ 268.5f, -113.f });
-
-            host->addChild(btn, 9001);
-        }
-    }
-
-    void openMenu(CCObject*) {
-        if (!Ghosts::I().isModEnabled())
-            return;
-
-        PlaybackModMenu::create()->show();
     }
 };

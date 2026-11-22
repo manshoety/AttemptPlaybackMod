@@ -824,7 +824,7 @@ static bool writeAPXFileCurrent_(
     if (!out) {
         log::warn(
             "[SAVE FILE] failed to open file for write: {}",
-            geode::utils::string::pathToString(path)
+            attemptplayback::pathcompat::toUtf8(path)
         );
         return false;
     }
@@ -862,7 +862,7 @@ bool replaceAPXFileSafely_(
     std::error_code ec;
     if (!std::filesystem::is_regular_file(tmpPath, ec) || ec) {
         log::warn("[SAVE FILE] replacement source is not a regular file: {}",
-            geode::utils::string::pathToString(tmpPath));
+            attemptplayback::pathcompat::toUtf8(tmpPath));
         return false;
     }
 
@@ -873,7 +873,7 @@ bool replaceAPXFileSafely_(
         ec.clear();
         if (!std::filesystem::is_regular_file(finalPath, ec) || ec) {
             log::warn("[SAVE FILE] replacement destination is not a regular file: {}",
-                geode::utils::string::pathToString(finalPath));
+                attemptplayback::pathcompat::toUtf8(finalPath));
             return false;
         }
     }
@@ -888,7 +888,7 @@ bool replaceAPXFileSafely_(
     if (ec || backupExists) {
         log::warn(
             "[SAVE FILE] replacement blocked by existing backup or lookup error: {} ({})",
-            geode::utils::string::pathToString(backupPath),
+            attemptplayback::pathcompat::toUtf8(backupPath),
             ec ? ec.message() : "backup already exists"
         );
         return false;
@@ -902,7 +902,7 @@ bool replaceAPXFileSafely_(
     if (ec || !destinationExists) {
         log::warn(
             "[SAVE FILE] replacement failed; destination not confirmed: {} ({})",
-            geode::utils::string::pathToString(finalPath),
+            attemptplayback::pathcompat::toUtf8(finalPath),
             ec ? ec.message() : "destination missing"
         );
         return false;
@@ -914,7 +914,7 @@ bool replaceAPXFileSafely_(
     if (ec) {
         log::warn(
             "[SAVE FILE] could not preserve original at {}: {}",
-            geode::utils::string::pathToString(backupPath),
+            attemptplayback::pathcompat::toUtf8(backupPath),
             ec.message()
         );
         return false;
@@ -925,7 +925,7 @@ bool replaceAPXFileSafely_(
     if (ec) {
         log::warn(
             "[SAVE FILE] replacement failed; original preserved at {}: {}",
-            geode::utils::string::pathToString(backupPath),
+            attemptplayback::pathcompat::toUtf8(backupPath),
             ec.message()
         );
         std::error_code restoreEc;
@@ -933,7 +933,7 @@ bool replaceAPXFileSafely_(
         if (restoreEc) {
             log::error(
                 "[SAVE FILE] failed to restore original; recover it manually from {}: {}",
-                geode::utils::string::pathToString(backupPath),
+                attemptplayback::pathcompat::toUtf8(backupPath),
                 restoreEc.message()
             );
         }
@@ -945,7 +945,7 @@ bool replaceAPXFileSafely_(
     if (ec) {
         log::warn(
             "[SAVE FILE] replacement succeeded, but could not remove backup {}: {}",
-            geode::utils::string::pathToString(backupPath),
+            attemptplayback::pathcompat::toUtf8(backupPath),
             ec.message()
         );
     }
@@ -995,7 +995,7 @@ bool loadAPXFileWithMigration(
     if (ec) {
         log::warn(
             "[SAVE FILE] exists failed for {}: {}",
-            geode::utils::string::pathToString(path),
+            attemptplayback::pathcompat::toUtf8(path),
             ec.message()
         );
         return false;
@@ -1010,7 +1010,7 @@ bool loadAPXFileWithMigration(
     if (ec) {
         log::warn(
             "[SAVE FILE] file_size failed for {}: {}",
-            geode::utils::string::pathToString(path),
+            attemptplayback::pathcompat::toUtf8(path),
             ec.message()
         );
         return false;
@@ -1019,7 +1019,7 @@ bool loadAPXFileWithMigration(
     if (fsz < sizeof(APXHeader)) {
         log::warn(
             "[SAVE FILE] file too small to contain APX header: {}",
-            geode::utils::string::pathToString(path)
+            attemptplayback::pathcompat::toUtf8(path)
         );
         return false;
     }
@@ -1028,7 +1028,7 @@ bool loadAPXFileWithMigration(
     if (!in) {
         log::warn(
             "[SAVE FILE] failed to open file for read: {}",
-            geode::utils::string::pathToString(path)
+            attemptplayback::pathcompat::toUtf8(path)
         );
         return false;
     }
@@ -1043,7 +1043,7 @@ bool loadAPXFileWithMigration(
     if (std::memcmp(hdr.magic, "APX2", 4) != 0) {
         log::warn(
             "[SAVE FILE] invalid APX header magic in {}",
-            geode::utils::string::pathToString(path)
+            attemptplayback::pathcompat::toUtf8(path)
         );
         return false;
     }
@@ -1059,7 +1059,7 @@ bool loadAPXFileWithMigration(
         log::warn(
             "[SAVE FILE] unsupported future APX version {} in {}",
             hdr.version,
-            geode::utils::string::pathToString(path)
+            attemptplayback::pathcompat::toUtf8(path)
         );
         return false;
     }
@@ -1152,7 +1152,7 @@ bool loadAPXFileWithMigration(
         if (!rewriteAPXFileToCurrent_(path, attemptsOut, practicePathOut)) {
             log::warn(
                 "[SAVE FILE] loaded legacy file but failed to rewrite it to current format: {}",
-                geode::utils::string::pathToString(path)
+                attemptplayback::pathcompat::toUtf8(path)
             );
         }
     }
@@ -1287,7 +1287,7 @@ bool scanAPXFileCatalog(
     if (ec) {
         log::warn(
             "[SAVE FILE] exists failed for {}: {}",
-            geode::utils::string::pathToString(path),
+            attemptplayback::pathcompat::toUtf8(path),
             ec.message()
         );
         return false;
@@ -1302,7 +1302,7 @@ bool scanAPXFileCatalog(
     if (ec) {
         log::warn(
             "[SAVE FILE] file_size failed for {}: {}",
-            geode::utils::string::pathToString(path),
+            attemptplayback::pathcompat::toUtf8(path),
             ec.message()
         );
         return false;
@@ -1311,7 +1311,7 @@ bool scanAPXFileCatalog(
     if (fsz < sizeof(APXHeader)) {
         log::warn(
             "[SAVE FILE] file too small to contain APX header: {}",
-            geode::utils::string::pathToString(path)
+            attemptplayback::pathcompat::toUtf8(path)
         );
         return false;
     }
@@ -1323,7 +1323,7 @@ bool scanAPXFileCatalog(
     if (!in) {
         log::warn(
             "[SAVE FILE] failed to open file for read: {}",
-            geode::utils::string::pathToString(path)
+            attemptplayback::pathcompat::toUtf8(path)
         );
         return false;
     }
@@ -1338,7 +1338,7 @@ bool scanAPXFileCatalog(
     if (std::memcmp(hdr.magic, "APX2", 4) != 0) {
         log::warn(
             "[SAVE FILE] invalid APX header magic in {}",
-            geode::utils::string::pathToString(path)
+            attemptplayback::pathcompat::toUtf8(path)
         );
         return false;
     }
@@ -1349,7 +1349,7 @@ bool scanAPXFileCatalog(
         log::warn(
             "[SAVE FILE] unsupported future APX version {} in {}",
             hdr.version,
-            geode::utils::string::pathToString(path)
+            attemptplayback::pathcompat::toUtf8(path)
         );
         return false;
     }
@@ -1485,7 +1485,7 @@ bool loadAPXAttemptByCatalogEntry(
     if (!in) {
         log::warn(
             "[SAVE FILE] failed to open file for ATT3 lazy load: {}",
-            geode::utils::string::pathToString(path)
+            attemptplayback::pathcompat::toUtf8(path)
         );
         return false;
     }
@@ -1506,7 +1506,7 @@ bool saveAPXFileCurrent(
         if (ec) {
             log::warn(
                 "[SAVE FILE] create_directories failed: {} ({})",
-                geode::utils::string::pathToString(dir),
+                attemptplayback::pathcompat::toUtf8(dir),
                 ec.message()
             );
             return false;

@@ -168,6 +168,9 @@ bool Ghosts::startReplayPractice() {
             return false;
         }
 
+        if (isPracticeMode()) togglePracticeMode(false);
+        flushPendingSaves_();
+
         if (hasCurrentPersistenceTarget_()) {
             clearAttemptCatalog_();
 
@@ -176,7 +179,6 @@ bool Ghosts::startReplayPractice() {
             }
         }
 
-        if (explicitSelection) m_pl->m_currentCheckpoint = nullptr;
         if (isPracticeMode()) togglePracticeMode(false);
 
         int selectedSession = -1;
@@ -387,7 +389,6 @@ bool Ghosts::startReplayPractice() {
         }
 
         if (explicitSelection) {
-            m_pl->m_currentCheckpoint = nullptr;
             m_pendingPracticeStartPosInit = true;
             m_pendingPracticeStartPosFrames = 0;
         }
@@ -898,8 +899,10 @@ void Ghosts::preUpdate() {
     }
 
 void Ghosts::checkIfPlayerIsDonePlaybackThingMaybePerhapsYeah() {
-        if (m_replayKind == ReplayKind::PracticeComposite) finalTime = m_replayEndTime;
-        else finalTime = m_currentOwner->p1.back().t;
+    if (!m_pl || !m_currentOwner || m_currentOwner->p1.empty()) return;
+    if (m_playingEndAnimation || m_pl->m_hasCompletedLevel) return;
+    if (m_replayKind == ReplayKind::PracticeComposite) finalTime = m_replayEndTime;
+    else finalTime = m_currentOwner->p1.back().t;
 
         if (!m_freezePlayerXAtEnd && m_currentSessionTime >= finalTime) {
             if (m_currentOwner->completed) return;

@@ -128,6 +128,22 @@ bool Ghosts::deletePracticeSessionById(int sessionId) {
         return rewriteAttemptsAndPracticePathAfterDeletion_(deleteSet, keptPath, "practice-session");
     }
 
+void Ghosts::ensurePracticeRecordingSession_() {
+    if (!m_pl || !m_pl->m_isPracticeMode || !recording || recordingBlocked ||
+        !recordInPractice || playback || botActive) return;
+
+    m_current.practiceAttempt = true;
+    auto const& path = m_checkpointMgr.getPath();
+    auto const* active = path.activeSession();
+    if (!active || path.frozen || active->frozen) {
+        m_checkpointMgr.createNewSession();
+        log::info(
+            "[Practice save] started recording session {} (previous route missing/frozen)",
+            m_checkpointMgr.getPath().activeSessionId
+        );
+    }
+}
+
 bool Ghosts::rewriteAttemptsAndPracticePathAfterDeletion_(
         std::unordered_set<int> const& deleteSet,
         PracticePath const& keptPath,
@@ -160,7 +176,7 @@ bool Ghosts::rewriteAttemptsAndPracticePathAfterDeletion_(
                 log::warn(
                     "[APX delete] failed to lazy-load kept attempt serial={} from {}",
                     entry.serial,
-                    geode::utils::string::pathToString(path)
+                    attemptplayback::pathcompat::toUtf8(path)
                 );
                 return false;
             }
@@ -174,7 +190,7 @@ bool Ghosts::rewriteAttemptsAndPracticePathAfterDeletion_(
             log::warn(
                 "[APX delete] failed to rewrite APX file after {} deletion: {}",
                 label ? label : "attempt",
-                geode::utils::string::pathToString(path)
+                attemptplayback::pathcompat::toUtf8(path)
             );
             return false;
         }
@@ -277,8 +293,10 @@ bool Ghosts::deletePracticeAttemptsBySerialSet_(
 void Ghosts::onPracticeToggle(bool enabled) {
         // log::info("[onPracticeToggle] enabled={}", enabled);
 
-        if (recording && !recordingBlocked && recordInPractice && !enabled) {
+        if (recording && !recordingBlocked && recordInPractice && !enabled &&
+            m_pl && m_pl->m_isPracticeMode && !block_attempt_push_on_recording_start) {
             if (!m_current.p1.empty()) {
+                m_current.practiceAttempt = true;
                 double startTime = m_current.baseTimeOffset;
                 float startX = m_current.p1.front().x;
                 float endX = m_current.p1.back().x;
@@ -672,7 +690,7 @@ bool Ghosts::buildSelectedPracticeReplayRoute_() {
 
 void Ghosts::clearReplayStartPosOverride_() {
         if (m_pl && m_replayStartPosObject) {
-            m_pl->setStartPosObject(m_savedStartPosObject);
+            m_pl->setActiveStartPosObject(m_savedStartPosObject);
         }
 
         m_pendingPracticeStartPosInit = false;
@@ -700,7 +718,15 @@ bool Ghosts::installReplayStartPosForSelectedPracticeSession_() {
 
         Attempt* owner = ensureAttemptLoadedBySerialAndPractice_(firstSegment.ownerSerial, true, false);
         if (!owner || owner->p1.empty()) {
-            log::warn("[Practice replay] could not load first owner {} for selected primary session", firstSegment.ownerSerial);
+            const auto* practice = findCatalogEntryBySerialAndPractice_(firstSegment.ownerSerial, true);
+            const auto* normal = findCatalogEntryBySerialAndPractice_(firstSegment.ownerSerial, false);
+            log::warn(
+                "[Practice replay] could not load first owner {}: practiceOnDisk={} normalOnDisk={} practiceDiskP1={} normalDiskP1={} practiceLoaded={} normalLoaded={} loadedP1={}",
+                firstSegment.ownerSerial, practice != nullptr, normal != nullptr,
+                practice ? practice->p1Count : 0u, normal ? normal->p1Count : 0u,
+                owner != nullptr, findLoadedAttemptBySerialAndPractice_(firstSegment.ownerSerial, false) != nullptr,
+                owner ? owner->p1.size() : 0u
+            );
             return false;
         }
 
@@ -712,11 +738,17 @@ bool Ghosts::installReplayStartPosForSelectedPracticeSession_() {
         if (m_pl->m_levelSettings) {
             settings = LevelSettingsObject::objectFromString(m_pl->m_levelSettings->getSaveString());
         }
-        if (!settings) settings = LevelSettingsObject::create();
+        // GD 2.2091 Windows bindings declare create() as inline but do not provide its implementation RAAAAAAA
+        // static LevelSettingsObject* create() = win inline;
+        // FIX_ON_FULL_GEODE_V6_RELEASE
+        if (!settings) {
+            log::warn("[Practice replay] could not clone current level settings; refusing start-pos override");
+            return false;
+        }
 
         auto* startPos = StartPosObject::create();
-        if (!settings || !startPos) {
-            log::warn("[Practice replay] failed to create temporary start-position objects");
+        if (!startPos) {
+            log::warn("[Practice replay] failed to create temporary start-position object");
             return false;
         }
 
@@ -749,8 +781,7 @@ bool Ghosts::installReplayStartPosForSelectedPracticeSession_() {
         m_replayStartSettings = settings;
         m_replayStartPosObject = startPos;
         m_currentReplayStartPos = startPoint;
-        m_pl->m_currentCheckpoint = nullptr;
-        m_pl->setStartPosObject(startPos);
+        m_pl->setActiveStartPosObject(startPos);
 
         log::info(
             "[Practice replay] temporary start pos placed for route session {} at ({:.2f}, {:.2f}), mode={}, mini={}",
@@ -838,7 +869,5 @@ void Ghosts::applyBotSafety_(bool on) {
         safeMode_enabled = on;
         noclip_enabled = on;
         if (on) m_runUsedBot = true;
-        if (on) cheatAPI::setCheat();
-        else cheatAPI::endCheat();
     }
 

@@ -63,7 +63,7 @@ bool Ghosts::deleteCurrentLevelSaveFile() {
         if (ec) {
             log::warn(
                 "[APX delete-all] exists failed for {}: {}",
-                geode::utils::string::pathToString(path),
+                attemptplayback::pathcompat::toUtf8(path),
                 ec.message()
             );
             return false;
@@ -75,7 +75,7 @@ bool Ghosts::deleteCurrentLevelSaveFile() {
             if (ec) {
                 log::warn(
                     "[APX delete-all] remove failed for {}: {}",
-                    geode::utils::string::pathToString(path),
+                    attemptplayback::pathcompat::toUtf8(path),
                     ec.message()
                 );
                 return false;
@@ -156,13 +156,17 @@ bool Ghosts::deleteCurrentLevelSaveFile() {
     }
 
 std::filesystem::path Ghosts::getAttemptExportsDir() const {
-        auto dir = Mod::get()->getSaveDir() / "exports";
+        const auto saveDir = attemptplayback::pathcompat::toStdOrLog(
+            Mod::get()->getSaveDir(), "[APX export]", "save"
+        );
+        if (saveDir.empty()) return {};
+        auto dir = saveDir / "exports";
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
         if (ec) {
             log::warn(
                 "[APX export] create_directories failed for {}: {}",
-                geode::utils::string::pathToString(dir),
+                attemptplayback::pathcompat::toUtf8(dir),
                 ec.message()
             );
         }
@@ -626,7 +630,10 @@ bool Ghosts::importAttemptFile(
 
 std::filesystem::path Ghosts::attemptsDir_() const {
         if (m_attemptsDir.empty()) {
-            auto base = Mod::get()->getSaveDir();
+            auto base = attemptplayback::pathcompat::toStdOrLog(
+                Mod::get()->getSaveDir(), "[SAVE FILE]", "save"
+            );
+            if (base.empty()) return {};
             m_attemptsDir = base / "attempts";
 
             std::error_code ec;
@@ -634,7 +641,7 @@ std::filesystem::path Ghosts::attemptsDir_() const {
             if (ec) {
                 log::warn(
                     "[SAVE FILE] create_directories failed: {} ({})",
-                    geode::utils::string::pathToString(m_attemptsDir),
+                    attemptplayback::pathcompat::toUtf8(m_attemptsDir),
                     ec.message()
                 );
             }
@@ -644,6 +651,7 @@ std::filesystem::path Ghosts::attemptsDir_() const {
 
 std::filesystem::path Ghosts::fileForLevel_(int levelID) const {
         auto dir = attemptsDir_();
+        if (dir.empty()) return {};
 
         if (!m_customSaveId.empty()) {
             return dir / (m_customSaveId + "_attempts.apx");
@@ -660,7 +668,7 @@ void Ghosts::ensureHeader_(std::filesystem::path const& path) {
         if (ec) {
             log::warn(
                 "[SAVE FILE] exists failed for {}: {}",
-                geode::utils::string::pathToString(path),
+                attemptplayback::pathcompat::toUtf8(path),
                 ec.message()
             );
             return;
@@ -673,7 +681,7 @@ void Ghosts::ensureHeader_(std::filesystem::path const& path) {
             if (ec) {
                 log::warn(
                     "[SAVE FILE] file_size failed for {}: {}",
-                    geode::utils::string::pathToString(path),
+                    attemptplayback::pathcompat::toUtf8(path),
                     ec.message()
                 );
                 return;
@@ -695,7 +703,7 @@ void Ghosts::ensureHeader_(std::filesystem::path const& path) {
         if (!hout) {
             log::warn(
                 "[SAVE FILE] failed to open header file for write: {}",
-                geode::utils::string::pathToString(path)
+                attemptplayback::pathcompat::toUtf8(path)
             );
             return;
         }
@@ -746,8 +754,8 @@ void Ghosts::migrateLegacyCustomLevelFiles_(
             if (!ec) {
                 log::info(
                     "[APX custom-id] migrated {} -> {}",
-                    geode::utils::string::pathToString(legacyPaths.front()),
-                    geode::utils::string::pathToString(canonicalPath)
+                    attemptplayback::pathcompat::toUtf8(legacyPaths.front()),
+                    attemptplayback::pathcompat::toUtf8(canonicalPath)
                 );
                 return;
             }
@@ -765,7 +773,7 @@ void Ghosts::migrateLegacyCustomLevelFiles_(
             if (!loadAPXFileWithMigration(canonicalPath, mergedAttempts, mergedPath)) {
                 log::warn(
                     "[APX custom-id] refusing migration because canonical file could not be read: {}",
-                    geode::utils::string::pathToString(canonicalPath)
+                    attemptplayback::pathcompat::toUtf8(canonicalPath)
                 );
                 return;
             }
@@ -786,7 +794,7 @@ void Ghosts::migrateLegacyCustomLevelFiles_(
             if (!loadAPXFileWithMigration(legacyPath, incomingAttempts, incomingPath)) {
                 log::warn(
                     "[APX custom-id] could not read legacy file; leaving it untouched: {}",
-                    geode::utils::string::pathToString(legacyPath)
+                    attemptplayback::pathcompat::toUtf8(legacyPath)
                 );
                 continue;
             }
@@ -851,7 +859,7 @@ void Ghosts::migrateLegacyCustomLevelFiles_(
         if (!saveAPXFileCurrent(canonicalPath, mergedAttempts, mergedPath)) {
             log::warn(
                 "[APX custom-id] merged migration failed; legacy files were not removed: {}",
-                geode::utils::string::pathToString(canonicalPath)
+                attemptplayback::pathcompat::toUtf8(canonicalPath)
             );
             return;
         }
@@ -862,7 +870,7 @@ void Ghosts::migrateLegacyCustomLevelFiles_(
             if (ec) {
                 log::warn(
                     "[APX custom-id] migrated data but could not remove old file {}: {}",
-                    geode::utils::string::pathToString(legacyPath),
+                    attemptplayback::pathcompat::toUtf8(legacyPath),
                     ec.message()
                 );
             }
@@ -900,7 +908,7 @@ bool Ghosts::rewriteWholeFileToCurrent_(std::filesystem::path const& path) {
             log::error(
                 "[APX save] ABORTING migration rewrite for {}: 0 valid attempts in memory. "
                 "Refusing to overwrite existing file.",
-                geode::utils::string::pathToString(path)
+                attemptplayback::pathcompat::toUtf8(path)
             );
             return false;
         }
@@ -913,7 +921,7 @@ bool Ghosts::rewriteWholeFileToCurrent_(std::filesystem::path const& path) {
             if (!out) {
                 log::warn(
                     "[APX save] failed to open temp migration file: {}",
-                    geode::utils::string::pathToString(tmp)
+                    attemptplayback::pathcompat::toUtf8(tmp)
                 );
                 return false;
             }
@@ -934,7 +942,7 @@ bool Ghosts::rewriteWholeFileToCurrent_(std::filesystem::path const& path) {
             if (writtenAttempts == 0) {
                 log::error(
                     "[APX save] ABORTING migration rewrite for {}: wrote 0 attempts unexpectedly.",
-                    geode::utils::string::pathToString(path)
+                    attemptplayback::pathcompat::toUtf8(path)
                 );
                 return false;
             }
@@ -950,8 +958,8 @@ bool Ghosts::rewriteWholeFileToCurrent_(std::filesystem::path const& path) {
         if (!replaceAPXFileSafely_(tmp, path)) {
             log::warn(
                 "[APX save] migration replacement failed {} -> {}",
-                geode::utils::string::pathToString(tmp),
-                geode::utils::string::pathToString(path)
+                attemptplayback::pathcompat::toUtf8(tmp),
+                attemptplayback::pathcompat::toUtf8(path)
             );
             std::error_code ec;
             std::filesystem::remove(tmp, ec);
@@ -985,7 +993,7 @@ int Ghosts::saveNewAttemptsForLevel_(int levelID) {
         if (ec) {
             log::warn(
                 "[APX save] create_directories failed: {} ({})",
-                geode::utils::string::pathToString(path.parent_path()),
+                attemptplayback::pathcompat::toUtf8(path.parent_path()),
                 ec.message()
             );
             m_isSaving = false;
@@ -1092,14 +1100,14 @@ int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
         auto path = fileForLevel_(levelID);
         std::ifstream in(path, std::ios::binary);
         if (!in) {
-            log::warn("[APX load] !in {}", geode::utils::string::pathToString(path));
+            log::warn("[APX load] !in {}", attemptplayback::pathcompat::toUtf8(path));
             return 0;
         }
 
         APXHeader h{};
         in.read(reinterpret_cast<char*>(&h), sizeof(h));
         if (!in || std::memcmp(h.magic, "APX2", 4) != 0) {
-            log::warn("[APX load] bad header for {}", geode::utils::string::pathToString(path));
+            log::warn("[APX load] bad header for {}", attemptplayback::pathcompat::toUtf8(path));
             return 0;
         }
 
@@ -1114,7 +1122,7 @@ int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
             log::info(
                 "[APX load] Catalog-only {} attempts from {} (version {}) in {} ms (catalog={} ms, resident={})",
                 m_attemptCatalog.size(),
-                geode::utils::string::pathToString(path),
+                attemptplayback::pathcompat::toUtf8(path),
                 h.version,
                 loadMs,
                 catalogMs,
@@ -1325,7 +1333,7 @@ int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
         log::info(
             "[APX load] Loaded {} attempts from {} (version {}) in {} ms",
             loaded,
-            geode::utils::string::pathToString(path),
+            attemptplayback::pathcompat::toUtf8(path),
             h.version,
             loadMs
         );
@@ -1341,13 +1349,13 @@ int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
             if (oldWavePointBitMeaning) {
                 log::info(
                     "[APX migration] clearing old wavePointThisFrame/sliding bit and rewriting {} to APX v{}",
-                    geode::utils::string::pathToString(path),
+                    attemptplayback::pathcompat::toUtf8(path),
                     kAPXVersion
                 );
             } else {
                 log::info(
                     "[APX migration] rewriting {} to APX v{}",
-                    geode::utils::string::pathToString(path),
+                    attemptplayback::pathcompat::toUtf8(path),
                     kAPXVersion
                 );
             }
@@ -1355,7 +1363,7 @@ int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
             if (!rewriteWholeFileToCurrent_(path)) {
                 log::warn(
                     "[APX migration] failed to rewrite migration file: {}",
-                    geode::utils::string::pathToString(path)
+                    attemptplayback::pathcompat::toUtf8(path)
                 );
             }
         }
@@ -1615,7 +1623,7 @@ bool Ghosts::deleteAttemptsBySerialSet_(
                 log::warn(
                     "[APX delete] failed to lazy-load kept attempt serial={} from {}",
                     entry.serial,
-                    geode::utils::string::pathToString(path)
+                    attemptplayback::pathcompat::toUtf8(path)
                 );
                 return false;
             }
@@ -1631,7 +1639,7 @@ bool Ghosts::deleteAttemptsBySerialSet_(
         if (!saveAPXFileCurrent(path, keptAttempts, keptPath)) {
             log::warn(
                 "[APX delete] failed to rewrite APX file after normal-attempt deletion: {}",
-                geode::utils::string::pathToString(path)
+                attemptplayback::pathcompat::toUtf8(path)
             );
             return false;
         }

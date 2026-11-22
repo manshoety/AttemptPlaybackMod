@@ -273,7 +273,7 @@ void GhostSettingsPopup::onConfigureGhostText(CCObject*) {
 }
 
 void GhostSettingsPopup::onConfigureDeathMarkers(CCObject*) {
-    showNoElasticity_(DeathMarkerSettingsPopup::create());
+    showNoElasticity_(GhostDeathMarkerSettingsPopup::create());
 }
 
 void GhostSettingsPopup::onConfigureGhostSounds(CCObject*) {
@@ -366,7 +366,7 @@ void GhostDeathSoundsPopup::refreshStatus_() {
 
 void GhostDeathSoundsPopup::onOpenFolder(CCObject*) {
     auto const dir = explodeSfxDir_();
-    if (dir.empty() || !geode::utils::file::openFolder(dir)) {
+    if (dir.empty() || !geode::utils::file::openFolder(attemptplayback::pathcompat::toGeode(dir))) {
         FLAlertLayer::create("Custom Death Sounds", "Could not open the sound folder.", "OK")->show();
     }
 }
@@ -377,7 +377,7 @@ void GhostDeathSoundsPopup::onInstallBundled(CCObject*) {
     Ghosts::I().refreshCustomDeathSfxNow(false);
     refreshStatus_();
     FLAlertLayer::create("Custom Death Sounds",
-        gd::string(fmt::format("Installed {} sound(s). {} already existed. {} bundled file(s) missing.",
+        std::string(fmt::format("Installed {} sound(s). {} already existed. {} bundled file(s) missing.",
                                result.copied + result.overwritten, result.skipped, result.missing)),
         "OK")->show();
 }
@@ -1132,8 +1132,8 @@ void GhostTextPositionPopup::onReset(CCObject*) {
 
 // Death-marker settings popup
 
-DeathMarkerSettingsPopup* DeathMarkerSettingsPopup::create() {
-    auto* popup = new DeathMarkerSettingsPopup();
+GhostDeathMarkerSettingsPopup* GhostDeathMarkerSettingsPopup::create() {
+    auto* popup = new GhostDeathMarkerSettingsPopup();
 
     if (popup && popup->init(kDeathMarkerW, kDeathMarkerH)) {
         popup->autorelease();
@@ -1144,7 +1144,7 @@ DeathMarkerSettingsPopup* DeathMarkerSettingsPopup::create() {
     return nullptr;
 }
 
-bool DeathMarkerSettingsPopup::init(float width, float height) {
+bool GhostDeathMarkerSettingsPopup::init(float width, float height) {
     if (!Popup::init(width, height)) return false;
 
     setID("death-marker-settings-popup"_spr);
@@ -1162,7 +1162,7 @@ bool DeathMarkerSettingsPopup::init(float width, float height) {
 
     m_showToggle = makeToggle_(
         this,
-        menu_selector(DeathMarkerSettingsPopup::onToggleShow)
+        menu_selector(GhostDeathMarkerSettingsPopup::onToggleShow)
     );
     m_showToggle->setPosition({ -140.f, 70.f });
     m_showToggle->setScale(0.70f);
@@ -1199,7 +1199,7 @@ bool DeathMarkerSettingsPopup::init(float width, float height) {
 
     m_sizeSlider = Slider::create(
         this,
-        menu_selector(DeathMarkerSettingsPopup::onSizeSlider),
+        menu_selector(GhostDeathMarkerSettingsPopup::onSizeSlider),
         0.75f
     );
     m_sizeSlider->setPosition({
@@ -1223,7 +1223,7 @@ bool DeathMarkerSettingsPopup::init(float width, float height) {
 
     m_thicknessSlider = Slider::create(
         this,
-        menu_selector(DeathMarkerSettingsPopup::onThicknessSlider),
+        menu_selector(GhostDeathMarkerSettingsPopup::onThicknessSlider),
         0.75f
     );
     m_thicknessSlider->setPosition({
@@ -1247,7 +1247,7 @@ bool DeathMarkerSettingsPopup::init(float width, float height) {
 
     m_opacitySlider = Slider::create(
         this,
-        menu_selector(DeathMarkerSettingsPopup::onOpacitySlider),
+        menu_selector(GhostDeathMarkerSettingsPopup::onOpacitySlider),
         0.75f
     );
     m_opacitySlider->setPosition({
@@ -1299,12 +1299,12 @@ bool DeathMarkerSettingsPopup::init(float width, float height) {
     return true;
 }
 
-void DeathMarkerSettingsPopup::update(float) {
+void GhostDeathMarkerSettingsPopup::update(float) {
     refreshLabels_();
     refreshPreview_();
 }
 
-void DeathMarkerSettingsPopup::refreshLabels_() {
+void GhostDeathMarkerSettingsPopup::refreshLabels_() {
     auto& ghosts = Ghosts::I();
 
     if (m_thicknessLabel) {
@@ -1328,7 +1328,7 @@ void DeathMarkerSettingsPopup::refreshLabels_() {
     }
 }
 
-void DeathMarkerSettingsPopup::refreshPreview_() {
+void GhostDeathMarkerSettingsPopup::refreshPreview_() {
     if (!m_preview) return;
 
     auto& ghosts = Ghosts::I();
@@ -1344,12 +1344,12 @@ void DeathMarkerSettingsPopup::refreshPreview_() {
     );
 }
 
-void DeathMarkerSettingsPopup::onToggleShow(CCObject*) {
+void GhostDeathMarkerSettingsPopup::onToggleShow(CCObject*) {
     auto& ghosts = Ghosts::I();
     ghosts.setDeathMarkersEnabled(!ghosts.areDeathMarkersEnabled());
 }
 
-void DeathMarkerSettingsPopup::onSizeSlider(CCObject*) {
+void GhostDeathMarkerSettingsPopup::onSizeSlider(CCObject*) {
     if (!m_sizeSlider) return;
 
     const float size = 4.f +
@@ -1360,7 +1360,7 @@ void DeathMarkerSettingsPopup::onSizeSlider(CCObject*) {
     refreshPreview_();
 }
 
-void DeathMarkerSettingsPopup::onThicknessSlider(CCObject*) {
+void GhostDeathMarkerSettingsPopup::onThicknessSlider(CCObject*) {
     if (!m_thicknessSlider) return;
 
     const float thickness = 1.f +
@@ -1371,7 +1371,7 @@ void DeathMarkerSettingsPopup::onThicknessSlider(CCObject*) {
     refreshPreview_();
 }
 
-void DeathMarkerSettingsPopup::onOpacitySlider(CCObject*) {
+void GhostDeathMarkerSettingsPopup::onOpacitySlider(CCObject*) {
     if (!m_opacitySlider) return;
 
     const int opacity = static_cast<int>(std::lround(

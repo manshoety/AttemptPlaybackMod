@@ -91,9 +91,9 @@ private:
     void onRefresh(cocos2d::CCObject*);
 };
 
-class DeathMarkerSettingsPopup : public geode::Popup {
+class GhostDeathMarkerSettingsPopup : public geode::Popup {
 public:
-    static DeathMarkerSettingsPopup* create();
+    static GhostDeathMarkerSettingsPopup* create();
     bool init(float width, float height);
 
 protected:

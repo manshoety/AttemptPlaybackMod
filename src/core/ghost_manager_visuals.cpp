@@ -998,15 +998,6 @@ void Ghosts::resetPlayerMirrorVisualOffsets_() {
         m_havePlayerMirrorAnchorSide = true;
     }
 
-bool Ghosts::needToFreePlayerObjectsForWaitingQueue(size_t numCurrentlyDead) {
-        if (!m_allowClearOldPlayerObjectsWhenMoreNeeded) return false;
-        if (m_wantToPrimeIndices.empty()) return false;
-        if (numCurrentlyDead < minKeepDead) return false;
-        int free = m_playerObjectPool.capacity() - 2 - m_playerObjectPool.inUseCount();
-        if (m_wantToPrimeIndices.size() > free) return true;
-        return false;
-    }
-
 void Ghosts::refreshAndPreloadCustomExplodeSfx_(bool force) {
         if (!m_useCustomExplodeSounds)
             return;

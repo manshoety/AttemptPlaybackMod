@@ -104,7 +104,7 @@ private:
     bool m_isReplayBest = true;
 
     cue::RadioLogic<size_t> m_sortRadio;
-    PreloadSortMode m_sortMode = PreloadSortMode::Best;
+    PreloadSortMode m_sortMode = PreloadSortMode::Spread;
 
 private:
     void onPressLoad(cocos2d::CCObject*);

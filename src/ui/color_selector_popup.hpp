@@ -518,14 +518,18 @@ private:
     static constexpr const char* kDefaultPresetName = "random-colors.apxcolors";
 
     std::filesystem::path presetsDir_() const {
-        auto dir = Mod::get()->getSaveDir() / "color-presets";
+        const auto saveDir = attemptplayback::pathcompat::toStdOrLog(
+            Mod::get()->getSaveDir(), "[ColorPreset]", "save"
+        );
+        if (saveDir.empty()) return {};
+        auto dir = saveDir / "color-presets";
 
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
         if (ec) {
             log::warn(
                 "[ColorPreset] create_directories failed: {} ({})",
-                geode::utils::string::pathToString(dir),
+                attemptplayback::pathcompat::toUtf8(dir),
                 ec.message()
             );
         }
@@ -539,8 +543,7 @@ private:
     ) {
         geode::utils::file::FilePickOptions opt;
 
-        if (includeFilename) opt.defaultPath = defaultPath;
-        else opt.defaultPath = defaultPath;
+        opt.defaultPath = attemptplayback::pathcompat::toGeode(defaultPath);
 
         geode::utils::file::FilePickOptions::Filter f1;
         f1.description = "AttemptPlayback Color Presets (*.apxcolors)";
@@ -672,7 +675,7 @@ private:
                 opt
             ),
             [data](
-                geode::Result<std::optional<std::filesystem::path>> result
+                geode::utils::file::PickResult result
             ) {
                 if (result.isErr()) {
                     result.inspectErr([](std::string const& error) {
@@ -687,8 +690,8 @@ private:
                 std::optional<std::filesystem::path> selectedPath;
 
                 result.inspect(
-                    [&](std::optional<std::filesystem::path> const& value) {
-                        selectedPath = value;
+                    [&](std::optional<asp::fs::Path> const& value) {
+                        if (value) selectedPath = attemptplayback::pathcompat::toStd(*value);
                     }
                 );
 
@@ -711,19 +714,19 @@ private:
                     if (ec) {
                         log::warn(
                             "[ColorPreset] create_directories failed: {} ({})",
-                            geode::utils::string::pathToString(parent),
+                            attemptplayback::pathcompat::toUtf8(parent),
                             ec.message()
                         );
                     }
                 }
 
-                auto wr = geode::utils::file::writeStringSafe(path, data);
+                auto wr = geode::utils::file::writeStringSafe(attemptplayback::pathcompat::toGeode(path), data);
 
                 if (wr.isErr()) {
                     wr.inspectErr([&](std::string const& error) {
                         log::error(
                             "[ColorPreset] Failed to write {}: {}",
-                            geode::utils::string::pathToString(path),
+                            attemptplayback::pathcompat::toUtf8(path),
                             error
                         );
                     });
@@ -746,7 +749,7 @@ private:
                 opt
             ),
             [self](
-                geode::Result<std::optional<std::filesystem::path>> result
+                geode::utils::file::PickResult result
             ) {
                 if (result.isErr()) {
                     result.inspectErr([](std::string const& error) {
@@ -763,8 +766,8 @@ private:
                 std::optional<std::filesystem::path> selectedPath;
 
                 result.inspect(
-                    [&](std::optional<std::filesystem::path> const& value) {
-                        selectedPath = value;
+                    [&](std::optional<asp::fs::Path> const& value) {
+                        if (value) selectedPath = attemptplayback::pathcompat::toStd(*value);
                     }
                 );
 
@@ -773,14 +776,13 @@ private:
                     return;
                 }
 
-                auto rd =
-                    geode::utils::file::readString(*selectedPath);
+                auto rd = geode::utils::file::readString(attemptplayback::pathcompat::toGeode(*selectedPath));
 
                 if (rd.isErr()) {
                     rd.inspectErr([&](std::string const& error) {
                         log::error(
                             "[ColorPreset] Failed to read {}: {}",
-                            geode::utils::string::pathToString(
+                            attemptplayback::pathcompat::toUtf8(
                                 *selectedPath
                             ),
                             error
@@ -803,7 +805,7 @@ private:
                 if (kind == PresetLoadKind::LegacyConverted) {
                     auto wr =
                         geode::utils::file::writeStringSafe(
-                            *selectedPath,
+                            attemptplayback::pathcompat::toGeode(*selectedPath),
                             self->buildPresetData_()
                         );
 
@@ -823,7 +825,7 @@ private:
                         log::info(
                             "[ColorPreset] Converted old preset "
                             "to P1/P2 format: {}",
-                            geode::utils::string::pathToString(
+                            attemptplayback::pathcompat::toUtf8(
                                 *selectedPath
                             )
                         );

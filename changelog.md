@@ -1,5 +1,6 @@
 # v1.6.0
 - FULL CODEBASE REFACTOR (this was pain and suffering)
+- Migration to geode v6 (pain and suffering)
 ADDITIONS:
 - UI redesign (will probably make more changes)
 - Added some settings to the UI (were only in mod settings before)

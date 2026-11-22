@@ -245,8 +245,8 @@ constexpr char const* kPreloadSortModeKey = "preload-sort-mode";
 static PreloadSortMode preloadSortModeFromSaved() {
     auto const s = Mod::get()->getSavedValue<std::string>(kPreloadSortModeKey);
     if (s == "recent") return PreloadSortMode::Recent;
-    if (s == "spread") return PreloadSortMode::Spread;
-    return PreloadSortMode::Best;
+    if (s == "best") return PreloadSortMode::Best;
+    return PreloadSortMode::Spread;
 }
 
 static char const* preloadSortModeToSavedString(PreloadSortMode mode) {

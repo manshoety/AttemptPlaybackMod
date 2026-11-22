@@ -201,23 +201,6 @@ class $modify(MyPlayerObject, PlayerObject) {
         PlayerObject::releaseAllButtons();
     }
 
-    void placeStreakPoint() {
-        auto& G = Ghosts::I();
-
-        if (G.shouldOwnWaveTrailDuringPlayback()) {
-            auto* pl = attachedPlayLayerForThis_();
-
-            if (pl && G.shouldHandlePlayLayer(pl)) {
-                const bool isRealP1 = pl->m_player1 == this;
-                const bool isRealP2 = pl->m_player2 == this;
-
-                if ((isRealP1 || isRealP2) && this->m_isDart) return;
-            }
-        }
-
-        PlayerObject::placeStreakPoint();
-    }
-
     // Wave Trail Drag Fix mod forces me to put the wave point update in here (after the mod runs it's fix)
     void updateRotation(float dt) {
         PlayerObject::updateRotation(dt);

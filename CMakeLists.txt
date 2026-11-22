@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.25)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if ("${CMAKE_SYSTEM_NAME}" STREQUAL "iOS" OR IOS)
@@ -42,10 +42,6 @@ target_link_libraries(${PROJECT_NAME} cue)
 
 # Set up dependencies, resources, and link Geode.
 setup_geode_mod(${PROJECT_NAME})
-
-if (MSVC)
-    target_compile_options(${PROJECT_NAME} PRIVATE /Zc:preprocessor)
-endif()
 
 if (MSVC)
     set_source_files_properties(

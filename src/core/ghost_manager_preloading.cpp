@@ -6,38 +6,34 @@
 void Ghosts::buildInitialAttemptsFromPreloadOrder(
         const std::vector<uint32_t>& preloadOrder,
         std::vector<uint32_t>& outInitial) {
-        std::vector<uint32_t> sorted = preloadOrder;
-
-        if (m_replayKind == ReplayKind::PracticeComposite) {
-            auto getEndT = [&](uint32_t serial) -> double {
-                const Attempt* a = findLoadedAttemptBySerialAndPractice_(static_cast<int>(serial), true);
-                if (a && !a->p1.empty()) {
-                    return static_cast<double>(a->p1.back().t);
+        const bool wantPractice = practiceFilterEvenWhenBotNotOn();
+        const auto sorted = attemptplayback::deathFirstSerialOrder(
+            preloadOrder, [&](uint32_t serial) {
+                attemptplayback::DeathFirstKey key{};
+                key.serial = serial;
+                if (const auto* a = findLoadedAttemptBySerialAndPractice_(
+                        static_cast<int>(serial), wantPractice)) {
+                    if (!a->p1.empty() || !a->p2.empty()) {
+                        key.endT = std::max(
+                            a->p1.empty() ? 0.0 : static_cast<double>(a->p1.back().t),
+                            a->p2.empty() ? 0.0 : static_cast<double>(a->p2.back().t));
+                        key.completed = a->completed;
+                        key.hasEndT = true;
+                        return key;
+                    }
                 }
 
-                const APXAttemptDiskInfo* entry = findCatalogEntryBySerialAndPractice_(static_cast<int>(serial), true);
-                if (entry) {
-                    return entry->endTime;
+                if (const auto* entry = findCatalogEntryBySerialAndPractice_(
+                        static_cast<int>(serial), wantPractice)) {
+                    key.endT = entry->endTime;
+                    key.completed = entry->completed;
+                    key.hasEndT = entry->p1Count > 0 || entry->p2Count > 0;
                 }
 
-                return 0.0;
-            };
-
-            auto keys = attemptplayback::makePreloadSortKeys(
-                sorted, [&](uint32_t serial) {
-                    return attemptplayback::PreloadSortKey{serial, 0.f, getEndT(serial)};
-                 });
-            std::sort(keys.begin(), keys.end(), [](auto const& lhs, auto const& rhs) {
-                if (lhs.endT != rhs.endT) return lhs.endT < rhs.endT;
-                return lhs.serial < rhs.serial;
+                return key;
             });
-            for (size_t i = 0; i < keys.size(); ++i) sorted[i] = keys[i].serial;
-        }
 
-        const size_t initialCount = std::min(
-            static_cast<size_t>(m_playerObjectPool.capacity()),
-            sorted.size()
-        );
+        const size_t initialCount = std::min(static_cast<size_t>(m_playerObjectPool.capacity()), sorted.size());
 
         outInitial.assign(sorted.begin(), sorted.begin() + initialCount);
     }

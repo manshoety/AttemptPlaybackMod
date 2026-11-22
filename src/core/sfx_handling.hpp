@@ -12,6 +12,7 @@
 #include <unordered_set>
 
 #include <Geode/Geode.hpp>
+#include "geode6_path_compat.hpp"
 
 static std::filesystem::path explodeSfxDir_() {
     auto* mod = Mod::get();
@@ -20,14 +21,18 @@ static std::filesystem::path explodeSfxDir_() {
         return {};
     }
 
-    auto dir = mod->getSaveDir() / "ghost-explode-sfx";
+    const auto saveDir = attemptplayback::pathcompat::toStdOrLog(
+        mod->getSaveDir(), "[GhostSFX]", "save"
+    );
+    if (saveDir.empty()) return {};
+    auto dir = saveDir / "ghost-explode-sfx";
 
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     if (ec) {
         log::warn(
             "[GhostSFX] create_directories failed: {} ({})",
-            geode::utils::string::pathToString(dir),
+            attemptplayback::pathcompat::toUtf8(dir),
             ec.message()
         );
     }
@@ -45,7 +50,7 @@ static std::string lowerASCII_(std::string s) {
 static bool isAudioFile_(std::filesystem::path const& p) {
     if (!p.has_extension()) return false;
 
-    auto ext = lowerASCII_(geode::utils::string::pathToString(p.extension()));
+    auto ext = lowerASCII_(attemptplayback::pathcompat::toUtf8(p.extension()));
     return ext == ".ogg" || ext == ".mp3" || ext == ".wav";
 }
 
@@ -64,7 +69,7 @@ static void refreshCustomExplodeSfx_(
     if (ec) {
         log::warn(
             "[GhostSFX] last_write_time failed for {}: {}",
-            geode::utils::string::pathToString(dir),
+            attemptplayback::pathcompat::toUtf8(dir),
             ec.message()
         );
     }
@@ -83,7 +88,7 @@ static void refreshCustomExplodeSfx_(
     if (ec) {
         log::warn(
             "[GhostSFX] directory_iterator failed for {}: {}",
-            geode::utils::string::pathToString(dir),
+            attemptplayback::pathcompat::toUtf8(dir),
             ec.message()
         );
         return;
@@ -93,7 +98,7 @@ static void refreshCustomExplodeSfx_(
         if (ec) {
             log::warn(
                 "[GhostSFX] directory iteration failed for {}: {}",
-                geode::utils::string::pathToString(dir),
+                attemptplayback::pathcompat::toUtf8(dir),
                 ec.message()
             );
             break;
@@ -109,7 +114,7 @@ static void refreshCustomExplodeSfx_(
         auto const& p = ent.path();
         if (!isAudioFile_(p)) continue;
 
-        out.push_back(geode::utils::string::pathToString(p));
+        out.push_back(attemptplayback::pathcompat::toUtf8(p));
     }
 
     std::sort(out.begin(), out.end());
@@ -128,7 +133,7 @@ static std::optional<std::filesystem::path> findModResourceByFilename_(
     if (ec) {
         log::warn(
             "[GhostSFX] recursive_directory_iterator failed for {}: {}",
-            geode::utils::string::pathToString(resDir),
+            attemptplayback::pathcompat::toUtf8(resDir),
             ec.message()
         );
         return std::nullopt;
@@ -138,7 +143,7 @@ static std::optional<std::filesystem::path> findModResourceByFilename_(
         if (ec) {
             log::warn(
                 "[GhostSFX] recursive iteration failed for {}: {}",
-                geode::utils::string::pathToString(resDir),
+                attemptplayback::pathcompat::toUtf8(resDir),
                 ec.message()
             );
             break;
@@ -152,7 +157,7 @@ static std::optional<std::filesystem::path> findModResourceByFilename_(
         }
 
         auto p = ent.path();
-        if (lowerASCII_(geode::utils::string::pathToString(p.filename())) == want) {
+        if (lowerASCII_(attemptplayback::pathcompat::toUtf8(p.filename())) == want) {
             return p;
         }
     }
@@ -179,7 +184,10 @@ static ExplodeSfxSyncResult syncBundledExplodeSfxIntoCustomDir_(
     const auto dstDir = explodeSfxDir_();
     if (dstDir.empty()) return r;
 
-    const auto resDir = mod->getResourcesDir();
+    const auto resDir = attemptplayback::pathcompat::toStdOrLog(
+        mod->getResourcesDir(), "[GhostSFX]", "resources"
+    );
+    if (resDir.empty()) return r;
 
     static constexpr const char* kSeedFiles[] = {
         "explode_vine.ogg",
@@ -204,7 +212,7 @@ static ExplodeSfxSyncResult syncBundledExplodeSfxIntoCustomDir_(
         if (ec) {
             log::warn(
                 "[GhostSFX] exists failed for {}: {}",
-                geode::utils::string::pathToString(dst),
+                attemptplayback::pathcompat::toUtf8(dst),
                 ec.message()
             );
             continue;
@@ -218,7 +226,7 @@ static ExplodeSfxSyncResult syncBundledExplodeSfxIntoCustomDir_(
             if (ec) {
                 log::warn(
                     "[GhostSFX] file_size failed for {}: {}",
-                    geode::utils::string::pathToString(dst),
+                    attemptplayback::pathcompat::toUtf8(dst),
                     ec.message()
                 );
             }
@@ -242,7 +250,7 @@ static ExplodeSfxSyncResult syncBundledExplodeSfxIntoCustomDir_(
         if (ec) {
             log::warn(
                 "[GhostSFX] exists failed for {}: {}",
-                geode::utils::string::pathToString(src),
+                attemptplayback::pathcompat::toUtf8(src),
                 ec.message()
             );
             continue;
@@ -263,8 +271,8 @@ static ExplodeSfxSyncResult syncBundledExplodeSfxIntoCustomDir_(
         if (ec) {
             log::warn(
                 "[GhostSFX] copy_file failed '{}' -> '{}': {}",
-                geode::utils::string::pathToString(src),
-                geode::utils::string::pathToString(dst),
+                attemptplayback::pathcompat::toUtf8(src),
+                attemptplayback::pathcompat::toUtf8(dst),
                 ec.message()
             );
             continue;
@@ -273,8 +281,8 @@ static ExplodeSfxSyncResult syncBundledExplodeSfxIntoCustomDir_(
         if (!copied) {
             log::warn(
                 "[GhostSFX] copy_file returned false '{}' -> '{}'",
-                geode::utils::string::pathToString(src),
-                geode::utils::string::pathToString(dst)
+                attemptplayback::pathcompat::toUtf8(src),
+                attemptplayback::pathcompat::toUtf8(dst)
             );
             continue;
         }
@@ -342,7 +350,7 @@ public:
     }
 
     void preload(std::filesystem::path const& path) {
-        preload(geode::utils::string::pathToString(path));
+        preload(attemptplayback::pathcompat::toUtf8(path));
     }
 
     void preloadAll(std::vector<std::string> const& paths) {
@@ -355,7 +363,7 @@ public:
     }
 
     void play(std::filesystem::path const& path, float volume = 1.f, float pitch = 1.f) {
-        play(geode::utils::string::pathToString(path), volume, pitch);
+        play(attemptplayback::pathcompat::toUtf8(path), volume, pitch);
     }
 
     void play(std::string const& s, float volume = 1.f, float pitch = 1.f) {

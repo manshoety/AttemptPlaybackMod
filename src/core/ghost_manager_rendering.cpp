@@ -1,4 +1,5 @@
 #include "ghost_manager.hpp"
+#include "preload_sort_keys.hpp"
 
 void Ghosts::postUpdate() {
         if (!modEnabled || !m_pl || m_is_quitting) { 
@@ -192,10 +193,33 @@ void Ghosts::postUpdate() {
 
                 //log::info("candidateCount: {}", candidateCount);
 
+                // Sort waiting queue
+                if (m_waitingDeathOrderDirty) {
+                    std::sort(m_wantToPrimeIndices.begin(), m_wantToPrimeIndices.end(),
+                        [&](size_t lhs, size_t rhs) {
+                            auto makeKey = [&](size_t idx) {
+                                attemptplayback::DeathFirstKey key{};
+                                if (idx >= attempts.size()) {
+                                    key.serial = UINT32_MAX;
+                                    return key;
+                                }
+                                auto const& a = attempts[idx];
+                                key.serial = static_cast<uint32_t>(a.serial);
+                                key.completed = a.completed;
+                                key.hasEndT = !a.p1.empty() || !a.p2.empty();
+                                key.endT = std::max(
+                                    a.p1.empty() ? 0.0 : static_cast<double>(a.p1.back().t),
+                                    a.p2.empty() ? 0.0 : static_cast<double>(a.p2.back().t));
+                                return key;
+                            };
+                            return attemptplayback::deathFirstLess(makeKey(lhs), makeKey(rhs));
+                        });
+                    m_waitingDeathOrderDirty = false;
+                }
+
                 // Prime any ones we wanted to prime but didn't have player objects for
                 const int maxPreloadPerFrame = 9999;
                 size_t currentPreloaded = 0;
-                size_t numCurrentlyDead = 0;
                 
                 for (auto it = m_wantToPrimeIndices.begin(); 
                     it != m_wantToPrimeIndices.end(); ) {
@@ -203,6 +227,11 @@ void Ghosts::postUpdate() {
                     if (m_playerObjectPool.inUseCount() >= m_playerObjectPool.capacity() - 2) break;
 
                     size_t ai = *it;
+                    if (ai >= attempts.size()) {
+                        m_wantToPrimeSet.erase(ai);
+                        it = m_wantToPrimeIndices.erase(it);
+                        continue;
+                    }
                     Attempt& a = attempts[ai];
 
                     // false when the ghost would start already dead
@@ -221,6 +250,7 @@ void Ghosts::postUpdate() {
                         currentPreloaded++;
                     }
                     else if (!a.completed) countGhostTextDeathOnce_(a);
+                    m_wantToPrimeSet.erase(ai);
                     it = m_wantToPrimeIndices.erase(it);
 
                 }
@@ -265,10 +295,9 @@ void Ghosts::postUpdate() {
 
 
                     if (a.eolFrozenP1) {
-                        numCurrentlyDead++;
                         // remove on death (if ghosts explode, meaning they disapear so I can remove them early)
                         // or remove them if I need player objects freed up
-                        if (a.completed || m_ghostsExplode || needToFreePlayerObjectsForWaitingQueue(numCurrentlyDead)) {
+                        if (a.completed || m_ghostsExplode) {
                             a.setP1Visible(false);
                                 a.setP2Visible(false);
                                 // pool release player objects
@@ -325,6 +354,7 @@ void Ghosts::postUpdate() {
                         else {
                             if (m_wantToPrimeSet.insert(ai).second) {
                                 m_wantToPrimeIndices.push_back(ai);
+                                m_waitingDeathOrderDirty = true;
                             }
                             continue;
                         }

@@ -16,6 +16,17 @@ class $modify(HardStreakHook, HardStreak) {
     void addPoint(cocos2d::CCPoint point) {
         auto& G = Ghosts::I();
 
+        if (G.shouldOwnWaveTrailDuringPlayback() && !G.isAllowingWavePointAdding()) {
+            if (auto* pl = G.getPlayLayer(); pl && G.shouldHandlePlayLayer(pl)) {
+                auto* p1 = pl->m_player1;
+                auto* p2 = pl->m_player2;
+                if ((p1 && p1->m_isDart && this == p1->m_waveTrail) ||
+                    (p2 && p2->m_isDart && this == p2->m_waveTrail)) {
+                    return;
+                }
+            }
+        }
+
         if (G.isBotActive()) {
             auto* arr = this->m_pointArray;
             

@@ -447,12 +447,12 @@ void PlaybackModMenu::buildTemplateUI_() {
         "DeleteSaveFileButton"_spr, 186.f, -147.f, 165.f, 29.f,
         "GJ_button_01.png", 0.4f);
     CCSprite* manageIcon = nullptr;
-    auto const resourceDir = Mod::get()->getResourcesDir();
+    auto const resourceDir = attemptplayback::pathcompat::toStd(Mod::get()->getResourcesDir());
     auto const manageIconPath = resourceDir / "resources" / "ui" / "menu.png";
     {
         std::error_code ec;
-        if (std::filesystem::is_regular_file(manageIconPath, ec)) {
-            manageIcon = CCSprite::create(manageIconPath.string().c_str());
+        if (!resourceDir.empty() && std::filesystem::is_regular_file(manageIconPath, ec)) {
+            manageIcon = CCSprite::create(attemptplayback::pathcompat::toUtf8(manageIconPath).c_str());
         }
     }
     if (manageIcon) {
@@ -695,7 +695,7 @@ void PlaybackModMenu::onToggleBlockRecordingOnNoclip(CCObject*) {
     if (on) {
         FLAlertLayer::create(
             "Attention",
-            gd::string("This only blocks recording for normal attempts. \nPractice mode attempts that use noclip will still be recorded."),
+            std::string("This only blocks recording for normal attempts. \nPractice mode attempts that use noclip will still be recorded."),
             "OK"
         )->show();
     }
@@ -720,7 +720,7 @@ void PlaybackModMenu::onToggleGhostsExplode(CCObject*) {
     if (on) {
         FLAlertLayer::create(
                     "Warning",
-                    gd::string("Please enable player death effects in your mod menu!\n"
+                    std::string("Please enable player death effects in your mod menu!\n"
                             "This feature doesn't work otherwise.\n"
                         "Also, you may lag with this option enabled."),
                     "OK"
@@ -739,7 +739,7 @@ void PlaybackModMenu::onToggleGhostsExplode(CCObject*) {
             if (po->getOpacity() == 255) {
                 FLAlertLayer::create(
                     "Warning",
-                    gd::string("Please enable player death effects in your mod menu!\n"
+                    std::string("Please enable player death effects in your mod menu!\n"
                             "This feature doesn't work otherwise."),
                     "OK"
                 )->show();
@@ -882,7 +882,7 @@ bool PracticeRunSelectPopup::init(float width, float height) {
         replay_ui_detail::setFallbackFlag(false);
         FLAlertLayer::create(
             "No Level",
-            gd::string("Open a level before selecting practice runs."),
+            std::string("Open a level before selecting practice runs."),
             "OK"
         )->show();
         return false;
@@ -895,7 +895,7 @@ bool PracticeRunSelectPopup::init(float width, float height) {
         replay_ui_detail::setFallbackFlag(false);
         FLAlertLayer::create(
             "No Practice Runs",
-            gd::string("There are no saved practice runs with recorded attempts for this level."),
+            std::string("There are no saved practice runs with recorded attempts for this level."),
             "OK"
         )->show();
         return false;
@@ -1472,7 +1472,7 @@ void PracticeRunSelectPopup::onContinue(CCObject*) {
     if (selectedRunsHaveGap_(gapEndPercent, nextStartPercent)) {
         FLAlertLayer::create(
             "Practice Run Gap",
-            gd::string(fmt::format(
+            std::string(fmt::format(
                 "These runs have a gap around <cy>{:.1f}%</c> to <cy>{:.1f}%</c>. Select overlapping or touching runs so the real-player replay can connect them.",
                 gapEndPercent,
                 nextStartPercent
@@ -1552,13 +1552,13 @@ bool PreloadAttemptsPopup::init(float width, float height) {
         if (m_isReplayBest) {
             FLAlertLayer::create(
                 "No Attempts",
-                gd::string("There are no recorded normal mode attempts for this level."),
+                std::string("There are no recorded normal mode attempts for this level."),
                 "OK"
             )->show();
         } else {
             FLAlertLayer::create(
                 "No Attempts",
-                gd::string("There are no recorded practice attempts for this level."),
+                std::string("There are no recorded practice attempts for this level."),
                 "OK"
             )->show();
         }
@@ -1589,14 +1589,16 @@ bool PreloadAttemptsPopup::init(float width, float height) {
         if (m_isReplayBest ) {
             FLAlertLayer::create(
                 "No Attempts",
-                gd::string("There are no recorded normal mode attempts either for this level or for this start position"),
+                std::string("There are no recorded normal mode attempts either for this level or for this start position"),
                 "OK"
             )->show();
             
         } else {
             FLAlertLayer::create(
-                "No Attempts",
-                gd::string("There are no recorded practice attempts for this level or for this start position"),
+                m_replayOn ? "No Attempts" : "Practice Replay Unavailable",
+                m_replayOn
+                    ? std::string("There are no recorded practice attempts for this level or for this start position")
+                    : std::string("The selected practice route could not be started. Its attempts may be missing or unreadable."),
                 "OK"
             )->show();
         }
@@ -1741,9 +1743,7 @@ bool PreloadAttemptsPopup::init(float width, float height) {
         Ghosts::I().setPreloadSortMode(m_sortMode);
     });
 
-    // m_sortMode = Ghosts::I().getPreloadSortMode();
-    // For now I'll default set it to "best" since that gives best results when loading a large number
-    m_sortMode = PreloadSortMode::Best;
+    m_sortMode = Ghosts::I().getPreloadSortMode();
 
     m_sortRadio.select(preloadSortModeToIndex(m_sortMode));
     Ghosts::I().setPreloadSortMode(m_sortMode);
@@ -2077,7 +2077,6 @@ bool PlaybackSettingsPopup::init(float width, float height) {
 
             Build<TextInput>::create(100.f, "50", "bigFont.fnt")
                 .$build_wrap(setString("50"))
-                .$build_wrap(setWidth(100.f))
                 .$build_wrap(setFilter("0123456789."))
                 .$build_wrap(setMaxCharCount(6))
                 .id("OnlyPastPercentInput"_spr)
@@ -2204,14 +2203,14 @@ void PlaybackSettingsPopup::onOpenCustomDeathSoundFolder(CCObject*) {
 
     std::ostringstream ss;
     ss << "Put <cy>.ogg</c>, <cy>.mp3</c>, or <cy>.wav</c> files in this folder:\n\n"
-       //<< "<cy>" << utils::string::pathToString(dir) << "</c>\n\n"
+       //<< "<cy>" << attemptplayback::pathcompat::toUtf8(dir) << "</c>\n\n"
        << "One will randomly be chosen each time a ghost dies.\n\n"
        << "Currently found: <cy>" << files.size() << "</c> file(s).";
 
     FLAlertLayer::create("Custom Death Sounds", ss.str().c_str(), "OK")->show();
 
-    if (!geode::utils::file::openFolder(dir)) {
-        log::warn("[GhostSFX] openFolder failed: {}", utils::string::pathToString(dir));
+    if (!geode::utils::file::openFolder(attemptplayback::pathcompat::toGeode(dir))) {
+        log::warn("[GhostSFX] openFolder failed: {}", attemptplayback::pathcompat::toUtf8(dir));
     }
 }
 

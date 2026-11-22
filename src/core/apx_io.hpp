@@ -2,6 +2,7 @@
 #include <vector>
 #include <iosfwd>
 #include <filesystem>
+#include "geode6_path_compat.hpp"
 #include "types.hpp"
 #include "apx_format.hpp"
 #include <Geode/binding/PlayerObject.hpp>

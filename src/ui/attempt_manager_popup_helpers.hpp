@@ -295,7 +295,7 @@ namespace {
 
     geode::utils::file::FilePickOptions attemptFilePickOptions_(std::filesystem::path const& defaultPath) {
         geode::utils::file::FilePickOptions opt;
-        opt.defaultPath = defaultPath;
+        opt.defaultPath = attemptplayback::pathcompat::toGeode(defaultPath);
 
         geode::utils::file::FilePickOptions::Filter apx;
         apx.description = "AttemptPlayback Files (*.apx)";
@@ -310,7 +310,7 @@ namespace {
     }
 
     std::filesystem::path ensureApxExtension_(std::filesystem::path path) {
-        std::string ext = geode::utils::string::pathToString(path.extension());
+        std::string ext = attemptplayback::pathcompat::toUtf8(path.extension());
         std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
             return static_cast<char>(std::tolower(c));
         });
@@ -319,7 +319,7 @@ namespace {
     }
 
     std::string importFileName_(std::filesystem::path const& path) {
-        const auto filename = geode::utils::string::pathToString(path.filename());
+        const auto filename = attemptplayback::pathcompat::toUtf8(path.filename());
         return filename.empty() ? std::string("selected APX file") : filename;
     }
 }

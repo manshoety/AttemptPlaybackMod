@@ -15,6 +15,7 @@
 #include <deque>
 #include <limits>
 #include <filesystem>
+#include "geode6_path_compat.hpp"
 #include <fstream>
 #include <functional>
 #include <numeric>
@@ -24,11 +25,7 @@
 #include "../core/apx_io.hpp"
 #include "../core/apx_format.hpp"
 #include "./globals.hpp"
-#include <legowiifun.cheat_api/include/cheatAPI.hpp>
-#ifdef MY_MOD_ID
-#undef MY_MOD_ID
-#endif
-#include <cvolton.level-id-api/include/EditorIDs.hpp>
+#include <cvolton.level-id-api/EditorIDs.hpp>
 #ifdef MY_MOD_ID
 #undef MY_MOD_ID
 #endif
@@ -500,6 +497,8 @@ public:
     bool countGhostTextDeathOnceBySerial_(int serial);
 
     bool countGhostTextDeathOnce_(Attempt const& a) {
+        if (a.completed) return false;
+        if (m_playingEndAnimation && botActive && m_currentOwner && a.serial == m_currentOwner->serial) return false;
         const bool counted = countGhostTextDeathOnceBySerial_(a.serial);
         if (counted) recordDeathMarker_(a);
         return counted;
@@ -540,7 +539,7 @@ public:
     std::vector<int> m_randomColorAllowedListP1;
     std::vector<int> m_randomColorAllowedListP2;
 
-    PreloadSortMode m_preloadSortMode = PreloadSortMode::Best;
+    PreloadSortMode m_preloadSortMode = PreloadSortMode::Spread;
 
     void refreshCustomDeathSfxNow(bool resetGhostObjects);
 
@@ -623,7 +622,7 @@ public:
 
     std::string getCurrentLevelSaveFileName() const {
         auto path = fileForLevel_(m_levelIDOnAttach);
-        return geode::utils::string::pathToString(path.filename());
+        return attemptplayback::pathcompat::toUtf8(path.filename());
     }
 
     enum class AttemptFileExportMode : uint8_t {
@@ -1078,6 +1077,8 @@ public:
 
     void onPracticeToggle(bool enabled);
 
+    void ensurePracticeRecordingSession_();
+
     void maybeInitialWarpToReplayStart_();
 
     bool refreshCurrentOwnerPointer_();
@@ -1408,6 +1409,7 @@ private:
     std::unordered_set<size_t> m_primedSet;
     std::vector<size_t> m_wantToPrimeIndices;
     std::unordered_set<size_t> m_wantToPrimeSet;
+    bool m_waitingDeathOrderDirty = false;
 
     static constexpr size_t kGhostBatchSize = 500;
     std::vector<GhostBatch> m_ghostBatches;
@@ -1426,8 +1428,6 @@ private:
     bool m_allowSetPlayerPos = false;
     bool m_allowSetPlayerClickState = false;
     bool m_accurateHighTPSReplay = false;
-    bool m_allowClearOldPlayerObjectsWhenMoreNeeded = false;
-    size_t minKeepDead = 50;
     uint64_t m_tickId = 0;
     uint64_t m_lastWorkTickId = 0;
 
@@ -1516,8 +1516,6 @@ private:
     std::vector<std::string> customSfx;
     std::filesystem::file_time_type customLastWrite{};
     uint64_t m_lastCustomSfxRefreshTick = 0;
-
-    bool needToFreePlayerObjectsForWaitingQueue(size_t numCurrentlyDead);
 
     static constexpr uint64_t kCustomSfxRefreshIntervalTicks = 120;
 

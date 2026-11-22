@@ -28,8 +28,8 @@ class $modify(PLHook, PlayLayer) {
         m_fields->m_ghostTextLabel = label;
         Ghosts::I().setPlayLayerGhostTextLabel(label);
     }
-    $override bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
-        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
+    $override bool init(GJGameLevel* level, bool dontCreateObjects) {
+        if (!PlayLayer::init(level, dontCreateObjects)) return false;
         auto& G = Ghosts::I();
         G.clearPlayLayerGhostTextLabel();
         G.updateModEnabled();

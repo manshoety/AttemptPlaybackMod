@@ -709,7 +709,7 @@ void TabbedGhostSettingsPopup::onOpenText(CCObject*) {
 }
 
 void TabbedGhostSettingsPopup::onOpenMarkers(CCObject*) {
-    showNative(DeathMarkerSettingsPopup::create());
+    showNative(GhostDeathMarkerSettingsPopup::create());
 }
 
 void TabbedGhostSettingsPopup::onOpenEffects(CCObject*) {
