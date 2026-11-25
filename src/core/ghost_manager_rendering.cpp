@@ -1,4 +1,5 @@
 #include "ghost_manager.hpp"
+#include "geode6_binding_compat.hpp"
 #include "preload_sort_keys.hpp"
 
 void Ghosts::postUpdate() {
@@ -499,7 +500,7 @@ bool Ghosts::primeGhostToPX_(Attempt& a, size_t attemptIdx, float pxw, float px2
                 pc.isDashing = false;
                 
                 // hardResetWaveTrail(a.g1);
-                a.g1->m_waveTrail->reset();
+                attemptplayback::bindingcompat::resetWaveTrail(a.g1->m_waveTrail);
                 a.trailactive1 = false;
                 forceShowPlayerVisuals(a.g1);
                 a.setP1Visible(f.isVisible, true);
@@ -520,7 +521,7 @@ bool Ghosts::primeGhostToPX_(Attempt& a, size_t attemptIdx, float pxw, float px2
             if (a.g2) {
                 a.setP2Visible(false, true);
                 if (a.g2->m_waveTrail) {
-                    a.g2->m_waveTrail->reset();
+                    attemptplayback::bindingcompat::resetWaveTrail(a.g2->m_waveTrail);
                     a.g2->m_waveTrail->setVisible(false);
                 }
             }
@@ -565,7 +566,7 @@ bool Ghosts::primeGhostToPX_(Attempt& a, size_t attemptIdx, float pxw, float px2
                 pc2.isDashing = false;
                 
                 // hardResetWaveTrail(a.g2);
-                a.g2->m_waveTrail->reset();
+                attemptplayback::bindingcompat::resetWaveTrail(a.g2->m_waveTrail);
                 a.trailactive2 = false;
                 forceShowPlayerVisuals(a.g2);
                 a.setP2Visible(f2.isVisible, true);
@@ -823,7 +824,7 @@ void Ghosts::updateGhostForAttempt_(Attempt& a, float px, float px2, size_t ai,
                     advanceFromPrevIdx_(frames, frameIdx, ghostTime, /*mustRewind=*/false);
                 } else {
                     frameIdx = idxForTimeBounded_(frames, accTime, ghostTime);
-                    if (ghost && ghost->m_waveTrail) ghost->m_waveTrail->reset();
+                    if (ghost && ghost->m_waveTrail) attemptplayback::bindingcompat::resetWaveTrail(ghost->m_waveTrail);
                 }
 
                 const size_t timeIdx = std::min(frameIdx, lastIdx);
@@ -851,7 +852,7 @@ void Ghosts::updateGhostForAttempt_(Attempt& a, float px, float px2, size_t ai,
                             a.g1->stopDashing();
 
                             if (a.g1->m_waveTrail) {
-                                a.g1->m_waveTrail->reset();
+                                attemptplayback::bindingcompat::resetWaveTrail(a.g1->m_waveTrail);
                                 a.g1->m_waveTrail->setVisible(false);
                                 a.g1->m_waveTrail->setOpacity(0);
                             }
@@ -861,7 +862,7 @@ void Ghosts::updateGhostForAttempt_(Attempt& a, float px, float px2, size_t ai,
                             a.g2->stopDashing();
 
                             if (a.g2->m_waveTrail) {
-                                a.g2->m_waveTrail->reset();
+                                attemptplayback::bindingcompat::resetWaveTrail(a.g2->m_waveTrail);
                                 a.g2->m_waveTrail->setVisible(false);
                                 a.g2->m_waveTrail->setOpacity(0);
                             }
@@ -957,7 +958,7 @@ void Ghosts::updateGhostForAttempt_(Attempt& a, float px, float px2, size_t ai,
                         a.setP2Visible(false, true);
 
                         if (ghost->m_waveTrail) {
-                            ghost->m_waveTrail->reset();
+                            attemptplayback::bindingcompat::resetWaveTrail(ghost->m_waveTrail);
                             ghost->m_waveTrail->setVisible(false);
                             ghost->m_waveTrail->setOpacity(0);
                         }
@@ -1217,13 +1218,13 @@ void Ghosts::updateGhostForAttempt_(Attempt& a, float px, float px2, size_t ai,
                 if (!inWave) {
                     if (trailActive) {
                         if (trail) {
-                            trail->reset();
+                            attemptplayback::bindingcompat::resetWaveTrail(trail);
                             trail->setVisible(false);
                             trail->setOpacity(0);
                         }
                         trailActive = false;
                     } else if (trail && (trail->isVisible() || trail->getOpacity() != 0)) {
-                        trail->reset();
+                        attemptplayback::bindingcompat::resetWaveTrail(trail);
                         trail->setVisible(false);
                         trail->setOpacity(0);
                     }
@@ -1233,7 +1234,7 @@ void Ghosts::updateGhostForAttempt_(Attempt& a, float px, float px2, size_t ai,
                         // ghost->activateStreak();
                         trailActive = true;
                         if (trail) {
-                            trail->reset();
+                            attemptplayback::bindingcompat::resetWaveTrail(trail);
                             trail->setOpacity((GLubyte)std::clamp<int>(
                         int(opacity * (m_waveTrailOpacityPct / 100.f)), 0, 255));
                                     
@@ -1304,7 +1305,7 @@ void Ghosts::updateGhostForAttempt_(Attempt& a, float px, float px2, size_t ai,
                         
                         // Teleport visual wacky stuff
                         if (prevTeleported) {
-                            trail->reset();
+                            attemptplayback::bindingcompat::resetWaveTrail(trail);
                             trail->resumeStroke();
                             //log::info("i");
                             waveTrailAddPointToPlayer(trail, {ix, iy}, !isP2, false, recordedGoingLeft);

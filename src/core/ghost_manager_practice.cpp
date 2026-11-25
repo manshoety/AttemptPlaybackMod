@@ -734,12 +734,14 @@ bool Ghosts::installReplayStartPosForSelectedPracticeSession_() {
         if (frameIndex >= owner->p1.size()) frameIndex = 0;
         auto const& frame = owner->p1[frameIndex];
 
-        LevelSettingsObject* settings = nullptr;
-        if (m_pl->m_levelSettings) {
-            settings = LevelSettingsObject::objectFromString(m_pl->m_levelSettings->getSaveString());
-        }
-        // GD 2.2091 Windows bindings declare create() as inline but do not provide its implementation RAAAAAAA
-        // static LevelSettingsObject* create() = win inline;
+        //LevelSettingsObject* settings = nullptr;
+        //if (m_pl->m_levelSettings) {
+        //    settings = LevelSettingsObject::objectFromString(m_pl->m_levelSettings->getSaveString());
+        //}
+        // Hey this works for now
+        auto* settings = LevelSettingsObject::objectFromDict(
+            cocos2d::CCDictionary::create()
+        );
         // FIX_ON_FULL_GEODE_V6_RELEASE
         if (!settings) {
             log::warn("[Practice replay] could not clone current level settings; refusing start-pos override");

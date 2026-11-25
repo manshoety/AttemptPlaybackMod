@@ -1,4 +1,5 @@
 #include "animated_switch.hpp"
+#include "../core/geode6_binding_compat.hpp"
 
 #include <Geode/Geode.hpp>
 
@@ -88,7 +89,7 @@ bool AnimatedSwitch::initSwitch(CCObject* target, SEL_MenuHandler callback) {
         m_offFace = m_onFace = nullptr;
         return false;
     }
-    setSizeMult(1.15f);
+    attemptplayback::bindingcompat::setToggleSizeMult(this, 1.15f);
     return true;
 }
 

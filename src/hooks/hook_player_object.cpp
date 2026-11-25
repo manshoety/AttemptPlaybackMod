@@ -1,4 +1,5 @@
 #include <Geode/DefaultInclude.hpp>
+#include "../core/geode6_binding_compat.hpp"
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/binding/PlayerObject.hpp>
 #include <Geode/binding/PlayLayer.hpp>
@@ -227,7 +228,7 @@ class $modify(MyPlayerObject, PlayerObject) {
 
         auto& G = Ghosts::I();
         if (G.isModEnabled() && G.isBotActive() && this->isVisible() != visible) {
-            if (this->m_waveTrail) this->m_waveTrail->reset();
+            if (this->m_waveTrail) attemptplayback::bindingcompat::resetWaveTrail(this->m_waveTrail);
         }
         
         PlayerObject::setVisible(visible);

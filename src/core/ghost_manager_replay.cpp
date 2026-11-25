@@ -1,4 +1,5 @@
 #include "ghost_manager.hpp"
+#include "geode6_binding_compat.hpp"
 
 void Ghosts::buildCompositeFromAttempt(size_t idx) {
         m_activeRoute = ActiveRoute::SingleAttempt;
@@ -639,12 +640,12 @@ void Ghosts::restartLevel() {
     }
 
 double Ghosts::getStartTime() {
-        if (isPracticeMode() && m_pl->getLastCheckpoint()) {
-            return m_pl->getLastCheckpoint()->m_gameState.m_levelTime;
+        if (isPracticeMode()) {
+            if (auto* checkpoint = attemptplayback::bindingcompat::lastCheckpoint(m_pl)) {
+                return checkpoint->m_gameState.m_levelTime;
+            }
         }
-        else {
-            if (m_gl) return m_gl->m_gameState.m_levelTime;
-        }
+        if (m_gl) return m_gl->m_gameState.m_levelTime;
         return 0.f;
     }
 
@@ -1258,7 +1259,7 @@ void Ghosts::applyFrameAndClickToPlayerOverRange(bool isP1) {
                     fliptime != 1 &&
                     fliptime != 0
                 ) {
-                    p->m_waveTrail->reset();
+                    attemptplayback::bindingcompat::resetWaveTrail(p->m_waveTrail);
                     blockWaveAddPoint = true;
                 }
 
@@ -1497,7 +1498,7 @@ void Ghosts::applyFrameAndClickToPlayerOverRange(bool isP1) {
 
                 if (playerPrevTeleported) {
                     if (canAddWavePoint) {
-                        p->m_waveTrail->reset();
+                        attemptplayback::bindingcompat::resetWaveTrail(p->m_waveTrail);
                         p->m_waveTrail->resumeStroke();
 
                         if (!addedWavePoint) {

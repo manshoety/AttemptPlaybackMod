@@ -1,6 +1,7 @@
 #pragma once
 
 #include "attempt_manager_popup.hpp"
+#include "../core/geode6_binding_compat.hpp"
 
 #include <Geode/Geode.hpp>
 
@@ -195,7 +196,7 @@ namespace {
         // Keep the visual checkbox size, shrink interactive area so clicks don't hit other stuff
         toggler->setAnchorPoint({ 0.5f, 0.5f });
         toggler->setContentSize({ 18.f, 18.f });
-        toggler->setSizeMult(0.38f);
+        attemptplayback::bindingcompat::setToggleSizeMult(toggler, 0.38f);
         toggler->toggle(selected);
         return toggler;
     }

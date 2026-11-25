@@ -2,6 +2,7 @@
 #pragma once
 
 #include <Geode/Geode.hpp>
+#include "geode6_binding_compat.hpp"
 #include <vector>
 #include <unordered_map>
 #include <chrono>
@@ -305,7 +306,7 @@ private:
         po->setZOrder(58);
 
         if (po->m_waveTrail) {
-            po->m_waveTrail->reset();
+            attemptplayback::bindingcompat::resetWaveTrail(po->m_waveTrail);
             po->m_waveTrail->setVisible(false);
             auto* parent = getWaveTrailParent(m_pl);
             moveTrailToNodeSafe(po, parent, 57);
@@ -331,7 +332,7 @@ public:
             slot.ghost->setVisible(false);
             slot.ghost->setPosition({-10000, -10000});
             if (slot.ghost->m_waveTrail) {
-                slot.ghost->m_waveTrail->reset();
+                attemptplayback::bindingcompat::resetWaveTrail(slot.ghost->m_waveTrail);
                 slot.ghost->m_waveTrail->setVisible(false);
             }
         }
@@ -355,7 +356,7 @@ public:
                 g->setPosition({-10000, -10000});
 
                 if (g->m_waveTrail) {
-                    g->m_waveTrail->reset();
+                    attemptplayback::bindingcompat::resetWaveTrail(g->m_waveTrail);
                     g->m_waveTrail->setVisible(false);
                 }
             }

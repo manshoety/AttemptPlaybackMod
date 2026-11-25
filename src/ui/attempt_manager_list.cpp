@@ -1,4 +1,5 @@
 #include "attempt_manager_popup_helpers.hpp"
+#include "../core/geode6_binding_compat.hpp"
 
 void AttemptManagerPopup::resetPageWidgets_() {
     // I love eating nullptrs
@@ -347,7 +348,7 @@ void AttemptManagerPopup::buildRowSlots_() {
 
         slot.checkbox = makeCheckbox_(this, menu_selector(AttemptManagerPopup::onToggleAttemptSelected), -1, kRowsCheckboxX, 0.f, false, "select-attempt-checkbox"_spr);
         slot.checkbox->setScale(0.82f);
-        slot.checkbox->setSizeMult(0.28f);
+        attemptplayback::bindingcompat::setToggleSizeMult(slot.checkbox, 0.28f);
         m_rowsMenu->addChild(slot.checkbox);
 
         slot.startLabel = makeLabel_("", kRowsStartPercentX, 0.f, kRowsLabelScale, m_rowsLayer, {235, 238, 255}, {0.f, 0.5f});

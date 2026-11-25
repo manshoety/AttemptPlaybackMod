@@ -1,4 +1,5 @@
 #include "ghost_settings_popup.hpp"
+#include "../core/geode6_binding_compat.hpp"
 #include "animated_switch.hpp"
 
 #include <Geode/Geode.hpp>
@@ -65,7 +66,7 @@ namespace {
 
     CCMenuItemToggler* makeToggle_(CCObject* target, SEL_MenuHandler callback) {
         auto* toggle = attemptplayback::ui::AnimatedSwitch::create(target, callback);
-        if (toggle) toggle->setSizeMult(kButtonMult);
+        attemptplayback::bindingcompat::setToggleSizeMult(toggle, kButtonMult);
         return toggle;
     }
 

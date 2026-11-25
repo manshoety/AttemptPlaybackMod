@@ -1,4 +1,5 @@
 #include "playback_mod_menu_popup.hpp"
+#include "../core/geode6_binding_compat.hpp"
 
 #include <Geode/Geode.hpp>
 #include <UIBuilder.hpp>
@@ -164,7 +165,7 @@ void PlaybackModMenu::syncUIFromRuntime() {
 
 CCMenuItemToggler* mkToggler(CCObject* target, SEL_MenuHandler sel) {
     auto* toggler = attemptplayback::ui::AnimatedSwitch::create(target, sel);
-    if (toggler) toggler->setSizeMult(kPopupButtonSizeMult);
+    attemptplayback::bindingcompat::setToggleSizeMult(toggler, kPopupButtonSizeMult);
     return toggler;
 }
 
@@ -982,7 +983,7 @@ bool PracticeRunSelectPopup::init(float width, float height) {
         0.5f
     );
     m_currentStartToggle->setPosition({-8.f, 72.f});
-    m_currentStartToggle->setSizeMult(0.30f);
+    attemptplayback::bindingcompat::setToggleSizeMult(m_currentStartToggle, 0.30f);
     m_currentStartToggle->toggle(false);
     controls->addChild(m_currentStartToggle);
 
@@ -1261,7 +1262,7 @@ void PracticeRunSelectPopup::rebuildRows_() {
         );
         checkbox->setPosition({-122.f, y});
         checkbox->setTag(run.sessionId);
-        checkbox->setSizeMult(0.32f);
+        attemptplayback::bindingcompat::setToggleSizeMult(checkbox, 0.32f);
         checkbox->toggle(selected);
         rowMenu->addChild(checkbox, 10);
 
