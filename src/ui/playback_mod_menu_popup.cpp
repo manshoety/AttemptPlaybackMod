@@ -68,14 +68,20 @@ namespace replay_ui_detail {
 }
 
 namespace {
-    constexpr float kPopupW = 600.f;
-    constexpr float kPopupH = 340.f;
-    constexpr float kPreloadPopupW = 300.f;
-    constexpr float kPreloadPopupH = 200.f;
-    constexpr float kPracticeRunPopupH = 270.f;
+    constexpr float kPopupW = attemptplayback::ui::popup_layout::Large.width;
+    constexpr float kPopupH = attemptplayback::ui::popup_layout::Large.height;
+    constexpr float kReplayDialogW = attemptplayback::ui::popup_layout::ReplayDialog.width;
+    constexpr float kReplayDialogH = attemptplayback::ui::popup_layout::ReplayDialog.height;
     constexpr float kPracticeRunGapTolerance = 2.f;
-    constexpr float kPlaybackSettingsW = 300.f;
-    constexpr float kPlaybackSettingsH = 200.f;
+    constexpr float kPracticeToolbarButtonW = 88.f;
+    constexpr float kPracticeToolbarButtonH = 20.f;
+    constexpr float kPracticeRowW = 320.f;
+    constexpr float kPracticeSelectX = -115.f;
+    constexpr float kPracticeStartX = -42.f;
+    constexpr float kPracticeEndX = 32.f;
+    constexpr float kPracticeAttemptsX = 112.f;
+    constexpr float kPlaybackSettingsW = attemptplayback::ui::popup_layout::Compact.width;
+    constexpr float kPlaybackSettingsH = attemptplayback::ui::popup_layout::Compact.height;
 
     static constexpr size_t kPlayerObjectBytes = 0.45 * 1024 * 1024; // I think it's around this amount but who knows
 }
@@ -98,20 +104,13 @@ PlaybackModMenu* PlaybackModMenu::create() {
 
 
 bool PlaybackModMenu::init(float width, float height) {
-    if (!Popup::init(width, height))
+    if (!LayoutPopup::init(width, height))
         return false;
     this->setID("playbackModMenu-popup"_spr);
 
-    setChildrenInvisible(m_mainLayer);
-
     setTitle("");
 
-    // Murder the default close button
-    if (CCMenuItemSpriteExtra* close = findDefaultCloseButton(m_mainLayer)) {
-        close->stopAllActions();
-        close->setVisible(false);
-        close->setEnabled(false);
-    }
+    useFullscreenGradient({40, 84, 220});
 
     buildTemplateUI_();
 
@@ -175,17 +174,6 @@ void PlaybackModMenu::buildTemplateUI_() {
     auto* root = CCNode::create();
     root->setPosition(m_mainLayer->getContentSize() * 0.5f);
     m_mainLayer->addChild(root);
-
-    auto* background = createFullscreenGradient_();
-    const auto win = CCDirector::sharedDirector()->getWinSize();
-    const float uiScale = std::min({1.f, (win.width - 22.f) / kPopupW, (win.height - 18.f) / kPopupH});
-    if (uiScale > 0.f) {
-        background->setScaleX((win.width + 30.f) / (std::max(1.f, background->getContentSize().width) * uiScale));
-        background->setScaleY((win.height + 30.f) / (std::max(1.f, background->getContentSize().height) * uiScale));
-    }
-    background->setColor({40, 84, 220});
-    background->setPosition({0.f, 0.f});
-    root->addChild(background, -20);
 
     auto addLabel = [root](const char* text, float x, float y, float scale,
                            ccColor3B color = {255, 255, 255}) {
@@ -465,21 +453,6 @@ void PlaybackModMenu::buildTemplateUI_() {
 
     // I will save you free robux button
 
-    auto* close = CircleButtonSprite::createWithSpriteFrameName(
-        "geode.loader/close.png", 0.85f, CircleBaseColor::Green
-    );
-    auto* closeButton = CCMenuItemSpriteExtra::create(
-        close, this, menu_selector(PlaybackModMenu::onExitButton)
-    );
-    closeButton->setID("ExitButton"_spr);
-    // Restore the original anchor/placement from the old menu layout.
-    closeButton->ignoreAnchorPointForPosition(false);
-    closeButton->setAnchorPoint({0.f, 1.f});
-    closeButton->setPosition({-283.f, 158.f});
-    closeButton->setScale(0.75f);
-    menu->addChild(closeButton);
-
-    scaleUIForThatOneTabletUser(kPopupW, kPopupH);
     refreshPreview_();
     cacheReplayButtons_();
     refreshReplayButtons_();
@@ -543,18 +516,6 @@ void PlaybackModMenu::onOpenGhostSettings(CCObject*) {
         p->m_noElasticity = true;
         p->show();
     }
-}
-
-void PlaybackModMenu::scaleUIForThatOneTabletUser(float designWidth, float designHeight) {
-    if (!m_mainLayer) return;
-
-    const auto win = CCDirector::sharedDirector()->getWinSize();
-    const float scale = std::min({
-        1.f,
-        std::max(0.01f, win.width - 22.f) / designWidth,
-        std::max(0.01f, win.height - 18.f) / designHeight
-    });
-    m_mainLayer->setScale(scale);
 }
 
 void PlaybackModMenu::onReplayBest(CCObject*) {
@@ -806,9 +767,9 @@ void PlaybackModMenu::onFreeRobux(CCObject*) {
     FLAlertLayer::create("Attention", "Free Robux will be added in a later update", "I WANT THEM NOW")->show();
 }
 
-void PlaybackModMenu::onExitButton(CCObject*) {
+void PlaybackModMenu::onClose(CCObject* sender) {
     Ghosts::I().updateOpacityAll();
-    this->onClose(nullptr);
+    Popup::onClose(sender);
 }
 
 void PlaybackModMenu::onSliderInt(CCObject*) {
@@ -864,7 +825,7 @@ void PlaybackModMenu::refreshColorsLabel_() {
 
 PracticeRunSelectPopup* PracticeRunSelectPopup::create() {
     auto ret = new PracticeRunSelectPopup();
-    if (ret && ret->init(kPreloadPopupW, kPracticeRunPopupH)) {
+    if (ret && ret->init(kReplayDialogW, kReplayDialogH)) {
         ret->autorelease();
         return ret;
     }
@@ -873,7 +834,7 @@ PracticeRunSelectPopup* PracticeRunSelectPopup::create() {
 }
 
 bool PracticeRunSelectPopup::init(float width, float height) {
-    if (!Popup::init(width, height)) return false;
+    if (!LayoutPopup::init(width, height)) return false;
 
     this->setID("practice-run-select-popup"_spr);
     setTitle("");
@@ -934,7 +895,7 @@ bool PracticeRunSelectPopup::init(float width, float height) {
         {255, 225, 90}
     );
 
-    makeLabel("Sort:", -111.f, 72.f, 0.30f);
+    makeLabel("Sort:", -143.f, 76.f, 0.30f);
 
     auto* controls = CCMenu::create();
     controls->setPosition({0.f, 0.f});
@@ -969,10 +930,10 @@ bool PracticeRunSelectPopup::init(float width, float height) {
     makeButton(
         "Recent",
         menu_selector(PracticeRunSelectPopup::onCycleSort),
-        -59.f,
-        72.f,
-        70.f,
-        20.f,
+        -75.f,
+        76.f,
+        kPracticeToolbarButtonW,
+        kPracticeToolbarButtonH,
         "GJ_button_02.png",
         &m_sortValueLabel
     );
@@ -982,7 +943,7 @@ bool PracticeRunSelectPopup::init(float width, float height) {
         menu_selector(PracticeRunSelectPopup::onToggleCurrentStart),
         0.5f
     );
-    m_currentStartToggle->setPosition({-8.f, 72.f});
+    m_currentStartToggle->setPosition({-14.f, 76.f});
     attemptplayback::bindingcompat::setToggleSizeMult(m_currentStartToggle, 0.30f);
     m_currentStartToggle->toggle(false);
     controls->addChild(m_currentStartToggle);
@@ -992,7 +953,7 @@ bool PracticeRunSelectPopup::init(float width, float height) {
         : "Current Start Unavailable";
     m_currentStartLabel = CCLabelBMFont::create(currentStartText.c_str(), "bigFont.fnt");
     m_currentStartLabel->setAnchorPoint({0.f, 0.5f});
-    m_currentStartLabel->setPosition({4.f, 72.f});
+    m_currentStartLabel->setPosition({-2.f, 76.f});
     m_currentStartLabel->setScale(m_haveCurrentStart ? 0.27f : 0.18f);
     m_currentStartLabel->setColor(
         m_haveCurrentStart ? ccColor3B{238, 240, 255} : ccColor3B{150, 150, 150}
@@ -1005,18 +966,38 @@ bool PracticeRunSelectPopup::init(float width, float height) {
     }
 
     makeButton(
-        "All",
+        "Select All",
         menu_selector(PracticeRunSelectPopup::onToggleAllRuns),
-        -118.f,
-        52.f,
-        44.f,
-        25.f,
+        kPracticeSelectX,
+        51.f,
+        kPracticeToolbarButtonW,
+        kPracticeToolbarButtonH,
         "GJ_button_02.png",
         &m_selectAllLabel
     );
-    makeLabel("START", -61.f, 51.f, 0.235f, {205, 214, 255});
-    makeLabel("END", 15.f, 51.f, 0.235f, {205, 214, 255});
-    makeLabel("ATTEMPTS", 94.f, 51.f, 0.235f, {205, 214, 255});
+
+    float toolbarLabelScale = 0.34f;
+    auto fitCaption = [&toolbarLabelScale](CCLabelBMFont* label, char const* text) {
+        label->setString(text);
+        const auto size = label->getContentSize();
+        toolbarLabelScale = std::min({toolbarLabelScale,
+            (kPracticeToolbarButtonW - 12.f) / std::max(1.f, size.width),
+            (kPracticeToolbarButtonH - 4.f) / std::max(1.f, size.height)});
+    };
+    if (m_sortValueLabel && m_selectAllLabel) {
+        for (auto text : {"Recent", "Furthest", "Attempts"})
+            fitCaption(m_sortValueLabel, text);
+        for (auto text : {"Select All", "Deselect All"})
+            fitCaption(m_selectAllLabel, text);
+        m_sortValueLabel->setString("Recent");
+        m_selectAllLabel->setString("Select All");
+        m_sortValueLabel->setScale(toolbarLabelScale);
+        m_selectAllLabel->setScale(toolbarLabelScale);
+    }
+
+    makeLabel("START", kPracticeStartX, 51.f, 0.235f, {205, 214, 255});
+    makeLabel("END", kPracticeEndX, 51.f, 0.235f, {205, 214, 255});
+    makeLabel("ATTEMPTS", kPracticeAttemptsX, 51.f, 0.235f, {205, 214, 255});
 
     m_rowsRoot = CCNode::create();
     m_rowsRoot->setPosition({0.f, 0.f});
@@ -1196,7 +1177,7 @@ void PracticeRunSelectPopup::sortRuns_() {
 }
 
 int PracticeRunSelectPopup::maxPage_() const {
-    constexpr int kRowsPerPage = 4;
+    constexpr int kRowsPerPage = 5;
     if (m_runs.empty()) return 0;
     return static_cast<int>((m_runs.size() - 1) / kRowsPerPage);
 }
@@ -1205,8 +1186,8 @@ void PracticeRunSelectPopup::rebuildRows_() {
     if (!m_rowsRoot) return;
     m_rowsRoot->removeAllChildrenWithCleanup(true);
 
-    constexpr int kRowsPerPage = 4;
-    constexpr float kRowY[kRowsPerPage] = {29.f, 3.f, -23.f, -49.f};
+    constexpr int kRowsPerPage = 5;
+    constexpr float kRowY[kRowsPerPage] = {29.f, 5.f, -19.f, -43.f, -67.f};
 
     auto formatPercent = [](float value) {
         std::ostringstream ss;
@@ -1248,7 +1229,7 @@ void PracticeRunSelectPopup::rebuildRows_() {
         const bool selected = m_selectedSessionIds.contains(run.sessionId);
 
         auto* rowBg = CCScale9Sprite::create("square02b_001.png");
-        rowBg->setContentSize({270.f, 60.f});
+        rowBg->setContentSize({kPracticeRowW, 60.f});
         rowBg->setScaleY(0.325f);
         rowBg->setPosition({0.f, y});
         rowBg->setColor(selected ? ccColor3B{8, 8, 8} : ccColor3B{0, 0, 0});
@@ -1260,7 +1241,7 @@ void PracticeRunSelectPopup::rebuildRows_() {
             menu_selector(PracticeRunSelectPopup::onToggleRun),
             0.40f
         );
-        checkbox->setPosition({-122.f, y});
+        checkbox->setPosition({kPracticeSelectX, y});
         checkbox->setTag(run.sessionId);
         attemptplayback::bindingcompat::setToggleSizeMult(checkbox, 0.32f);
         checkbox->toggle(selected);
@@ -1275,15 +1256,15 @@ void PracticeRunSelectPopup::rebuildRows_() {
         };
 
 
-        addRowLabel(formatPercent(run.startPercent), -61.f, {238, 240, 255});
+        addRowLabel(formatPercent(run.startPercent), kPracticeStartX, {238, 240, 255});
         addRowLabel(
             formatPercent(run.endPercent),
-            15.f,
+            kPracticeEndX,
             run.completed || run.endPercent >= 99.999f
                 ? ccColor3B{120, 255, 80}
                 : ccColor3B{255, 235, 120}
         );
-        addRowLabel(std::to_string(run.attempts), 94.f, {238, 240, 255});
+        addRowLabel(std::to_string(run.attempts), kPracticeAttemptsX, {238, 240, 255});
     }
 }
 
@@ -1295,7 +1276,7 @@ void PracticeRunSelectPopup::refreshFooter_() {
                 return m_selectedSessionIds.contains(run.sessionId);
             }
         );
-        m_selectAllLabel->setString(allSelected ? "None" : "All");
+        m_selectAllLabel->setString(allSelected ? "Deselect All" : "Select All");
     }
     if (m_selectionLabel) {
         if (m_runs.empty()) m_selectionLabel->setString("0 selected  |  0 runs");
@@ -1528,7 +1509,7 @@ PreloadAttemptsPopup* PreloadAttemptsPopup::create(ReplayKind kind) {
     auto ret = new PreloadAttemptsPopup();
     ret->m_kind = kind;
 
-    if (ret && ret->init(kPreloadPopupW, kPreloadPopupH)) {
+    if (ret && ret->init(kReplayDialogW, kReplayDialogH)) {
         ret->autorelease();
         return ret;
     }
@@ -1537,7 +1518,7 @@ PreloadAttemptsPopup* PreloadAttemptsPopup::create(ReplayKind kind) {
 }
 
 bool PreloadAttemptsPopup::init(float width, float height) {
-    if (!Popup::init(width, height))
+    if (!LayoutPopup::init(width, height))
         return false;
 
     this->setID("preload-attempts-popup"_spr);
@@ -1636,15 +1617,15 @@ bool PreloadAttemptsPopup::init(float width, float height) {
         .children(
             // BG
             Build<CCScale9Sprite>::create("GJ_square01.png")
-                .contentSize(300.f, 200.f)
+                .contentSize(width, height)
                 .anchorPoint(0.5f, 0.5f)
                 .zOrder(-1),
 
             Build<CCLabelBMFont>::create("Preload Attempts", "bigFont.fnt")
                 .id("TitleLabel"_spr)
-                .pos(0.f, 83.f)
+                .pos(0.f, 116.f)
                 .anchorPoint(0.5f, 0.5f)
-                .scale(0.825f),
+                .scale(0.68f),
 
             /*
             Build<CCLabelBMFont>::create("Percentage enabled stuff", "bigFont.fnt")
@@ -1657,14 +1638,14 @@ bool PreloadAttemptsPopup::init(float width, float height) {
 
             Build<CCLabelBMFont>::create("Sort attempts by", "bigFont.fnt")
                 .id("preload-sort-title"_spr)
-                .pos(0.f, 55.f)
+                .pos(0.f, 79.f)
                 .anchorPoint(0.5f, 0.5f)
                 .scale(0.40f)
                 .store(m_sortByLabel),
 
             Build<CCLabelBMFont>::create("Load 0 of 0", "bigFont.fnt")
                 .id("NumAttemptsLoadingLabel"_spr)
-                .pos(0.f, -27.f)
+                .pos(0.f, -54.f)
                 .anchorPoint(0.5f, 0.5f)
                 .scale(0.525f)
                 .store(m_numAttemptsLoadingLabel),
@@ -1672,7 +1653,7 @@ bool PreloadAttemptsPopup::init(float width, float height) {
             
             Build<CCLabelBMFont>::create("(Estimated RAM: 0MB)", "bigFont.fnt")
                 .id("EstimatedRAMLabel"_spr)
-                .pos(0.f, -43.f)
+                .pos(0.f, -74.f)
                 .anchorPoint(0.5f, 0.5f)
                 .scale(0.425f)
                 .store(m_estimatedRamLabel),
@@ -1681,6 +1662,7 @@ bool PreloadAttemptsPopup::init(float width, float height) {
                 .$build_wrap(setString(std::to_string(startVal)))
                 .id("numberTextInput"_spr)
                 .store(m_numAttemptsToLoad)
+                .pos(0.f, 8.f)
                 .contentSize(200.f, 30.f)
                 .anchorPoint(0.5f, 0.5f)
         )
@@ -1696,7 +1678,7 @@ bool PreloadAttemptsPopup::init(float width, float height) {
         .children(
             Build<CCMenu>::create()
                 .store(m_sortMenu)
-                .pos(0.f, 32.f)
+                .pos(0.f, 53.f)
                 .scale(0.775f)
                 .contentSize(220.f, 24.f)
                 .anchorPoint(0.5f, 0.5f)
@@ -1714,11 +1696,11 @@ bool PreloadAttemptsPopup::init(float width, float height) {
                     /*text*/"Load",
                     /*callback*/menu_selector(PreloadAttemptsPopup::onPressLoad),
                     /*node_id*/"load-button"_spr,
-                    /*pos*/{0.f, -73.f},
+                    /*pos*/{0.f, -108.f},
                     /*width*/150.f,
-                    /*height*/40.f,
-                    /*spriteScale*/0.925f,
-                    /*labelScale*/0.8f,
+                    /*height*/38.f,
+                    /*spriteScale*/0.90f,
+                    /*labelScale*/0.76f,
                     /*sizeMult*/kPopupBigButtonSizeMult
                     ).store(m_loadBtn),
 
@@ -1728,11 +1710,11 @@ bool PreloadAttemptsPopup::init(float width, float height) {
                 .intoMenuItem(this, menu_selector(PreloadAttemptsPopup::onPressMax))
                 .scaleMult(kPopupButtonSizeMult)
                 .store(m_maxBtn)
-                .pos(124.f, 0.f),
+                .pos(124.f, 8.f),
 
             Build<CCLabelBMFont>::create("Max", "bigFont.fnt")
                 .id("maxLabel"_spr)
-                .pos(124.f, 24.f)
+                .pos(124.f, 32.f)
                 .anchorPoint(0.5f, 0.5f)
                 .scale(0.425f)
         )
@@ -1964,7 +1946,7 @@ PlaybackSettingsPopup* PlaybackSettingsPopup::create() {
 }
 
 bool PlaybackSettingsPopup::init(float width, float height) {
-    if (!Popup::init(width, height))
+    if (!LayoutPopup::init(width, height))
         return false;
 
     this->setID("playback-settings-popup"_spr);
@@ -1988,7 +1970,7 @@ bool PlaybackSettingsPopup::init(float width, float height) {
                 .id("TitleLabel"_spr)
                 .pos(0.f, 83.f)
                 .anchorPoint(0.5f, 0.5f)
-                .scale(0.825f),
+                .scale(0.65f),
 
             Build<CCMenu>::create()
                 .id("CustomDeathSoundMenu"_spr)

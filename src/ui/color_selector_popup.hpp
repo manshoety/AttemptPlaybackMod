@@ -21,8 +21,8 @@ using namespace cocos2d;
 using namespace cocos2d::extension;
 
 namespace {
-    constexpr float kColorPopupW = 600.f;
-    constexpr float kColorPopupH = 340.f;
+    constexpr float kColorPopupW = attemptplayback::ui::popup_layout::Large.width;
+    constexpr float kColorPopupH = attemptplayback::ui::popup_layout::Large.height;
 
     constexpr float kColorBtnVisualScale = 0.65f;
     constexpr float kPressSizeMult = 1.f;
@@ -49,7 +49,7 @@ namespace {
     }
 }
 
-class ColorSelectorPopup : public geode::Popup {
+class ColorSelectorPopup : public attemptplayback::ui::LayoutPopup {
 public:
     static ColorSelectorPopup* create() {
         auto ret = new ColorSelectorPopup();
@@ -63,56 +63,24 @@ public:
 
 protected:
     bool init(float width, float height) {
-        if (!Popup::init(width, height))
+        if (!LayoutPopup::init(width, height))
             return false;
         this->setID("color-selector-popup"_spr);
         setTitle("");
 
-        setChildrenInvisible(m_mainLayer);
-
-        // Murder the default close button
-        if (CCMenuItemSpriteExtra* close = findDefaultCloseButton(m_mainLayer)) {
-            close->stopAllActions();
-            close->setVisible(false);
-            close->setEnabled(false);
-        }
-
         m_mainLayer->setLayout(AnchorLayout::create());
 
         loadMasks_();
-
-        CCSprite* gradient = createFullscreenGradient_();
 
         Build<CCMenu>::create()
             .id("ColorSelectorRoot"_spr)
             .contentSize(0.f, 0.f)
             .layoutOpts(Build<AnchorLayoutOptions>::create().anchor(Anchor::Center))
             .children(
-                // BG gradient
-                Build<CCSprite>(gradient)
-                    .color(100, 86, 255)
-                    .anchorPoint(0.5f, 0.5f)
-                    .zOrder(-1)
-                    .scaleX(38.f).scaleY(2.f),
-
                 // title
                 Build<CCLabelBMFont>::create("Color Selector", "bigFont.fnt")
                     .pos(0.f, 140.f)
                     .anchorPoint(0.5f, 0.5f),
-
-                // exit button
-                Build(CircleButtonSprite::createWithSpriteFrameName(
-                    "geode.loader/close.png",
-                    0.85f,
-                    CircleBaseColor::Green
-                ))
-                    .intoMenuItem(this, menu_selector(ColorSelectorPopup::onExit_))
-                    .ignoreAnchorPointForPos(false)
-                    .anchorPoint(0.f, 1.f)
-                    .id("ExitButton"_spr)
-                    .pos(-283.f, 158.f)
-                    .scale(0.75f)
-                    .scaleMult(0.8),
 
                 createTextButton_(
                     this,
@@ -261,8 +229,6 @@ protected:
             .store(m_uiRoot)
             .collect();
 
-        scaleUIForThatOneTabletUser(kColorPopupW, kColorPopupH);
-
         buildColorButtons_();
         refreshAllX_();
         refreshPlayerTabs_();
@@ -285,17 +251,6 @@ private:
     std::bitset<kRandomColorSlots> m_allowedP2{};
     bool m_editingPlayer1 = true;
     std::array<CCLabelBMFont*, kRandomColorSlots> m_xMark{};
-
-    void scaleUIForThatOneTabletUser(float designWidth, float designHeight) {
-        if (!m_mainLayer) return;
-
-        const auto size = fitPopupToWindow_(designWidth, designHeight);
-        const float scale = computeFitScale_(size.width, size.height, designWidth, designHeight);
-
-        m_mainLayer->setScale(scale);
-    }
-
-    void onExit_(CCObject*) { this->onClose(nullptr); }
 
     std::bitset<kRandomColorSlots>& activeMask_() {
         return m_editingPlayer1 ? m_allowedP1 : m_allowedP2;

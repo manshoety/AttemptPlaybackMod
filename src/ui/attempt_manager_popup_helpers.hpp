@@ -27,8 +27,8 @@ namespace {
         return dispatcher ? dispatcher->getTargetPrio() : -500;
     }
 
-    constexpr float kPopupW = 700.f;
-    constexpr float kPopupH = 380.f;
+    constexpr float kPopupW = attemptplayback::ui::popup_layout::Wide.width;
+    constexpr float kPopupH = attemptplayback::ui::popup_layout::Wide.height;
 
     constexpr int kRowsPerPage = 20;
 
@@ -92,36 +92,6 @@ namespace {
         panel->setOpacity(opacity);
         parent->addChild(panel);
         return panel;
-    }
-
-    CCSprite* makeBlueGameBackdrop_() {
-        auto* bg = createFullscreenGradient_();
-        if (!bg) return nullptr;
-        auto const win = CCDirector::sharedDirector()->getWinSize();
-        const float uiScale = std::min({
-            1.f,
-            std::max(0.01f, win.width - 22.f) / kPopupW,
-            std::max(0.01f, win.height - 18.f) / kPopupH
-        });
-        if (uiScale > 0.f) {
-            bg->setScaleX((win.width + 30.f) / (std::max(1.f, bg->getContentSize().width) * uiScale));
-            bg->setScaleY((win.height + 30.f) / (std::max(1.f, bg->getContentSize().height) * uiScale));
-        }
-        bg->setColor({40, 84, 220});
-        bg->setPosition({0.f, 0.f});
-        if (auto* frame = CCSpriteFrameCache::sharedSpriteFrameCache()->spriteFrameByName("game_bg_01_001.png")) {
-            auto* texture = CCSprite::createWithSpriteFrame(frame);
-            const auto size = texture->getContentSize();
-            if (size.width > 0.f && size.height > 0.f) {
-                texture->setScaleX(bg->getContentSize().width / size.width);
-                texture->setScaleY(bg->getContentSize().height / size.height);
-                texture->setPosition(bg->getContentSize() * .5f);
-                texture->setColor({75, 150, 255});
-                texture->setOpacity(60);
-                bg->addChild(texture);
-            }
-        }
-        return bg;
     }
 
     CCScale9Sprite* makeSmallTextButtonSprite_(

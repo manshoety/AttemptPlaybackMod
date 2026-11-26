@@ -20,16 +20,16 @@ using namespace cocos2d;
 using namespace cocos2d::extension;
 
 namespace {
-    constexpr float kGhostSettingsW = 344.f;
-    constexpr float kGhostSettingsH = 234.f;
-    constexpr float kGhostSoundsW = 362.f;
-    constexpr float kGhostSoundsH = 214.f;
-    constexpr float kGhostTextW = 440.f;
-    constexpr float kGhostTextH = 300.f;
-    constexpr float kGhostTextPosW = 300.f;
-    constexpr float kGhostTextPosH = 185.f;
-    constexpr float kDeathMarkerW = 360.f;
-    constexpr float kDeathMarkerH = 230.f;
+    constexpr float kGhostSettingsW = attemptplayback::ui::popup_layout::Medium.width;
+    constexpr float kGhostSettingsH = attemptplayback::ui::popup_layout::Medium.height;
+    constexpr float kGhostSoundsW = attemptplayback::ui::popup_layout::Medium.width;
+    constexpr float kGhostSoundsH = attemptplayback::ui::popup_layout::Medium.height;
+    constexpr float kGhostTextW = attemptplayback::ui::popup_layout::Medium.width;
+    constexpr float kGhostTextH = attemptplayback::ui::popup_layout::Medium.height;
+    constexpr float kGhostTextPosW = attemptplayback::ui::popup_layout::PositionPreview.width;
+    constexpr float kGhostTextPosH = attemptplayback::ui::popup_layout::PositionPreview.height;
+    constexpr float kDeathMarkerW = attemptplayback::ui::popup_layout::Medium.width;
+    constexpr float kDeathMarkerH = attemptplayback::ui::popup_layout::Medium.height;
     constexpr float kButtonMult = 1.1f;
 
     constexpr float kUiTextureScale = 2.f;
@@ -68,6 +68,14 @@ namespace {
         auto* toggle = attemptplayback::ui::AnimatedSwitch::create(target, callback);
         attemptplayback::bindingcompat::setToggleSizeMult(toggle, kButtonMult);
         return toggle;
+    }
+
+    bool containsNode_(CCNode* root, CCNode* needle) {
+        if (!root || !needle) return false;
+        for (auto* cursor = needle; cursor; cursor = cursor->getParent()) {
+            if (cursor == root) return true;
+        }
+        return false;
     }
 
     template <class PopupT>
@@ -165,7 +173,7 @@ GhostSettingsPopup* GhostSettingsPopup::create() {
 }
 
 bool GhostSettingsPopup::init(float width, float height) {
-    if (!Popup::init(width, height)) return false;
+    if (!LayoutPopup::init(width, height)) return false;
 
     setID("ghost-settings-popup"_spr);
     setTitle("Ghost Appearance");
@@ -310,7 +318,7 @@ GhostDeathSoundsPopup* GhostDeathSoundsPopup::create() {
 }
 
 bool GhostDeathSoundsPopup::init(float width, float height) {
-    if (!Popup::init(width, height)) return false;
+    if (!LayoutPopup::init(width, height)) return false;
     setID("ghost-death-sounds-popup"_spr);
     setTitle("Custom Death Sounds");
 
@@ -403,7 +411,7 @@ GhostTextPopup* GhostTextPopup::create() {
 }
 
 bool GhostTextPopup::init(float width, float height) {
-    if (!Popup::init(width, height)) return false;
+    if (!LayoutPopup::init(width, height)) return false;
 
     setID("ghost-text-popup"_spr);
     setTitle("Ghost Text");
@@ -874,14 +882,14 @@ GhostTextPositionPopup* GhostTextPositionPopup::create() {
 }
 
 bool GhostTextPositionPopup::init(float width, float height) {
-    if (!Popup::init(width, height)) return false;
+    if (!LayoutPopup::init(width, height)) return false;
 
     setID("ghost-text-position-popup"_spr);
     setTitle("");
 
     setOpacity(0);
 
-    setChildrenInvisible(m_mainLayer);
+    useTransparentPreview();
 
     auto* root = CCNode::create();
     root->setPosition(m_mainLayer->getContentSize() * 0.5f);
@@ -965,7 +973,7 @@ bool GhostTextPositionPopup::init(float width, float height) {
     return true;
 }
 void GhostTextPositionPopup::onEnter() {
-    Popup::onEnter();
+    LayoutPopup::onEnter();
     setOpacity(0);
     beginPreviewMode_();
     m_previewCheckFrames = 3;
@@ -975,7 +983,7 @@ void GhostTextPositionPopup::onEnter() {
 void GhostTextPositionPopup::onExit() {
     unscheduleUpdate();
     endPreviewMode_();
-    Popup::onExit();
+    LayoutPopup::onExit();
 }
 
 void GhostTextPositionPopup::update(float) {
@@ -1033,21 +1041,26 @@ void GhostTextPositionPopup::refreshPreviewHiddenNodes_() {
     auto* director = CCDirector::sharedDirector();
     auto* scene = director ? director->getRunningScene() : nullptr;
 
-    if (scene) {
-        // Hide Attempt Playback popup
-        hideNodeForPreview_(
-            scene->getChildByIDRecursive("playbackModMenu-popup"_spr)
-        );
-        hideNodeForPreview_(
-            scene->getChildByIDRecursive("ghost-settings-popup"_spr)
-        );
-        hideNodeForPreview_(
-            scene->getChildByIDRecursive("ghost-text-popup"_spr)
-        );
+    if (!scene) return;
 
-        // Hide pasuse screen
-        if (auto* pauseLayer = findNodeOfTypeRecursive_<PauseLayer>(scene)) {
-            hideNodeForPreview_(pauseLayer);
+    // Hide all popups
+    hideNodeForPreview_(scene->getChildByIDRecursive("playbackModMenu-popup"_spr));
+    hideNodeForPreview_(scene->getChildByIDRecursive("ghost-settings-popup"_spr));
+    hideNodeForPreview_(scene->getChildByIDRecursive("ghost-text-popup"_spr));
+
+    
+    for (auto* child : scene->getChildrenExt()) {
+        if (!child || containsNode_(child, this)) continue;
+        if (typeinfo_cast<PlayLayer*>(child) || typeinfo_cast<GJBaseGameLayer*>(child)) {
+            continue;
+        }
+        hideNodeForPreview_(child);
+    }
+    // Blow up the pause menu
+    if (auto* pauseLayer = findNodeOfTypeRecursive_<PauseLayer>(scene)) {
+        hideNodeForPreview_(pauseLayer);
+        if (auto* pauseMain = pauseLayer->getChildByID("main-layer")) {
+            hideNodeForPreview_(pauseMain);
         }
     }
 }
@@ -1146,7 +1159,7 @@ GhostDeathMarkerSettingsPopup* GhostDeathMarkerSettingsPopup::create() {
 }
 
 bool GhostDeathMarkerSettingsPopup::init(float width, float height) {
-    if (!Popup::init(width, height)) return false;
+    if (!LayoutPopup::init(width, height)) return false;
 
     setID("death-marker-settings-popup"_spr);
     setTitle("Death Markers");

@@ -1,5 +1,6 @@
 // playback_mod_menu_popup.hpp
 #pragma once
+#include "popup_layout.hpp"
 #include "ghost_preview_appearance.hpp"
 #include <Geode/Geode.hpp>
 
@@ -11,7 +12,7 @@
 #include <unordered_set>
 #include <chrono>
 
-class PracticeRunSelectPopup : public geode::Popup {
+class PracticeRunSelectPopup : public attemptplayback::ui::LayoutPopup {
 public:
     static PracticeRunSelectPopup* create();
     bool init(float width, float height);
@@ -74,7 +75,7 @@ private:
     void onContinue(cocos2d::CCObject* sender);
 };
 
-class PreloadAttemptsPopup : public geode::Popup {
+class PreloadAttemptsPopup : public attemptplayback::ui::LayoutPopup {
 public:
     static PreloadAttemptsPopup* create(ReplayKind kind);
     bool init(float width, float height);
@@ -120,13 +121,14 @@ private:
     void finishAndStartReplay_();
 };
 
-class PlaybackModMenu : public geode::Popup {
+class PlaybackModMenu : public attemptplayback::ui::LayoutPopup {
 public:
     static PlaybackModMenu* create();
     void syncUIFromRuntime();
     bool init(float width, float height);
 
 protected:
+    void onClose(cocos2d::CCObject* sender) override;
     void update(float dt) override;
 
 private:
@@ -161,7 +163,6 @@ private:
 
 private:
     void buildTemplateUI_();
-    void scaleUIForThatOneTabletUser(float designWidth, float designHeight);
 
     void onReplayBest(cocos2d::CCObject*);
     void onReplayPractice(cocos2d::CCObject*);
@@ -179,7 +180,6 @@ private:
     void onOpenGhostSettings(cocos2d::CCObject*);
     void onOpenPlaybackSettings(cocos2d::CCObject*);
     void onFreeRobux(cocos2d::CCObject*);
-    void onExitButton(cocos2d::CCObject*);
 
     void onSliderInt(cocos2d::CCObject*);
     void onDistanceSlider(cocos2d::CCObject*);
@@ -195,7 +195,7 @@ private:
     static std::pair<std::string, float> sliderKeyAndValue_(cocos2d::CCObject* obj);
 };
 
-class PlaybackSettingsPopup : public geode::Popup {
+class PlaybackSettingsPopup : public attemptplayback::ui::LayoutPopup {
 public:
     static PlaybackSettingsPopup* create();
     bool init(float width, float height);

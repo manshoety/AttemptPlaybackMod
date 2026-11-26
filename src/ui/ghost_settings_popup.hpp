@@ -1,4 +1,5 @@
 #pragma once
+#include "popup_layout.hpp"
 
 #include <Geode/Geode.hpp>
 
@@ -6,7 +7,7 @@
 
 #include <vector>
 
-class GhostTextPositionPopup : public geode::Popup {
+class GhostTextPositionPopup : public attemptplayback::ui::LayoutPopup {
 public:
     static GhostTextPositionPopup* create();
     bool init(float width, float height);
@@ -42,7 +43,7 @@ private:
     void hideNodeForPreview_(cocos2d::CCNode* node);
 };
 
-class GhostTextPopup : public geode::Popup {
+class GhostTextPopup : public attemptplayback::ui::LayoutPopup {
 public:
     static GhostTextPopup* create();
     bool init(float width, float height);
@@ -78,7 +79,7 @@ private:
     void setModeVariantVisible_(const char* id, bool visible);
 };
 
-class GhostDeathSoundsPopup : public geode::Popup {
+class GhostDeathSoundsPopup : public attemptplayback::ui::LayoutPopup {
 public:
     static GhostDeathSoundsPopup* create();
     bool init(float width, float height);
@@ -91,7 +92,7 @@ private:
     void onRefresh(cocos2d::CCObject*);
 };
 
-class GhostDeathMarkerSettingsPopup : public geode::Popup {
+class GhostDeathMarkerSettingsPopup : public attemptplayback::ui::LayoutPopup {
 public:
     static GhostDeathMarkerSettingsPopup* create();
     bool init(float width, float height);
@@ -117,7 +118,7 @@ private:
     void refreshLabels_();
 };
 
-class GhostSettingsPopup : public geode::Popup {
+class GhostSettingsPopup : public attemptplayback::ui::LayoutPopup {
 public:
     static GhostSettingsPopup* create();
     bool init(float width, float height);

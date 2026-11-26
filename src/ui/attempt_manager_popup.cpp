@@ -11,17 +11,12 @@ AttemptManagerPopup* AttemptManagerPopup::create() {
 }
 
 bool AttemptManagerPopup::init(float width, float height) {
-    if (!Popup::init(width, height)) return false;
+    if (!LayoutPopup::init(width, height)) return false;
 
     this->setID("attempt-manager-popup"_spr);
     setTitle("");
 
-    // Murder the default close button
-    if (CCMenuItemSpriteExtra* close = findDefaultCloseButton(m_mainLayer)) {
-        close->stopAllActions();
-        close->setVisible(false);
-        close->setEnabled(false);
-    }
+    useFullscreenGradient({100, 86, 255});
 
     m_mainLayer->setLayout(AnchorLayout::create());
 
@@ -197,15 +192,6 @@ void AttemptManagerPopup::rebuild_() {
     m_root->setAnchorPoint({0.5f, 0.5f});
     m_root->setPosition(m_mainLayer->getContentSize() * 0.5f);
 
-    auto* gradient = createFullscreenGradient_();
-    gradient->setColor({100, 86, 255});
-    gradient->setAnchorPoint({0.5f, 0.5f});
-    gradient->setScaleX(48.f);
-    gradient->setScaleY(2.55f);
-    gradient->setPosition({0.f, 0.f});
-    gradient->setZOrder(-2);
-    m_root->addChild(gradient);
-
     makeLabel_("Attempt Manager", 0.f, 162.f, 0.76f, m_root, {255, 220, 80});
 
     m_tabMenu = CCMenu::create();
@@ -230,39 +216,6 @@ void AttemptManagerPopup::rebuild_() {
 
     rebuildBody_();
 
-    auto* closeMenu = CCMenu::create();
-    closeMenu->setPosition({0.f, 0.f});
-    m_root->addChild(closeMenu, 50);
-
-    auto* closeSpr = CircleButtonSprite::createWithSpriteFrameName(
-        "geode.loader/close.png",
-        0.85f,
-        CircleBaseColor::Green
-    );
-
-    auto* closeBtn = CCMenuItemSpriteExtra::create(
-        closeSpr,
-        this,
-        menu_selector(AttemptManagerPopup::onClose)
-    );
-
-    closeBtn->ignoreAnchorPointForPosition(false);
-    closeBtn->setAnchorPoint({0.f, 1.f});
-    closeBtn->setPosition({-328, 182});
-    closeBtn->setScale(0.8f);
-    closeBtn->setSizeMult(0.8f);
-    closeBtn->setID("attempt-manager-close"_spr);
-    closeMenu->addChild(closeBtn);
-
-    scaleUIForThatOneTabletUser(kPopupW, kPopupH);
-}
-
-void AttemptManagerPopup::scaleUIForThatOneTabletUser(float designWidth, float designHeight) {
-    if (!m_mainLayer) return;
-
-    const auto size = fitPopupToWindow_(designWidth, designHeight);
-    const float scale = computeFitScale_(size.width, size.height, designWidth, designHeight);
-    m_mainLayer->setScale(scale);
 }
 
 void AttemptManagerPopup::rebuildBody_() {

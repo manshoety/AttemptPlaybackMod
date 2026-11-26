@@ -20,18 +20,12 @@ using namespace cocos2d;
 using namespace cocos2d::extension;
 
 namespace {
-    constexpr float kSettingsW = 600.f;
-    constexpr float kSettingsH = 340.f;
+    constexpr float kSettingsW = attemptplayback::ui::popup_layout::Large.width;
+    constexpr float kSettingsH = attemptplayback::ui::popup_layout::Large.height;
     constexpr float kSettingsViewW = 556.f;
     constexpr float kSettingsViewH = 264.f;
     constexpr float kRowLeft = -235.f;
     constexpr float kInputRight = 175.f;
-
-    void fitSettings(CCNode* node) {
-        const auto win = CCDirector::sharedDirector()->getWinSize();
-        const float s = std::min({1.f, (win.width - 18.f) / kSettingsW, (win.height - 14.f) / kSettingsH});
-        node->setScale(std::max(0.1f, s));
-    }
 
     CCLabelBMFont* label(CCNode* parent, const char* text, float x, float y, float scale = .40f, bool left = true) {
         auto* l = CCLabelBMFont::create(text, "bigFont.fnt");
@@ -150,7 +144,7 @@ TabbedGhostSettingsPopup* TabbedGhostSettingsPopup::create() {
 }
 
 bool TabbedGhostSettingsPopup::init(float w, float h) {
-    if (!Popup::init(w, h)) return false;
+    if (!LayoutPopup::init(w, h)) return false;
     setID("tabbed-ghost-settings-popup"_spr);
     setTitle("Ghost Appearance");
     auto* tabBar = CCScale9Sprite::create("square02b_001.png");
@@ -172,7 +166,6 @@ bool TabbedGhostSettingsPopup::init(float w, float h) {
     m_mainLayer->addChild(m_scroll, 3);
     buildTabs();
     buildPage();
-    fitSettings(m_mainLayer);
     scheduleUpdate();
     return true;
 }
@@ -727,7 +720,7 @@ TabbedPlaybackSettingsPopup* TabbedPlaybackSettingsPopup::create() {
 }
 
 bool TabbedPlaybackSettingsPopup::init(float w, float h) {
-    if (!Popup::init(w, h)) return false;
+    if (!LayoutPopup::init(w, h)) return false;
     setID("tabbed-playback-settings-popup"_spr);
     setTitle("Playback Settings");
     auto* tabBar = CCScale9Sprite::create("square02b_001.png");
@@ -749,7 +742,6 @@ bool TabbedPlaybackSettingsPopup::init(float w, float h) {
     m_mainLayer->addChild(m_scroll, 3);
     buildTabs();
     buildPage();
-    fitSettings(m_mainLayer);
     return true;
 }
 

@@ -1,4 +1,5 @@
 #pragma once
+#include "popup_layout.hpp"
 
 #include <Geode/Geode.hpp>
 
@@ -11,7 +12,7 @@
 #include <string>
 #include <filesystem>
 
-class AttemptManagerPopup : public geode::Popup {
+class AttemptManagerPopup : public attemptplayback::ui::LayoutPopup {
 public:
     static AttemptManagerPopup* create();
     bool init(float width, float height);
@@ -183,7 +184,6 @@ private:
 private:
     void loadAttemptsFromRuntime_();
     void rebuild_();
-    void scaleUIForThatOneTabletUser(float designWidth, float designHeight);
     void rebuildBody_();
     void rebuildManagePage_();
     void rebuildDetails_();

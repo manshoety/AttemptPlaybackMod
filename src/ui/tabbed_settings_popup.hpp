@@ -1,4 +1,5 @@
 #pragma once
+#include "popup_layout.hpp"
 
 #include <Geode/Geode.hpp>
 #include "ghost_preview_appearance.hpp"
@@ -7,7 +8,7 @@
 #include <array>
 #include <vector>
 
-class TabbedGhostSettingsPopup : public geode::Popup {
+class TabbedGhostSettingsPopup : public attemptplayback::ui::LayoutPopup {
 public:
     static TabbedGhostSettingsPopup* create();
     bool init(float width, float height);
@@ -79,7 +80,7 @@ private:
     void buildPage();
 };
 
-class TabbedPlaybackSettingsPopup : public geode::Popup {
+class TabbedPlaybackSettingsPopup : public attemptplayback::ui::LayoutPopup {
 public:
     static TabbedPlaybackSettingsPopup* create();
     bool init(float width, float height);
