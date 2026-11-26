@@ -880,6 +880,7 @@ void Ghosts::onQuit() {
         m_ghostUpdateAccum = 0.f;
         m_loadedAttemptKeys.clear();
         m_loadedLevelID = 0;
+        m_persistenceReadFailed = false;
         clearAttemptCatalog_();
         m_practiceCompositeOwnerSerial = -1;
         m_activeOwnerSerial = -1;

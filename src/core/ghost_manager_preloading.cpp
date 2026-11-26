@@ -1,6 +1,5 @@
 #include "ghost_manager.hpp"
 #include <chrono>
-#include <fstream>
 #include "preload_sort_keys.hpp"
 
 void Ghosts::buildInitialAttemptsFromPreloadOrder(
@@ -319,7 +318,7 @@ void Ghosts::preloadStep(int maxPerTick) {
         const std::unordered_set<uint32_t> pooledSerials(
             m_initialAttemptsToSet.begin(), m_initialAttemptsToSet.end());
         const std::optional<bool> wantPractice = practiceFilterForGhosts_();
-        std::ifstream batchAPX;
+        apxio::Reader batchAPX;
 
         int work = 0;
         while (work < maxPerTick &&
@@ -335,7 +334,7 @@ void Ghosts::preloadStep(int maxPerTick) {
                 continue;
             }
             if (cachedIdx == SIZE_MAX && !batchAPX.is_open() && hasCurrentPersistenceTarget_()) {
-                batchAPX.open(fileForLevel_(m_levelIDOnAttach), std::ios::binary);
+                batchAPX.open(fileForLevel_(m_levelIDOnAttach), apxio::Mode::Read);
             }
             Attempt* loaded = ensureAttemptLoadedBySerialFiltered_(
                 serial, wantPractice, false, batchAPX.is_open() ? &batchAPX : nullptr);

@@ -1,5 +1,6 @@
 #include "ghost_manager.hpp"
 #include <chrono>
+#include <climits>
 
 void Ghosts::armFreshRecordingAfterDeleteRestart_() {
         m_forceFreshRecordingAfterDelete = true;
@@ -139,6 +140,7 @@ bool Ghosts::deleteCurrentLevelSaveFile() {
         invalidateAttemptCounts();
 
         m_checkpointMgr = CheckpointManager();
+        m_persistenceReadFailed = false; // Explicit delete all succeeded
         m_needsMigrationRewrite = false;
         m_loadedFileWasLegacyAttempts = false;
 
@@ -660,59 +662,34 @@ std::filesystem::path Ghosts::fileForLevel_(int levelID) const {
         return dir / (std::to_string(levelID) + "_attempts.apx");
     }
 
-void Ghosts::ensureHeader_(std::filesystem::path const& path) {
+bool Ghosts::ensureHeader_(std::filesystem::path const& path) {
+        if (path.empty()) return false;
+
         std::error_code ec;
 
-        ec.clear();
-        const bool exists = std::filesystem::exists(path, ec);
-        if (ec) {
-            log::warn(
-                "[SAVE FILE] exists failed for {}: {}",
-                attemptplayback::pathcompat::toUtf8(path),
-                ec.message()
-            );
-            return;
+        const auto status = std::filesystem::symlink_status(path, ec);
+        if (ec && ec != std::errc::no_such_file_or_directory) return false;
+        if (status.type() != std::filesystem::file_type::not_found) {
+            if (ec || !std::filesystem::is_regular_file(status)) return false;
+            apxio::Reader in(path);
+            APXHeader h{};
+            in.read(reinterpret_cast<char*>(&h), sizeof(h));
+            return in && std::memcmp(h.magic, "APX2", 4) == 0 && h.version == kAPXVersion;
         }
-
-        uintmax_t fsz = 0;
-        if (exists) {
-            ec.clear();
-            fsz = std::filesystem::file_size(path, ec);
-            if (ec) {
-                log::warn(
-                    "[SAVE FILE] file_size failed for {}: {}",
-                    attemptplayback::pathcompat::toUtf8(path),
-                    ec.message()
-                );
-                return;
-            }
-        }
-
-        if (exists && fsz >= sizeof(APXHeader)) {
-            std::ifstream checkFile(path, std::ios::binary);
-            if (checkFile) {
-                APXHeader existing{};
-                checkFile.read(reinterpret_cast<char*>(&existing), sizeof(existing));
-                if (checkFile && std::string(existing.magic, 4) == "APX2") {
-                    return;
-                }
-            }
-        }
-
-        std::ofstream hout(path, std::ios::binary | std::ios::trunc);
-        if (!hout) {
-            log::warn(
-                "[SAVE FILE] failed to open header file for write: {}",
-                attemptplayback::pathcompat::toUtf8(path)
-            );
-            return;
-        }
+        
+        apxio::Writer out(path, apxio::Mode::CreateNew);
+        if (!out) return false;
 
         APXHeader h{};
-        std::memcpy(h.magic, "APX2", 4);
         h.version = kAPXVersion;
-        hout.write(reinterpret_cast<const char*>(&h), sizeof(h));
-        hout.flush();
+        out.write(reinterpret_cast<const char*>(&h), sizeof(h));
+        const bool ok = out.good();
+        out.close();
+        if (!ok) {
+            std::filesystem::remove(path, ec);
+            if (ec) log::warn("[APX save] failed removing incomplete new header: {}", ec.message());
+        }
+        return ok;
     }
 
 void Ghosts::migrateLegacyCustomLevelFiles_(
@@ -917,7 +894,7 @@ bool Ghosts::rewriteWholeFileToCurrent_(std::filesystem::path const& path) {
         tmp += ".tmp";
 
         {
-            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            apxio::Writer out(tmp, apxio::Mode::Truncate);
             if (!out) {
                 log::warn(
                     "[APX save] failed to open temp migration file: {}",
@@ -985,6 +962,10 @@ int Ghosts::saveNewAttemptsForLevel_(int levelID) {
             return 0;
         }
         if (m_isSaving) return 0;
+        if (m_persistenceReadFailed) {
+            log::warn("[APX save] blocked after failed read/rollback; original recording preserved");
+            return 0;
+        }
         m_isSaving = true;
 
         auto path = fileForLevel_(levelID);
@@ -1036,22 +1017,36 @@ int Ghosts::saveNewAttemptsForLevel_(int levelID) {
                 return 0;
             }
             rewroteWholeFile = true;
-        } else {
-            ensureHeader_(path);
-        }
-
-        std::ofstream out(path, std::ios::binary | std::ios::app);
-        if (!out) {
+        } else if (!ensureHeader_(path)) {
+            log::warn("[APX save] refused invalid/unwritable header: {}", attemptplayback::pathcompat::toUtf8(path));
             m_isSaving = false;
             return 0;
         }
+
+        apxio::Writer out(path, apxio::Mode::Append);
+        if (!out) {
+            log::warn("[APX save] could not open append target: {}", attemptplayback::pathcompat::toUtf8(path));
+            m_isSaving = false;
+            return 0;
+        }
+
+        auto failedChunk = [&](uint64_t start) {
+            if (start != UINT64_MAX && !out.rollback(start)) {
+                m_persistenceReadFailed = true;
+                log::error("[APX save] rollback failed; further writes blocked for this level");
+            }
+            clearAttemptCatalog_();
+            log::warn("[APX save] chunk not saved; original prefix retained if rollback succeeded");
+        };
 
         for (auto& a : attempts) {
             if (!attemptHasData_(a)) continue;
             if (!a.recordedThisSession) continue;
             if (a.persistedOnDisk) continue;
 
-            if (!writeAPXAttemptCompact(out, a)) {
+            const uint64_t start = out.position();
+            if (start == UINT64_MAX || !writeAPXAttemptCompact(out, a)) {
+                failedChunk(start);
                 m_isSaving = false;
                 return written;
             }
@@ -1060,11 +1055,12 @@ int Ghosts::saveNewAttemptsForLevel_(int levelID) {
         }
 
         if (m_checkpointMgr.isDirty()) {
-            if (writeAPXPracticePath(out, m_checkpointMgr.getPath())) {
+            const uint64_t start = out.position();
+            if (start != UINT64_MAX && writeAPXPracticePath(out, m_checkpointMgr.getPath())) {
                 m_checkpointMgr.clearDirty();
                 wrotePracticePath = true;
             } else {
-                log::warn("[APX save] PATH write failed (stream bad)");
+                failedChunk(start);
             }
         }
 
@@ -1081,7 +1077,7 @@ int Ghosts::saveNewAttemptsForLevel_(int levelID) {
 int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
         const auto loadStart = std::chrono::steady_clock::now();
         if (m_loadedLevelID == levelID && (m_attemptCatalogScanned || !attempts.empty())) {
-            scanAttemptCatalogForLevel_(levelID);
+            if (!scanAttemptCatalogForLevel_(levelID)) m_persistenceReadFailed = true;
             return 0;
         }
 
@@ -1098,15 +1094,25 @@ int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
             std::chrono::steady_clock::now() - catalogStart).count();
 
         auto path = fileForLevel_(levelID);
-        std::ifstream in(path, std::ios::binary);
+        if (!catalogReady) {
+            m_persistenceReadFailed = true;
+            log::warn("[APX load] catalog failed for {}; automatic writes blocked", attemptplayback::pathcompat::toUtf8(path));
+            return 0;
+        }
+        apxio::Reader in(path, apxio::Mode::Read);
         if (!in) {
-            log::warn("[APX load] !in {}", attemptplayback::pathcompat::toUtf8(path));
+            std::error_code readEc;
+            if (std::filesystem::exists(path, readEc) || readEc) {
+                m_persistenceReadFailed = true;
+                log::warn("[APX load] could not open existing recording: {}", attemptplayback::pathcompat::toUtf8(path));
+            }
             return 0;
         }
 
         APXHeader h{};
         in.read(reinterpret_cast<char*>(&h), sizeof(h));
-        if (!in || std::memcmp(h.magic, "APX2", 4) != 0) {
+        if (!in || std::memcmp(h.magic, "APX2", 4) != 0 || h.version > kAPXVersion) {
+            m_persistenceReadFailed = true;
             log::warn("[APX load] bad header for {}", attemptplayback::pathcompat::toUtf8(path));
             return 0;
         }
@@ -1145,23 +1151,26 @@ int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
         size_t nonPracticeLoaded = 0;
         uint32_t maxSerialSeen = 0;
 
-        while (in) {
+        while (in && in.remaining() != 0) {
             uint32_t type = 0, sz = 0;
             in.read(reinterpret_cast<char*>(&type), sizeof(type));
             in.read(reinterpret_cast<char*>(&sz), sizeof(sz));
-            if (!in) break;
 
-            std::streampos chunkStart = in.tellg();
+            if (!in || sz > apxio::kMaxChunkBytes || sz > in.remaining()) {
+                m_persistenceReadFailed = true;
+                break;
+            }
 
             if (type == kChunk_ATT3) {
                 Attempt a{};
                 if (!readAPXAttemptCompact(in, sz, a)) {
                     log::warn(
-                        "[APX load] skipping malformed ATT3 chunk size={} after {} successfully loaded attempts",
+                        "[APX load] rejected malformed ATT3 chunk size={} after {} successfully loaded attempts",
                         sz,
                         loaded
                     );
-                    continue;
+                    m_persistenceReadFailed = true;
+                    break;
                 }
 
                 if (oldWavePointBitMeaning) {
@@ -1200,19 +1209,27 @@ int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
                 m_loadedFileWasLegacyAttempts = true;
                 m_needsMigrationRewrite = true;
 
-                std::streampos attzChunkStart = in.tellg();
+                int64_t attzChunkStart = in.tellg();
 
                 APXMeta m{};
+                if (sz < sizeof(m)) { m_persistenceReadFailed = true; break; }
                 in.read(reinterpret_cast<char*>(&m), sizeof(m));
-                if (!in) break;
+                const uint64_t frames = uint64_t(m.p1Count) + m.p2Count;
+                if (!in || m.serial >= static_cast<uint32_t>(INT_MAX) ||
+                    m.p1Count > 10'000'000u || m.p2Count > 10'000'000u ||
+                    frames * sizeof(APXFrame) > sz - sizeof(m) ||
+                    frames * sizeof(Frame) > apxio::kMaxDecodedFrameBytes) {
+                    m_persistenceReadFailed = true;
+                    break;
+                }
 
                 const bool isPractice = (m.flags & 1u) != 0;
                 const uint64_t attemptKey = attemptIdentityKey_(static_cast<int>(m.serial), isPractice);
                 if (m_loadedAttemptKeys.count(attemptKey)) {
                     auto now = in.tellg();
-                    auto readSoFar = (std::streamoff)(now - attzChunkStart);
-                    auto remain = (std::streamoff)sz - readSoFar;
-                    if (remain > 0) in.seekg(remain, std::ios::cur);
+                    auto readSoFar = (int64_t)(now - attzChunkStart);
+                    auto remain = (int64_t)sz - readSoFar;
+                    if (remain > 0) in.seekg(remain, apxio::Origin::Current);
                     continue;
                 }
 
@@ -1230,9 +1247,9 @@ int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
 
                 auto skipToEndOfChunk = [&]() {
                     auto now = in.tellg();
-                    auto readSoFar = static_cast<std::streamoff>(now - attzChunkStart);
-                    auto remain = static_cast<std::streamoff>(sz) - readSoFar;
-                    if (remain > 0) in.seekg(remain, std::ios::cur);
+                    auto readSoFar = static_cast<int64_t>(now - attzChunkStart);
+                    auto remain = static_cast<int64_t>(sz) - readSoFar;
+                    if (remain > 0) in.seekg(remain, apxio::Origin::Current);
                 };
 
                 auto readFrames = [&](std::vector<Frame>& dst, uint32_t n) {
@@ -1274,6 +1291,7 @@ int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
 
                 readFrames(a.p1, m.p1Count);
                 readFrames(a.p2, m.p2Count);
+                if (!in) { m_persistenceReadFailed = true; break; }
 
                 if (oldWavePointBitMeaning) {
                     clearAPXWavePointThisFrameBits(a);
@@ -1299,9 +1317,9 @@ int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
                 if (!isPractice) ++nonPracticeLoaded;
 
                 auto now = in.tellg();
-                auto readSoFar = static_cast<std::streamoff>(now - attzChunkStart);
-                auto remain = static_cast<std::streamoff>(sz) - readSoFar;
-                if (remain > 0) in.seekg(remain, std::ios::cur);
+                auto readSoFar = static_cast<int64_t>(now - attzChunkStart);
+                auto remain = static_cast<int64_t>(sz) - readSoFar;
+                if (remain > 0) in.seekg(remain, apxio::Origin::Current);
             }
             else if (type == kChunk_PATH) {
                 PracticePath loadedPath;
@@ -1309,16 +1327,14 @@ int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
                 if (readAPXPracticePath(in, sz, loadedPath)) {
                     m_checkpointMgr.restorePath(loadedPath);
                 } else {
-                    auto now = in.tellg();
-                    auto readSoFar = static_cast<std::streamoff>(now - chunkStart);
-                    auto remain = static_cast<std::streamoff>(sz) - readSoFar;
-                    if (remain > 0) in.seekg(remain, std::ios::cur);
+                    m_persistenceReadFailed = true;
+                    break;
                 }
             }
             else if (type == kChunk_CheckpointZ2 || type == kChunk_SEGZ) {
-                in.seekg(static_cast<std::streamoff>(sz), std::ios::cur);
+                in.seekg(static_cast<int64_t>(sz), apxio::Origin::Current);
             } else {
-                in.seekg(static_cast<std::streamoff>(sz), std::ios::cur);
+                in.seekg(static_cast<int64_t>(sz), apxio::Origin::Current);
             }
         }
 
@@ -1343,7 +1359,12 @@ int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
             m_needsMigrationRewrite ? "yes" : "no"
         );
 
+        if (!in) m_persistenceReadFailed = true;
         in.close();
+        if (m_persistenceReadFailed) {
+            log::warn("[APX load] incomplete decode; automatic writes blocked and original preserved");
+            return static_cast<int>(loaded);
+        }
 
         if (m_needsMigrationRewrite) {
             if (oldWavePointBitMeaning) {
@@ -1800,7 +1821,7 @@ void Ghosts::buildInitialAttemptsFromPreloadSerialOrder_(
         outInitial.assign(sorted.begin(), sorted.begin() + initialCount);
     }
 
-Attempt* Ghosts::ensureAttemptLoadedBySerialFiltered_(int serial, std::optional<bool> wantPractice, bool spawnNow, std::istream* batchStream) {
+Attempt* Ghosts::ensureAttemptLoadedBySerialFiltered_(int serial, std::optional<bool> wantPractice, bool spawnNow, apxio::Reader* batchStream) {
         if (serial <= 0) return nullptr;
 
         Attempt* already = nullptr;

@@ -1,16 +1,16 @@
 #pragma once
 #include <vector>
-#include <iosfwd>
+#include "apx_binary_io.hpp"
 #include <filesystem>
 #include "geode6_path_compat.hpp"
 #include "types.hpp"
 #include "apx_format.hpp"
 #include <Geode/binding/PlayerObject.hpp>
 
-bool writeAPXPracticePath(std::ostream& os, const PracticePath& path);
-bool readAPXPracticePath(std::istream& in, uint32_t chunkSize, PracticePath& path, bool* outUsedLegacy = nullptr);
-bool writeAPXAttemptCompact(std::ostream& out, Attempt const& attempt);
-bool readAPXAttemptCompact(std::istream& in, uint32_t chunkSize, Attempt& attempt, bool* outUsedLegacy = nullptr);
+bool writeAPXPracticePath(apxio::Writer& os, const PracticePath& path);
+bool readAPXPracticePath(apxio::Reader& in, uint32_t chunkSize, PracticePath& path, bool* outUsedLegacy = nullptr);
+bool writeAPXAttemptCompact(apxio::Writer& out, Attempt const& attempt);
+bool readAPXAttemptCompact(apxio::Reader& in, uint32_t chunkSize, Attempt& attempt, bool* outUsedLegacy = nullptr);
 
 bool loadAPXFileWithMigration(std::filesystem::path const& path, std::vector<Attempt>& attemptsOut, PracticePath& practicePathOut, bool rewriteLegacy = true);
 bool saveAPXFileCurrent(std::filesystem::path const& path, std::vector<Attempt> const& attempts, PracticePath const& practicePath);
@@ -18,7 +18,7 @@ bool replaceAPXFileSafely_(std::filesystem::path const& tmpPath, std::filesystem
 
 bool scanAPXFileCatalog(std::filesystem::path const& path, APXCatalogScanResult& out);
 bool loadAPXAttemptByCatalogEntry(
-    std::istream& in,
+    apxio::Reader& in,
     APXAttemptDiskInfo const& entry,
     Attempt& attemptOut,
     bool* outUsedLegacy = nullptr

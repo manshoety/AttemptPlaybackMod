@@ -1,13 +1,13 @@
+#include "apx_binary_io.hpp"
 #include "apx_catalog_cache.hpp"
 #include <array>
 #include <cstring>
 #include <algorithm>
-#include <fstream>
 #include <system_error>
 
 namespace {
-    constexpr uint32_t kCacheVersion = 1;
-    constexpr uint32_t kMaxPayload = 128u * 1024u * 1024u;
+    constexpr uint32_t kCacheVersion = 2; 
+    constexpr uint32_t kMaxPayload = apxio::kMaxCatalogPayload;
     constexpr size_t kSampleBytes = 4096;
     constexpr uint64_t kHashOffset = 14695981039346656037ull;
     constexpr uint64_t kHashPrime = 1099511628211ull;
@@ -49,7 +49,7 @@ namespace {
         const auto writeTime = std::filesystem::last_write_time(path, ec);
         if (ec) return false;
 
-        std::ifstream in(path, std::ios::binary);
+        apxio::Reader in(path, apxio::Mode::Read);
         if (!in) return false;
 
         const uint64_t offsets[] = {
@@ -61,9 +61,9 @@ namespace {
         uint64_t hash = kHashOffset;
         for (uint64_t offset : offsets) {
             in.clear();
-            in.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+            in.seekg(static_cast<int64_t>(offset), apxio::Origin::Begin);
             if (!in) return false;
-            const auto count = static_cast<std::streamsize>(std::min<uint64_t>(kSampleBytes, size - offset));
+            const auto count = static_cast<size_t>(std::min<uint64_t>(kSampleBytes, size - offset));
             in.read(reinterpret_cast<char*>(sample.data()), count);
             if (!in) return false;
             hash = hashBytes_(hash, sample.data(), static_cast<size_t>(count));
@@ -96,12 +96,12 @@ bool loadAPXCatalogCache(std::filesystem::path const& apxPath, std::vector<uint8
     if (!getFileIdentity_(apxPath, identity)) return false;
 
     auto path = cachePath_(apxPath);
-    std::ifstream in(path, std::ios::binary | std::ios::ate);
+    apxio::Reader in(path, apxio::Mode::ReadAtEnd);
     if (!in) return false;
 
     const auto fileSize = in.tellg();
-    if (fileSize < static_cast<std::streamoff>(sizeof(CacheHeader)) ||
-        fileSize > static_cast<std::streamoff>(sizeof(CacheHeader) + kMaxPayload)) return false;
+    if (fileSize < static_cast<int64_t>(sizeof(CacheHeader)) ||
+        fileSize > static_cast<int64_t>(sizeof(CacheHeader) + kMaxPayload)) return false;
 
     in.seekg(0);
     CacheHeader hdr{};
@@ -109,7 +109,7 @@ bool loadAPXCatalogCache(std::filesystem::path const& apxPath, std::vector<uint8
     if (!in || std::memcmp(hdr.magic, "APCI", 4) != 0 || hdr.version != kCacheVersion ||
         hdr.fileSize != identity.size || hdr.writeTime != identity.writeTime ||
         hdr.sampledHash != identity.sampledHash || hdr.payloadSize > kMaxPayload ||
-        fileSize != static_cast<std::streamoff>(sizeof(hdr) + hdr.payloadSize)) return false;
+        fileSize != static_cast<int64_t>(sizeof(hdr) + hdr.payloadSize)) return false;
 
     std::vector<uint8_t> readPayload(hdr.payloadSize);
     if (hdr.payloadSize) {
@@ -153,7 +153,7 @@ bool saveAPXCatalogCache(
     if (tempStatus.type() == std::filesystem::file_type::symlink ||
         (tempEc && tempEc != std::errc::no_such_file_or_directory)) return false;
     {
-        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        apxio::Writer out(tmp, apxio::Mode::Truncate);
         if (!out) return false;
         out.write(reinterpret_cast<char const*>(&hdr), sizeof(hdr));
         if (!payload.empty()) out.write(reinterpret_cast<char const*>(payload.data()), payload.size());

@@ -1,11 +1,11 @@
 #pragma once
 
 #include <Geode/Geode.hpp>
+#include <fmt/format.h>
 
 #include <algorithm>
 #include <optional>
 #include <vector>
-#include <iosfwd>
 #include <string>
 #include <map>
 #include <unordered_map>
@@ -16,7 +16,8 @@
 #include <limits>
 #include <filesystem>
 #include "geode6_path_compat.hpp"
-#include <fstream>
+#include <sstream>
+#include <iomanip>
 #include <functional>
 #include <numeric>
 #include <cctype>
@@ -843,11 +844,10 @@ public:
 
     bool saveLevelFileCurrent_(int levelID, std::vector<Attempt> const& attempts, PracticePath const& practicePath) {
         const auto path = fileForLevel_(levelID);
-        ensureHeader_(path);
         return saveAPXFileCurrent(path, attempts, practicePath);
     }
 
-    void ensureHeader_(std::filesystem::path const& path);
+    bool ensureHeader_(std::filesystem::path const& path);
 
     // 16 char hex hash of current level name
     // FNV-1a 64-bit
@@ -859,9 +859,7 @@ public:
             h ^= static_cast<uint64_t>(c);
             h *= kPrime;
         }
-        std::ostringstream oss;
-        oss << std::hex << std::setw(16) << std::setfill('0') << h;
-        return oss.str(); // ex: "4f82d0e62887c3fa"
+        return fmt::format("{:016x}", h); // ex: "4f82d0e62887c3fa"
     }
 
     void migrateLegacyCustomLevelFiles_(
@@ -1308,6 +1306,7 @@ private:
     float m_autosaveAccum = 0.f;
     std::unordered_set<uint64_t> m_loadedAttemptKeys;
     int m_loadedLevelID = 0;
+    bool m_persistenceReadFailed = false; // Block automatic writes after an unreadable recording or failed rollback
     bool m_needsMigrationRewrite = false;
     bool m_loadedFileWasLegacyAttempts = false;
     uint64_t m_lazyLoadedAttempts = 0;
@@ -1632,7 +1631,7 @@ private:
         std::vector<uint32_t>& outInitial
     );
 
-    Attempt* ensureAttemptLoadedBySerialFiltered_(int serial, std::optional<bool> wantPractice, bool spawnNow = false, std::istream* batchStream = nullptr);
+    Attempt* ensureAttemptLoadedBySerialFiltered_(int serial, std::optional<bool> wantPractice, bool spawnNow = false, apxio::Reader* batchStream = nullptr);
 
     Attempt* ensureAttemptLoadedBySerial_(int serial, bool spawnNow = false) {
         return ensureAttemptLoadedBySerialFiltered_(serial,std::nullopt,spawnNow);
