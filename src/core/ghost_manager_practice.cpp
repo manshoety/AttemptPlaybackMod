@@ -870,6 +870,9 @@ bool Ghosts::rebuildPracticePreloadSerialSetForCurrentStart_() {
 void Ghosts::applyBotSafety_(bool on) {
         safeMode_enabled = on;
         noclip_enabled = on;
-        if (on) m_runUsedBot = true;
+        if (on) {
+            m_runUsedBot = true;
+            if (m_pl) m_pl->m_isTestMode = true;
+        }
     }
 

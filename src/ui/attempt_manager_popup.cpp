@@ -191,6 +191,7 @@ void AttemptManagerPopup::rebuild_() {
     m_root->setContentSize({0.f, 0.f});
     m_root->setAnchorPoint({0.5f, 0.5f});
     m_root->setPosition(m_mainLayer->getContentSize() * 0.5f);
+    m_root->setScale(1.06f);
 
     makeLabel_("Attempt Manager", 0.f, 162.f, 0.76f, m_root, {255, 220, 80});
 

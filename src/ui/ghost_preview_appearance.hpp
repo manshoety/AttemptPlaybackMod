@@ -14,7 +14,7 @@ namespace attemptplayback::ui {
         bool randomIcons = false;
         bool colorsInitialized = false;
         int lastOpacity = -1;
-        std::string colorMode;
+        ColorMode colorMode = ColorMode::PlayerColors;
         std::string maskP1;
         std::string maskP2;
         cocos2d::ccColor3B leftPrimary = {255, 255, 255};
@@ -50,7 +50,7 @@ namespace attemptplayback::ui {
         const auto playerPrimary = gm->colorForIdx(playerColor);
         const auto playerSecondary = gm->colorForIdx(playerColor2);
         auto* mod = geode::Mod::get();
-        const auto mode = mod->getSavedValue<std::string>("ghost-colors");
+        const auto mode = ghosts.colors;
         const auto p1Mask = mod->getSavedValue<std::string>(kGhostRandomColorsMaskP1Key);
         const auto p2Mask = mod->getSavedValue<std::string>(kGhostRandomColorsMaskP2Key);
         const bool colorChanged = mode != state.colorMode || p1Mask != state.maskP1 || p2Mask != state.maskP2
@@ -60,15 +60,15 @@ namespace attemptplayback::ui {
             state.leftSecondary = playerSecondary;
             state.rightPrimary = playerPrimary;
             state.rightSecondary = playerSecondary;
-            if (mode == "White" || mode == "white") {
+            if (mode == ColorMode::White) {
                 state.leftPrimary = state.leftSecondary = {255, 255, 255};
                 state.rightPrimary = state.rightSecondary = {255, 255, 255};
             }
-            else if (mode == "Black" || mode == "black") {
-                state.leftPrimary = state.leftSecondary = {35, 35, 35};
-                state.rightPrimary = state.rightSecondary = {35, 35, 35};
+            else if (mode == ColorMode::Black) {
+                state.leftPrimary = state.leftSecondary = {1, 1, 1};
+                state.rightPrimary = state.rightSecondary = {1, 1, 1};
             }
-            else if (mode == "Random" || mode == "random") {
+            else if (mode == ColorMode::Random) {
                 state.leftPrimary = gm->colorForIdx(ghosts.pickRandomAllowedGhostColorIdx(0xA571u, true));
                 state.leftSecondary = gm->colorForIdx(ghosts.pickRandomAllowedGhostColorIdx(0xA573u, true));
                 state.rightPrimary = gm->colorForIdx(ghosts.pickRandomAllowedGhostColorIdx(0xC19Du, false));

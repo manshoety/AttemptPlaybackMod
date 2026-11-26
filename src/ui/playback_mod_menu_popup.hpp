@@ -2,6 +2,7 @@
 #pragma once
 #include "popup_layout.hpp"
 #include "ghost_preview_appearance.hpp"
+#include "color_mode_selector.hpp"
 #include <Geode/Geode.hpp>
 
 #include <cue/RadioLogic.hpp>
@@ -154,7 +155,7 @@ private:
     SimplePlayer* m_previewBehind = nullptr;
     cocos2d::CCLabelBMFont* m_opacityLabel  = nullptr;
 
-    cocos2d::CCLabelBMFont* m_colorModeLabel = nullptr;
+    attemptplayback::ui::ColorModeSelector m_colorModeSelector;
 
     cocos2d::CCMenu* m_playbackButtonsRow = nullptr;
     cocos2d::CCMenuItem* m_stopReplayBtn = nullptr;
@@ -175,7 +176,7 @@ private:
     void onToggleBlockRecording(cocos2d::CCObject*);
     void onToggleBlockRecordingOnNoclip(cocos2d::CCObject*);
     void onToggleReplayPreventCompletion(cocos2d::CCObject*);
-    void onCycleGhostColors(cocos2d::CCObject*);
+    void onSelectGhostColor(cocos2d::CCObject*);
     void onOpenColorSelector(cocos2d::CCObject*);
     void onOpenGhostSettings(cocos2d::CCObject*);
     void onOpenPlaybackSettings(cocos2d::CCObject*);
@@ -191,7 +192,6 @@ private:
     void refreshReplayButtons_();
 
     void refreshToggles_();
-    void refreshColorsLabel_();
     static std::pair<std::string, float> sliderKeyAndValue_(cocos2d::CCObject* obj);
 };
 

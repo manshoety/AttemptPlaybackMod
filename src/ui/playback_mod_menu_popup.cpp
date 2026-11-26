@@ -70,6 +70,9 @@ namespace replay_ui_detail {
 namespace {
     constexpr float kPopupW = attemptplayback::ui::popup_layout::Large.width;
     constexpr float kPopupH = attemptplayback::ui::popup_layout::Large.height;
+    constexpr float kGhostPreviewW = 244.f;
+    constexpr float kGhostPreviewH = 48.f;
+    constexpr float kGhostPreviewY = 46.5f;
     constexpr float kReplayDialogW = attemptplayback::ui::popup_layout::ReplayDialog.width;
     constexpr float kReplayDialogH = attemptplayback::ui::popup_layout::ReplayDialog.height;
     constexpr float kPracticeRunGapTolerance = 2.f;
@@ -115,7 +118,6 @@ bool PlaybackModMenu::init(float width, float height) {
     buildTemplateUI_();
 
     refreshToggles_();
-    refreshColorsLabel_();
 
     int v = 255;
     auto* mod = Mod::get();
@@ -142,7 +144,6 @@ bool PlaybackModMenu::init(float width, float height) {
 
 void PlaybackModMenu::syncUIFromRuntime() {
     refreshToggles_();
-    refreshColorsLabel_();
 
     int v = 255;
     auto* mod = Mod::get();
@@ -306,7 +307,7 @@ void PlaybackModMenu::buildTemplateUI_() {
     addControlRow(-141.f, -92.f, 240.f, 55.f);
     addControlRow(138.f, -48.f, 252.f, 280.f);
     addLabel("Recording", -141.f, -30.f, 0.52f, {255, 255, 255});
-    addLabel("Ghost Preview", 138.f, 101.f, 0.53f, {255, 255, 255});
+    addLabel("Ghost Preview", 138.f, 106.f, 0.50f, {255, 255, 255});
 
     auto addToggle = [this, menu, root](CCMenuItemToggler*& field,
                                         SEL_MenuHandler callback,
@@ -334,31 +335,31 @@ void PlaybackModMenu::buildTemplateUI_() {
 
     auto* previewBorder = CCScale9Sprite::create("square02b_001.png");
     if (previewBorder) {
-        previewBorder->setContentSize({257.f, 66.f});
-        previewBorder->setPosition({138.f, 59.f});
+        previewBorder->setContentSize({257.f, kGhostPreviewH + 8.f});
+        previewBorder->setPosition({138.f, kGhostPreviewY});
         previewBorder->setColor({63, 43, 32});
         previewBorder->setOpacity(245);
         root->addChild(previewBorder, 0);
     }
     auto* preview = CCScale9Sprite::create("square02b_001.png");
     if (preview) {
-        preview->setContentSize({244.f, 54.f});
-        preview->setPosition({138.f, 59.f});
+        preview->setContentSize({kGhostPreviewW, kGhostPreviewH});
+        preview->setPosition({138.f, kGhostPreviewY});
         preview->setColor({20, 63, 155});
         preview->setOpacity(255);
         root->addChild(preview);
 
         // Ghost preview shenanigans
-        auto inset = attemptplayback::ui::createInsetWorldView({244.f, 54.f});
+        auto inset = attemptplayback::ui::createInsetWorldView({kGhostPreviewW, kGhostPreviewH});
         preview->addChild(inset.root, 1);
         m_previewWorld = inset.world;
         m_previewActors = inset.actors;
         m_previewWorld->setContentSize({900.f, 68.f});
         m_previewActors->setContentSize({900.f, 68.f});
 
-        attemptplayback::ui::addGDPreviewBackground(inset.backupGround, 244.f, 54.f);
+        attemptplayback::ui::addGDPreviewBackground(inset.backupGround, kGhostPreviewW, kGhostPreviewH);
         attemptplayback::ui::addGDPreviewGround(m_previewWorld, 900.f);
-        auto* belowGround = CCLayerColor::create(ccc4(0, 0, 0, 255), 244.f, 15.f);
+        auto* belowGround = CCLayerColor::create(ccc4(0, 0, 0, 255), kGhostPreviewW, 15.f);
         if (belowGround) inset.backupGround->addChild(belowGround, -1);
 
         auto* gm = GameManager::sharedState();
@@ -375,13 +376,9 @@ void PlaybackModMenu::buildTemplateUI_() {
     }
 
     // Color mode for ghost preview
-    m_colorModeLabel = addLabel("Color Mode: Player", 104.f, 82.f, 0.27f);
-    auto* colorModeNext = addButton(
-        "Next", menu_selector(PlaybackModMenu::onCycleGhostColors),
-        "ghost-color-mode-main"_spr, 227.f, 82.f, 60.f, 18.f,
-        "GJ_button_04.png", 0.31f
-    );
-    colorModeNext->setSizeMult(1.05f);
+    m_colorModeSelector.build(menu, this,
+        menu_selector(PlaybackModMenu::onSelectGhostColor),
+        {138.f, 86.f}, 59.f, 17.f, 4.f);
 
     // Opacity and Distance
     m_opacityLabel = addLabel("Ghost Opacity (100%)", 18.f, 10.f, 0.45f);
@@ -459,6 +456,7 @@ void PlaybackModMenu::buildTemplateUI_() {
 }
 
 void PlaybackModMenu::refreshPreview_() {
+    m_colorModeSelector.refresh();
     const int opacity = std::clamp(
         Mod::get()->hasSavedValue("ghost-opacity")
             ? static_cast<int>(Mod::get()->getSavedValue<int64_t>("ghost-opacity"))
@@ -492,7 +490,7 @@ void PlaybackModMenu::refreshPreview_() {
     // The gameplay offset window: -100 behind, +174 ahead
     attemptplayback::ui::positionGhostsInInset(
         m_previewWorld, m_previewPlayer, m_previewBehind, m_previewAhead,
-        {244.f, 54.f}, 94.f, static_cast<float>(distancePx));
+        {kGhostPreviewW, kGhostPreviewH}, 94.f, static_cast<float>(distancePx));
     if (m_previewWorld && m_previewActors) {
         // Copy camera transform
         // Position fitting keeps bounds inside viewport
@@ -594,7 +592,6 @@ void PlaybackModMenu::onStopReplay(CCObject*) {
     refreshReplayButtons_();
 
     refreshToggles_();
-    refreshColorsLabel_();
 }
 
 void PlaybackModMenu::update(float dt) {
@@ -724,28 +721,9 @@ void PlaybackModMenu::onToggleReplayPreventCompletion(CCObject*) {
     Mod::get()->setSettingValue("ReplayPreventCompletion-enabled", on);
 }
 
-void PlaybackModMenu::onCycleGhostColors(CCObject*) {
-    static std::vector<std::string> modes{ "PlayerColors", "Random", "White", "Black" };
-    auto cur = Mod::get()->getSavedValue<std::string>("ghost-colors");
-    std::string curLower = cur;
-    std::transform(curLower.begin(), curLower.end(), curLower.begin(),
-        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (curLower == "random") cur = "Random";
-    else if (curLower == "white") cur = "White";
-    else if (curLower == "black") cur = "Black";
-    else if (curLower == "playercolors" || curLower == "player-colors") cur = "PlayerColors";
-    auto it = std::find(modes.begin(), modes.end(), cur);
-    size_t i = (it == modes.end()) ? 0 : (size_t(it - modes.begin()) + 1) % modes.size();
-    auto next = modes[i];
-    Mod::get()->setSavedValue("ghost-colors", next);
-
-    ColorMode cm = ColorMode::PlayerColors;
-    if (next == "Random") cm = ColorMode::Random;
-    else if (next == "White") cm = ColorMode::White;
-    else if (next == "Black") cm = ColorMode::Black;
-
-    Ghosts::I().setColorMode(cm);
-    refreshColorsLabel_();
+void PlaybackModMenu::onSelectGhostColor(CCObject* sender) {
+    m_colorModeSelector.select(sender);
+    refreshPreview_();
 }
 
 void PlaybackModMenu::onOpenColorSelector(CCObject*) {
@@ -808,19 +786,6 @@ void PlaybackModMenu::refreshToggles_() {
     if (m_tgBlockRecording) m_tgBlockRecording->toggle(!G.isRecordingBlocked());
     if (m_tgBlockRecordingOnNoclip) m_tgBlockRecordingOnNoclip->toggle(!G.isRecordingBlockedOnNoclip());
     if (m_tgReplayPreventCompletion) m_tgReplayPreventCompletion->toggle(G.isReplayPreventCompletionEnabled());
-}
-
-void PlaybackModMenu::refreshColorsLabel_() {
-    auto s = Mod::get()->getSavedValue<std::string>("ghost-colors");
-    std::string nice = "Player";
-    if (s == "random") nice = "Random";
-    else if (s == "Random") nice = "Random";
-    else if (s == "White") nice = "White";
-    else if (s == "Black") nice = "Black";
-
-    if (m_colorModeLabel) {
-        m_colorModeLabel->setString(("Color Mode: " + nice).c_str());
-    }
 }
 
 PracticeRunSelectPopup* PracticeRunSelectPopup::create() {

@@ -21,8 +21,8 @@ inline constexpr float ScreenMarginX = 12.f;
 inline constexpr float ScreenMarginY = 10.f;
 inline constexpr float ContentPadding = 16.f;
 inline constexpr float ControlGap = 8.f;
-inline constexpr float CloseCenterInset = 16.f;
-inline constexpr float CloseDiameter = 52.f;
+inline constexpr float CloseCenterInset = 10.f;
+inline constexpr float CloseDiameter = 42.f;
 inline constexpr float CloseOverhang = CloseDiameter * .5f - CloseCenterInset;
 inline constexpr float PreferredScale = 1.f;
 
