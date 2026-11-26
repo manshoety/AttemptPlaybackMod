@@ -320,6 +320,10 @@ void Ghosts::attach(PlayLayer* pl) {
 
             LoadFilter f;
             loadFromDisk_(m_levelIDOnAttach, f);
+
+            if (m_checkpointMgr.getPath().activeSession()) {
+                m_checkpointMgr.freezeForReplay();
+            }
         }
 
         startNewAttempt();
@@ -762,6 +766,10 @@ void Ghosts::onQuit() {
         }
 
         m_current = Attempt{};
+
+        if (m_checkpointMgr.getPath().activeSession()) {
+            m_checkpointMgr.freezeForReplay();
+        }
         
         flushPendingSaves_();
         const auto quitAfterSave = std::chrono::steady_clock::now();

@@ -107,7 +107,6 @@ public:
             if (auto* s = sessionById_(best)) {
                 m_noValidSessionForStartX = false;
                 m_path.selectedSessionId = best;
-                m_path.activeSessionId = best;
                 return best;
             }
 
@@ -129,13 +128,11 @@ public:
         if (sessionId > 0 && sessionById_(sessionId)) {
             m_noValidSessionForStartX = false;
             m_path.selectedSessionId = sessionId;
-            m_path.activeSessionId = sessionId;
             return sessionId;
         }
 
         m_noValidSessionForStartX = true;
         m_path.selectedSessionId = 0;
-        m_path.activeSessionId = 0;
         return -1;
     }
 
@@ -411,8 +408,11 @@ public:
     }
     
     void freezeForReplay() {
-        m_path.frozen = true;
         PracticeSession* session = m_path.activeSession();
+        if (!m_path.frozen || (session && !session->frozen)) {
+            m_dirty = true;
+        }
+        m_path.frozen = true;
         if (session) session->frozen = true;
     }
     

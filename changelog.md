@@ -1,4 +1,4 @@
-# v1.6.0
+# v1.6.0-beta
 - FULL CODEBASE REFACTOR (this was pain and suffering)
 - Migration to geode v6 (pain and suffering)
 ADDITIONS:
