@@ -381,10 +381,9 @@ public:
             m_live.pop_front();
         }
 
-        const int channelID = eng->getNextChannelID();
         const int effectID = nextEffectID_();
 
-        eng->playEffectAdvanced(
+        const int channelID = eng->playEffectAdvanced(
             s,
             /*speed*/ 1.f,
             /*unknown*/ 0.f,
@@ -400,13 +399,15 @@ public:
             /*effectID*/ effectID,
             /*override*/ false,
             /*noPreload*/ true,
-            /*channelID*/ channelID,
+            /*channelID*/ 0,
             /*uniqueID*/ 0,
             /*minInterval*/ 0.f,
             /*sfxGroup*/ 0
         );
 
-        m_live.push_back({ channelID });
+        if (channelID > 0) {
+            m_live.push_back({ channelID });
+        }
     }
 
 private:

@@ -1,3 +1,5 @@
+# v1.6.0-beta.3
+- iOS sound effect crash
 # v1.6.0-beta.2
 - Android crash fix and overall file safety
 # v1.6.0-beta
