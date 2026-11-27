@@ -1,3 +1,5 @@
+# v1.6.0-beta.6
+- playback toggle no longer saves current attempt (so you can correctly view the recent run and not the 1 second attempt after death)
 # v1.6.0-beta.5
 - practice mode recording fix
 # v1.6.0-beta.3

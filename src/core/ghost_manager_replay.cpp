@@ -169,7 +169,6 @@ bool Ghosts::startReplayPractice() {
         }
 
         if (isPracticeMode()) togglePracticeMode(false);
-        else finalizeCurrentAttempt_(false);
 
         if (!refreshPracticeRuns()) {
             log::warn("[Bot] practice replay aborted: recording save/catalog unavailable");
@@ -177,6 +176,9 @@ bool Ghosts::startReplayPractice() {
             stopReplay();
             return false;
         }
+
+        m_current = Attempt{};
+        m_currentDidNoclip = false;
 
         int selectedSession = -1;
 
@@ -412,11 +414,13 @@ bool Ghosts::startReplayBest() {
         }
 
         if (isPracticeMode()) togglePracticeMode(false);
-        else finalizeCurrentAttempt_(false);
         if (!flushPendingSaves_()) {
             stopReplay();
             return false;
         }
+
+        m_current = Attempt{};
+        m_currentDidNoclip = false;
 
         //log::info("[Bot] startReplayBest: {} total attempts", attempts.size());
 

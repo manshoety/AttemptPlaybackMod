@@ -945,8 +945,10 @@ void Ghosts::toggleRecording() {
 }
 
 void Ghosts::startPlayback()   {
-    finalizeCurrentAttempt_(false);
+    if (isPracticeMode()) togglePracticeMode(false);
     flushPendingSaves_();
+    m_current = Attempt{};
+    m_currentDidNoclip = false;
     if (botActive) stopReplay();
     playback = true;
     m_playbackArmed = true;
