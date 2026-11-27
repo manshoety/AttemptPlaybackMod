@@ -1,4 +1,5 @@
 #include "ghost_manager.hpp"
+#include "geode6_binding_compat.hpp"
 
 void Ghosts::endPlayerDestroyedCheck(bool playerDied) {
         if (shouldIgnoreNoclipDetection_()) {
@@ -23,13 +24,14 @@ float Ghosts::getAccuratePercentForX(float x, float fallbackPercent) const {
     }
 
 bool Ghosts::removeReverseOrDuplicateFrames(std::vector<Frame>& frames, double t) {
-        // Reverse frames
-        while (!frames.empty() && t < frames.back().t) {
+        // Compare the stored clock ticks
+        const uint32_t tick = runtimeQuantTimeQ_(t);
+        while (!frames.empty() && tick < frames.back().t.q) {
             frames.pop_back();
         }
 
         // Duplicate frame
-        if (!frames.empty() && t == frames.back().t) return false;
+        if (!frames.empty() && tick == frames.back().t.q) return false;
 
         return true;
     }
@@ -142,7 +144,7 @@ void Ghosts::recordCurrentFrame_(bool isPlayer1) {
         }
     }
 
-void Ghosts::seedInitialAttemptFrame_() {
+void Ghosts::seedInitialAttemptFrame_(bool midAttempt) {
         if (!m_pl || m_is_quitting) return;
         if (!recording || recordingBlocked) return;
         if (m_justDied) return;
@@ -150,7 +152,8 @@ void Ghosts::seedInitialAttemptFrame_() {
         const bool isPractice = m_pl->m_isPracticeMode;
         if (isPractice && !recordInPractice) return;
 
-        const double t = m_baseTime;
+        const double t = m_current.baseTimeOffset + (midAttempt ? std::max(0.0, static_cast<double>(m_pl->m_attemptTime)) : 0.0);
+        if (!std::isfinite(t) || t < 0.0 || t > double(UINT32_MAX) / kAPXTimeScaleRuntime_) return;
 
         if (m_pl->m_player1 && m_current.p1.empty()) {
             auto* p1 = m_pl->m_player1;
@@ -232,9 +235,14 @@ void Ghosts::seedInitialAttemptFrame_() {
         }
     }
 
-void Ghosts::startNewAttempt() {
+void Ghosts::startNewAttempt(bool midAttempt) {
         m_current = Attempt{};
         m_currentDidNoclip = false;
+        if (m_nextAttemptSerial <= 0 || m_nextAttemptSerial >= std::numeric_limits<int>::max()) {
+            log::error("[Practice save] attempt serial space exhausted; recording stopped");
+            recording = false;
+            return;
+        }
         m_current.serial = m_nextAttemptSerial++;
         m_currentAttemptStart = m_frameCounter;
         
@@ -251,6 +259,13 @@ void Ghosts::startNewAttempt() {
         m_current.startY = startY;
 
         m_baseTime = getStartTime();
+        if (midAttempt && m_pl && (!m_pl->m_isPracticeMode || !attemptplayback::bindingcompat::lastCheckpoint(m_pl))) {
+            const double elapsed = m_pl->m_attemptTime;
+            if (std::isfinite(elapsed) && elapsed > 0.0 && std::isfinite(m_baseTime)) {
+                m_baseTime = std::max(0.0, m_baseTime - elapsed);
+            }
+        }
+        if (!std::isfinite(m_baseTime) || m_baseTime < 0.0) m_baseTime = 0.0;
         m_current.baseTimeOffset = m_baseTime;
 
         // log::info("[startNewAttempt] baseTime: {}", m_baseTime);
@@ -277,9 +292,9 @@ void Ghosts::startNewAttempt() {
         } else {
             m_current.startPercent = 0;
         }
-        m_current.recordedThisSession = true;
+        m_current.recordedThisSession = recording && !recordingBlocked && !botActive && (!m_current.practiceAttempt || recordInPractice);
 
-        seedInitialAttemptFrame_();
+        if (m_current.recordedThisSession) seedInitialAttemptFrame_(midAttempt);
     }
 
 void Ghosts::sortBestToFront() {

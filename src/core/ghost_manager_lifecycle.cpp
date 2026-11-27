@@ -1,24 +1,39 @@
 #include "ghost_manager.hpp"
 #include <chrono>
 
-void Ghosts::flushPendingSaves_() {
-        if (hasCurrentPersistenceTarget_()) {
-            //saveCurrentAttemptNow();
-            int n = saveNewAttemptsForLevel_(m_levelIDOnAttach);
-            //log::info("[Ghosts] flushPendingSaves_: wrote {} attempt(s) for level {}", n, m_levelIDOnAttach);
+bool Ghosts::hasPendingSaves_() const {
+    for (auto const& a : attempts) {
+        if (a.recordedThisSession && !a.persistedOnDisk && attemptHasData_(a)) return true;
+    }
+    if (m_checkpointMgr.isDirty()) {
+        for (auto const& session : m_checkpointMgr.getPath().sessions) {
+            if (!session.allAttemptSerials.empty() || !session.segments.empty()) return true;
         }
     }
+    return false;
+}
+
+bool Ghosts::flushPendingSaves_() {
+    if (!hasPendingSaves_()) return !m_persistenceReadFailed;
+    if (hasCurrentPersistenceTarget_()) saveNewAttemptsForLevel_(m_levelIDOnAttach);
+    const bool ok = !hasPendingSaves_() && !m_persistenceReadFailed;
+    if (!ok && !m_storageErrorShown) reportStorageError_("APX-SAVE", "Recording could not be saved.");
+    return ok;
+}
 
 void Ghosts::setModEnabled(bool on) {
-        modEnabled = on;
-        Mod::get()->setSavedValue("mod-enabled", on);
+    if (!on && modEnabled && getPlayLayer()) finalizeCurrentAttempt_(false, false);
+    modEnabled = on;
+    Mod::get()->setSavedValue("mod-enabled", on);
         if (!modEnabled) {
             flushPendingSaves_();
             stopReplay();
             clearAllGhostNodes();
+            if (hasPendingSaves_()) log::error("[APX] unsaved recording discarded on disable");
             attempts.clear();
+            m_checkpointMgr = CheckpointManager{};
+            m_current = Attempt{};
             m_loadedAttemptKeys.clear();
-            m_loadedLevelID = 0;
             m_serialCacheDirty = true;
             m_spans.clear();
             m_grid.clear();
@@ -35,6 +50,13 @@ void Ghosts::setModEnabled(bool on) {
         } else {
             recording = true;
             playback = false;
+            if (getPlayLayer() && hasCurrentPersistenceTarget_()) {
+                m_persistenceReadFailed = false;
+                m_storageErrorShown = false;
+                loadFromDisk_(m_levelIDOnAttach, LoadFilter{});
+                if (m_checkpointMgr.getPath().activeSession()) m_checkpointMgr.freezeForReplay();
+                if (recording) restartLevel();
+            }
         }
         updateGhostVisibility();
     }
@@ -437,44 +459,56 @@ void Ghosts::initBotAfterReset_(bool naturalPracticeStart) {
         m_justStartedBot = false;
     }
 
-void Ghosts::onDeath() {
-        if (!m_pl) return;
-        if (m_justDied) return;
-        m_justDied = true;
+bool Ghosts::finalizeCurrentAttempt_(bool completed, bool spawnNow, bool allowSingleFrame) {
+    if (!recording || recordingBlocked || botActive ||
+        block_attempt_push_on_recording_start || !m_current.recordedThisSession ||
+        m_current.serial <= 0 || m_current.p1.empty()) return false;
+    const bool practice = m_current.practiceAttempt || (m_pl && m_pl->m_isPracticeMode);
+    if (practice && !recordInPractice) return false;
+    if (!allowSingleFrame && m_current.p1.size() < 2) return false;
 
-        if (m_pl->m_isPracticeMode) {
-            if (recording && !recordingBlocked && recordInPractice && !m_current.p1.empty() && !block_attempt_push_on_recording_start) {
-                ensurePracticeRecordingSession_();
-                double startTime = m_current.baseTimeOffset;
-                float startX = m_current.p1.front().x;
-                float endX = m_current.p1.back().x;
+    if (!practice && m_currentDidNoclip && m_recordingBlockedOnNoclip) {
+        m_current = Attempt{};
+        return false;
+    }
 
-                //log::info("x: {}, y: {}", m_current.p1.front().x, m_current.p1.front().y);
+    m_current.practiceAttempt = practice;
+    const int serial = m_current.serial;
+    const double base = m_current.baseTimeOffset;
+    const double first = static_cast<double>(m_current.p1.front().t);
+    const double last = static_cast<double>(m_current.p1.back().t);
 
-                
-                //log::info("[onDeath] m_currentSessionTime: {}, playlayerTime: {}", m_currentSessionTime, m_pl->m_attemptTime);
-
-                
-                m_checkpointMgr.overwriteSegmentForAttempt(
-                    m_current.serial,
-                    m_current.baseTimeOffset,
-                    0,
-                    m_current.p1.back().t - m_current.baseTimeOffset,
-                    startX,
-                    endX,
-                    m_current.p1.size(),
-                    m_current.p2.size()
-                );
-                pushAttempt(std::move(m_current));
-            }
-
-            return;
-        }
-
-        if (recording && !recordingBlocked && m_current.p1.size() > 1 && !block_attempt_push_on_recording_start) {
-            pushAttempt(std::move(m_current));
+    if (practice) {
+        if (!ensurePracticeRecordingSession_() || !m_checkpointMgr.overwriteSegmentForAttempt(
+                serial, base, std::max(0.0, first - base), last - base,
+                m_current.p1.front().x, m_current.p1.back().x,
+                m_current.p1.size(), m_current.p2.size())) {
+            log::error("[Practice save] could not register serial={}; preserving attempt", serial);
+            reportStorageError_("APX-PRACTICE", "Practice attempt recorded but session registration failed. Please report this error.");
+        } else {
+            if (completed) m_checkpointMgr.onAttemptCompleted();
+            log::debug("[Practice save] session={} serial={} frames={} first={} last={} base={} completed={}",
+                m_checkpointMgr.getPath().activeSessionId, serial, m_current.p1.size(), first, last, base, completed);
         }
     }
+
+    m_current.completed = completed;
+    if (completed) {
+        m_lastWinSerial = serial;
+        m_current.endPercent = 100.f;
+    }
+
+    pushAttempt(std::move(m_current), spawnNow);
+    m_current = Attempt{};
+    m_currentDidNoclip = false;
+    return true;
+}
+
+void Ghosts::onDeath() {
+    if (!m_pl || m_justDied) return;
+    m_justDied = true;
+    finalizeCurrentAttempt_(false, true, m_pl->m_isPracticeMode);
+}
 
 void Ghosts::onReset() {
         m_justDied = false;
@@ -490,7 +524,10 @@ void Ghosts::onReset() {
 
             m_current = Attempt{};
         }
-        else if (block_attempt_push_on_recording_start) return;
+        else if (block_attempt_push_on_recording_start) {
+            if (recording && !recordingBlocked && !botActive) startNewAttempt();
+            return;
+        }
         forceSetPosP1.x = 0.f;
         forceSetPosP1.y = 105.f;
         forceSetPosP2.x = 0.f;
@@ -510,52 +547,7 @@ void Ghosts::onReset() {
         //log::info("player x: {}, y: {}", m_pl->m_player1->m_positionX, m_pl->m_player1->m_positionY);
         //log::info("playerV2 x: {}", playerX_());
 
-        if (m_pl && m_pl->m_isPracticeMode && recording && !recordingBlocked) {
-            // Check for start position switch (end recording if so)
-            // PLAYER X IS WEIRD AND IS THE DEFAULT START NOT THE CORRECT PLAYER START (maybe delay 1 frame?)
-            //Checkpoint* currentCheckpoint = m_checkpointMgr.getCurrentCheckpoint();
-            //if (currentCheckpoint && ccpDistance({currentCheckpoint->x, currentCheckpoint->y}, {(float)m_pl->m_player1->m_positionX, (float)m_pl->m_player1->m_positionY}) > kReplayStartTolerance) {
-            //    log::info("AAAAAAAA");
-            //    log::info("player x: {}, y: {}", m_pl->m_player1->m_positionX, m_pl->m_player1->m_positionY);
-            //    log::info("checkpoint x: {}, y: {}", currentCheckpoint->x, currentCheckpoint->y);
-            //    m_checkpointMgr.onExitEarly();
-            //    togglePracticeMode(false);
-            //    if (!isRecording()) toggleRecording();
-            //}
-            //else 
-            if (!recordInPractice) {
-                m_current = Attempt{};
-            }
-            else if (!m_current.p1.empty()) {
-                ensurePracticeRecordingSession_();
-                // Only runs when we don't use OnDeath
-                double startTime = m_current.baseTimeOffset;
-                float startX = m_current.p1.front().x;
-                float endX = m_current.p1.back().x;
-                float endtime = m_current.p1.back().t - m_current.baseTimeOffset;
-
-                //log::info("[onReset] m_currentSessionTime: {}, playlayerTime: {}", m_currentSessionTime, m_pl->m_attemptTime);
-                    
-                m_checkpointMgr.overwriteSegmentForAttempt(
-                    m_current.serial,
-                    startTime,
-                    0,
-                    endtime,
-                    startX,
-                    endX,
-                    m_current.p1.size(),
-                    m_current.p2.size()
-                );
-
-                pushAttempt(std::move(m_current));
-            }
-        }
-        
-        // Will still push on the attempt you switched start pos on
-        if (recording && !recordingBlocked && m_current.p1.size() > 1) {
-            pushAttempt(std::move(m_current));
-        }
-
+        finalizeCurrentAttempt_(false);
         startNewAttempt();
 
         if (m_pendingPracticeStartPosInit && m_replayKind == ReplayKind::PracticeComposite) {
@@ -745,26 +737,7 @@ void Ghosts::onQuit() {
         death_sound_preloaded = false;
         m_allowWaveHook = false;
 
-        // push current attempt
-        if (recording && !recordingBlocked && !botActive && !playback &&
-            m_current.p1.size() > 1 &&
-            (!(m_current.practiceAttempt || (m_pl && m_pl->m_isPracticeMode)) || recordInPractice)) {
-            if (m_pl && m_pl->m_isPracticeMode) {
-                ensurePracticeRecordingSession_();
-                m_checkpointMgr.overwriteSegmentForAttempt(
-                    m_current.serial,
-                    m_current.baseTimeOffset,
-                    0.0,
-                    static_cast<double>(m_current.p1.back().t) - m_current.baseTimeOffset,
-                    static_cast<float>(m_current.p1.front().x),
-                    static_cast<float>(m_current.p1.back().x),
-                    m_current.p1.size(),
-                    m_current.p2.size()
-                );
-            }
-            pushAttempt(std::move(m_current), false);
-        }
-
+        finalizeCurrentAttempt_(false, false);
         m_current = Attempt{};
 
         if (m_checkpointMgr.getPath().activeSession()) {
@@ -829,6 +802,7 @@ void Ghosts::onQuit() {
         }
 
         const auto quitAfterVisuals = std::chrono::steady_clock::now();
+        if (hasPendingSaves_()) log::error("[APX] unsaved recording discarded on level exit");
         attempts.clear();
         invalidateAttemptPointerCaches_();
         const auto quitAfterAttempts = std::chrono::steady_clock::now();
@@ -879,8 +853,11 @@ void Ghosts::onQuit() {
 
         m_ghostUpdateAccum = 0.f;
         m_loadedAttemptKeys.clear();
-        m_loadedLevelID = 0;
+        m_levelIDOnAttach = 0;
+        m_customSaveId.clear();
+        m_checkpointMgr = CheckpointManager{};
         m_persistenceReadFailed = false;
+        m_storageErrorShown = false;
         clearAttemptCatalog_();
         m_practiceCompositeOwnerSerial = -1;
         m_activeOwnerSerial = -1;
@@ -915,91 +892,70 @@ void Ghosts::onQuit() {
 
 void Ghosts::onComplete() {
         m_justDied = true;
-
-        if (!m_current.p1.empty()) {
-            const int serial = m_current.serial;
-            const float endX = m_current.p1.back().x;
-            const float endY = m_current.p1.back().y;
-            const size_t p1Count = m_current.p1.size();
-            const size_t p2Count = m_current.p2.size();
-
-            if (m_pl && m_pl->m_isPracticeMode && recording && !recordingBlocked && recordInPractice) {
-                ensurePracticeRecordingSession_();
-                double startTime = m_current.baseTimeOffset;
-                float startX = m_current.p1.front().x;
-
-                //log::info("[onComplete] m_currentSessionTime: {}, playlayerTime: {}", m_currentSessionTime, m_pl->m_attemptTime);
-                
-                m_checkpointMgr.overwriteSegmentForAttempt(
-                    serial,
-                    m_current.baseTimeOffset,
-                    0,
-                    m_current.p1.back().t - m_current.baseTimeOffset,
-                    startX,
-                    endX,
-                    p1Count,
-                    p2Count
-                );
-            }
-
-            if (m_pl && m_pl->m_isPracticeMode && recording && !recordingBlocked && recordInPractice) {
-                m_checkpointMgr.onAttemptCompleted();
-            }
-
-            m_current.completed = true;
-            m_lastWinSerial = serial;
-            m_current.endPercent = 100.f;
-            pushAttempt(std::move(m_current));
+        const bool practice = m_current.practiceAttempt || (m_pl && m_pl->m_isPracticeMode);
+        if (finalizeCurrentAttempt_(true, true, true)) {
+            if (practice) m_checkpointMgr.freezeForReplay();
+            flushPendingSaves_();
         }
     }
 
 void Ghosts::saveCurrentAttemptNow() {
-        if (botActive || playback) return;
-        if (!recording || recordingBlocked) return;
-
-        // Don't save practice attempts unless explicitly enabled.
-        if (m_pl && m_pl->m_isPracticeMode && !recordInPractice) {
-            return;
-        }
-
-        if (m_current.p1.size() > 2) {
-            //geode::log::warn("PUSH saveCurrentAttemptNow");
-            pushAttempt(std::move(m_current));
-            startNewAttempt();
-        }
+    if (finalizeCurrentAttempt_(false)) {
+        flushPendingSaves_();
+        startNewAttempt(true);
     }
+}
+
+void Ghosts::setRecordInPractice(bool v) {
+    if (recordInPractice == v) return;
+    if (!v && getPlayLayer() && m_pl->m_isPracticeMode) {
+        finalizeCurrentAttempt_(false);
+        m_checkpointMgr.freezeForReplay();
+        flushPendingSaves_();
+        m_current = Attempt{};
+    }
+    recordInPractice = v;
+}
+
+void Ghosts::setRecordingBlocked(bool on) {
+    if (recordingBlocked == on) return;
+    if (on && getPlayLayer()) {
+        finalizeCurrentAttempt_(false, false);
+        flushPendingSaves_();
+    }
+    recordingBlocked = on;
+    m_current = Attempt{};
+    m_currentDidNoclip = false;
+    if (getPlayLayer()) restartLevel();
+}
 
 void Ghosts::toggleRecording() {
-        bool wasOn = recording;
-        recording = !recording;
-
+    if (recording) {
+        finalizeCurrentAttempt_(false);
+        flushPendingSaves_();
+        recording = false;
+        m_current = Attempt{};
+    } else {
         if (playback) stopPlayback();
         if (botActive) stopReplay();
-
-        if (!recording && wasOn) {
-            saveCurrentAttemptNow();
-            flushPendingSaves_();
-        }
-
-        if (recording) {
-            if (m_pl) {
-                restartLevel();
-            }
-        }
-
-        updateGhostVisibility();
+        recording = true;
+        if (m_pl) restartLevel();
     }
+    updateGhostVisibility();
+}
 
 void Ghosts::startPlayback()   {
-        if (botActive) stopReplay();
-        playback = true;
-        m_playbackArmed = true;
-        m_playbackStartTick = m_frameCounter;
-        recording = false;
-        updateGhostTextOnDeath(true);
-        updateGhostVisibility(); 
-        for (auto& a : attempts) a.resetPlayback();
-    }
+    finalizeCurrentAttempt_(false);
+    flushPendingSaves_();
+    if (botActive) stopReplay();
+    playback = true;
+    m_playbackArmed = true;
+    m_playbackStartTick = m_frameCounter;
+    recording = false;
+    updateGhostTextOnDeath(true);
+    updateGhostVisibility(); 
+    for (auto& a : attempts) a.resetPlayback();
+}
 
 void Ghosts::stopPlayback() {
         playback = false;

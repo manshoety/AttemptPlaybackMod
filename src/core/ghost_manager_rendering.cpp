@@ -53,16 +53,16 @@ void Ghosts::postUpdate() {
         const double dt = m_currentSessionTime - m_prevSessionTime;
         m_prevSessionTime = m_currentSessionTime;
 
+        if (m_autosaveEnabled && hasCurrentPersistenceTarget_()) {
+            m_autosaveAccum += static_cast<float>(std::max(0.0, dt));
+            const float every = std::max(1, m_autosaveMinutes) * 60.0f;
+            if (m_autosaveAccum >= every) {
+                m_autosaveAccum = 0.f;
+                saveNewAttemptsForCurrentLevel();
+            }
+        }
         if (isPureRecordingMode_() || isPreloadingAttempts()) {
             ++m_frameCounter;
-            if (m_autosaveEnabled && hasCurrentPersistenceTarget_()) {
-                m_autosaveAccum += static_cast<float>(dt);
-                const float every = std::max(1, m_autosaveMinutes) * 60.0f;
-                if (m_autosaveAccum >= every) {
-                    m_autosaveAccum = 0.f;
-                    saveNewAttemptsForCurrentLevel();
-                }
-            }
             return;
         }
 
@@ -407,14 +407,6 @@ void Ghosts::postUpdate() {
         ++m_frameCounter;
 
         // Autosave check
-        if (m_autosaveEnabled && hasCurrentPersistenceTarget_()) {
-            m_autosaveAccum += static_cast<float>(dt);
-            const float every = std::max(1, m_autosaveMinutes) * 60.0f;
-            if (m_autosaveAccum >= every) {
-                m_autosaveAccum = 0.f;
-                saveNewAttemptsForCurrentLevel();
-            }
-        }
 
         // text goop
         updatePlayLayerGhostTextLabel_();
@@ -1567,7 +1559,7 @@ void Ghosts::rebuildGrid_() {
     }
 
 void Ghosts::pushAttempt(Attempt&& a, bool spawnNow) {
-        if (spawnNow && !botActive && m_currentDidNoclip && m_recordingBlockedOnNoclip && !isPracticeMode()) return;
+        if (spawnNow && a.recordedThisSession && !botActive && m_currentDidNoclip && m_recordingBlockedOnNoclip && !a.practiceAttempt) return;
         if (!a.p1.empty()) {
             a.startX = a.p1.front().x;
             a.startY = a.p1.front().y;
@@ -1600,6 +1592,7 @@ void Ghosts::pushAttempt(Attempt&& a, bool spawnNow) {
             m_serialCacheDirty = true;
             
             while ((int64_t)attempts.size() > maxGhosts) {
+                if (attempts.front().recordedThisSession && !attempts.front().persistedOnDisk) break;
                 invalidateAttemptPointerCaches_();
                 m_loadedAttemptKeys.erase(attemptIdentityKey_(attempts.front().serial,attempts.front().practiceAttempt));
                 attempts.erase(attempts.begin());
@@ -1637,6 +1630,7 @@ void Ghosts::pushAttempt(Attempt&& a, bool spawnNow) {
         if (sp.lastX > sp.firstX) m_grid.insert(idx, (float)sp.firstX, (float)sp.lastX);
 
         while ((int64_t)attempts.size() > maxGhosts) {
+            if (attempts.front().recordedThisSession && !attempts.front().persistedOnDisk) break;
             invalidateAttemptPointerCaches_();
 
             auto& oldest = attempts.front();

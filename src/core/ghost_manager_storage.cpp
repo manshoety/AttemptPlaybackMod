@@ -113,7 +113,6 @@ bool Ghosts::deleteCurrentLevelSaveFile() {
         m_practiceCompositeOwnerSerial = -1;
 
         m_loadedAttemptKeys.clear();
-        m_loadedLevelID = 0;
         clearAttemptCatalog_();
 
         m_preloadedIndices.clear();
@@ -141,8 +140,7 @@ bool Ghosts::deleteCurrentLevelSaveFile() {
 
         m_checkpointMgr = CheckpointManager();
         m_persistenceReadFailed = false; // Explicit delete all succeeded
-        m_needsMigrationRewrite = false;
-        m_loadedFileWasLegacyAttempts = false;
+        m_storageErrorShown = false;
 
         m_justDied = false;
         m_blockAttemptCount = false;
@@ -229,6 +227,8 @@ bool Ghosts::exportCurrentLevelAttempts(
             return true;
         }
 
+        const bool sameFile = std::filesystem::equivalent(source, destination, ec);
+        if (sameFile && !ec) return fail("Choose an export file other than the current recording.");
         if (mode == AttemptFileExportMode::BestNormalAttempt) {
             const APXAttemptDiskInfo* best = nullptr;
 
@@ -494,6 +494,7 @@ bool Ghosts::importAttemptFile(
             serialMap.reserve(incomingAttempts.size());
             for (auto& attempt : incomingAttempts) {
                 const int oldSerial = attempt.serial;
+                if (maxSerial >= INT_MAX - 1) return fail("No attempt IDs available for import.");
                 const int newSerial = ++maxSerial;
                 serialMap.emplace(oldSerial, newSerial);
                 attempt.serial = newSerial;
@@ -513,6 +514,7 @@ bool Ghosts::importAttemptFile(
 
             for (auto& session : incomingPath.sessions) {
                 const int oldSessionId = session.sessionId;
+                if (maxSessionId >= INT_MAX - 1) return fail("No practice session IDs available for import.");
                 const int newSessionId = ++maxSessionId;
                 sessionMap.emplace(oldSessionId, newSessionId);
                 session.sessionId = newSessionId;
@@ -588,7 +590,6 @@ bool Ghosts::importAttemptFile(
         attempts.clear();
         m_current = Attempt{};
         m_loadedAttemptKeys.clear();
-        m_loadedLevelID = 0;
         m_lastWinSerial = -1;
         m_nextAttemptSerial = 1;
 
@@ -613,8 +614,8 @@ bool Ghosts::importAttemptFile(
         invalidateAttemptCounts();
 
         m_checkpointMgr.restorePath(finalPath);
-        m_needsMigrationRewrite = false;
-        m_loadedFileWasLegacyAttempts = false;
+
+
         clearAttemptCatalog_();
         if (!scanAttemptCatalogForLevel_(m_levelIDOnAttach)) {
             return fail("The imported file was written, but its new catalog could not be rebuilt.");
@@ -697,161 +698,33 @@ void Ghosts::migrateLegacyCustomLevelFiles_(
         std::string const& legacyNameHash,
         std::string const& canonicalSaveId) {
         if (canonicalSaveId.empty()) return;
-
         const auto dir = attemptsDir_();
+        if (dir.empty()) return;
         const auto canonicalPath = dir / (canonicalSaveId + "_attempts.apx");
+        std::error_code ec;
+        const bool canonicalExists = std::filesystem::exists(canonicalPath, ec);
+        if (ec) {
+            reportStorageError_("APX-MIGRATE", "Could not check editor recording: " + ec.message());
+            return;
+        }
 
+        // Move the old save to the editor ID if there is exactly one matching file
         std::vector<std::filesystem::path> legacyPaths;
-        auto addLegacy = [&](std::filesystem::path const& p) {
-            if (p == canonicalPath) return;
-            std::error_code ec;
-            if (!std::filesystem::exists(p, ec) || ec) return;
-            if (std::find(legacyPaths.begin(), legacyPaths.end(), p) == legacyPaths.end()) {
-                legacyPaths.push_back(p);
+        auto addLegacy = [&](std::filesystem::path const& path) {
+            if (path != canonicalPath && std::filesystem::exists(path, ec) && !ec &&
+                std::find(legacyPaths.begin(), legacyPaths.end(), path) == legacyPaths.end()) {
+                legacyPaths.push_back(path);
             }
         };
-
-        if (!legacyNameHash.empty()) {
-            addLegacy(dir / (legacyNameHash + "_attempts.apx"));
-        }
-
-        if (levelID > 0) {
-            addLegacy(dir / (std::to_string(levelID) + "_attempts.apx"));
-        }
-
+        if (!legacyNameHash.empty()) addLegacy(dir / (legacyNameHash + "_attempts.apx"));
+        if (levelID > 0) addLegacy(dir / (std::to_string(levelID) + "_attempts.apx"));
         if (legacyPaths.empty()) return;
-
-        std::error_code ec;
-        const bool canonicalExists = std::filesystem::exists(canonicalPath, ec) && !ec;
-
-
-        if (!canonicalExists && legacyPaths.size() == 1) {
-            ec.clear();
-            std::filesystem::rename(legacyPaths.front(), canonicalPath, ec);
-            if (!ec) {
-                log::info(
-                    "[APX custom-id] migrated {} -> {}",
-                    attemptplayback::pathcompat::toUtf8(legacyPaths.front()),
-                    attemptplayback::pathcompat::toUtf8(canonicalPath)
-                );
-                return;
-            }
-
-            log::warn(
-                "[APX custom-id] rename migration failed ({}); falling back to merge",
-                ec.message()
-            );
-        }
-
-        std::vector<Attempt> mergedAttempts;
-        PracticePath mergedPath;
-
-        if (canonicalExists) {
-            if (!loadAPXFileWithMigration(canonicalPath, mergedAttempts, mergedPath)) {
-                log::warn(
-                    "[APX custom-id] refusing migration because canonical file could not be read: {}",
-                    attemptplayback::pathcompat::toUtf8(canonicalPath)
-                );
-                return;
-            }
-        }
-
-        int maxSerial = 0;
-        for (auto const& a : mergedAttempts) maxSerial = std::max(maxSerial, a.serial);
-
-        int maxSessionId = 0;
-        for (auto const& s : mergedPath.sessions) maxSessionId = std::max(maxSessionId, s.sessionId);
-
-        std::vector<std::filesystem::path> mergedLegacyPaths;
-
-        for (auto const& legacyPath : legacyPaths) {
-            std::vector<Attempt> incomingAttempts;
-            PracticePath incomingPath;
-
-            if (!loadAPXFileWithMigration(legacyPath, incomingAttempts, incomingPath)) {
-                log::warn(
-                    "[APX custom-id] could not read legacy file; leaving it untouched: {}",
-                    attemptplayback::pathcompat::toUtf8(legacyPath)
-                );
-                continue;
-            }
-
-            mergedLegacyPaths.push_back(legacyPath);
-
-            std::unordered_map<int, int> serialMap;
-            serialMap.reserve(incomingAttempts.size());
-
-            for (auto& a : incomingAttempts) {
-                const int oldSerial = a.serial;
-                const int newSerial = ++maxSerial;
-                serialMap[oldSerial] = newSerial;
-                a.serial = newSerial;
-                a.persistedOnDisk = true;
-                a.recordedThisSession = false;
-                mergedAttempts.push_back(std::move(a));
-            }
-
-            const int oldActiveSession = incomingPath.activeSessionId;
-            const int oldSelectedSession = incomingPath.selectedSessionId;
-            std::unordered_map<int, int> sessionMap;
-            sessionMap.reserve(incomingPath.sessions.size());
-
-            for (auto& session : incomingPath.sessions) {
-                const int oldSessionId = session.sessionId;
-                const int newSessionId = ++maxSessionId;
-                sessionMap[oldSessionId] = newSessionId;
-                session.sessionId = newSessionId;
-
-                for (int& serial : session.allAttemptSerials) {
-                    if (auto it = serialMap.find(serial); it != serialMap.end()) {
-                        serial = it->second;
-                    }
-                }
-                for (auto& seg : session.segments) {
-                    if (auto it = serialMap.find(seg.ownerSerial); it != serialMap.end()) {
-                        seg.ownerSerial = it->second;
-                    }
-                }
-
-                session.updateSpan();
-                mergedPath.sessions.push_back(std::move(session));
-            }
-
-            if (mergedPath.activeSessionId == 0) {
-                if (auto it = sessionMap.find(oldActiveSession); it != sessionMap.end()) {
-                    mergedPath.activeSessionId = it->second;
-                }
-            }
-            if (mergedPath.selectedSessionId == 0) {
-                if (auto it = sessionMap.find(oldSelectedSession); it != sessionMap.end()) {
-                    mergedPath.selectedSessionId = it->second;
-                }
-            }
-        }
-
-        if (!canonicalExists && mergedLegacyPaths.empty()) {
+        if (canonicalExists || legacyPaths.size() != 1) {
+            reportStorageError_("APX-MIGRATE", "Multiple old editor recordings found. Import them manually; originals were preserved.");
             return;
         }
-
-        if (!saveAPXFileCurrent(canonicalPath, mergedAttempts, mergedPath)) {
-            log::warn(
-                "[APX custom-id] merged migration failed; legacy files were not removed: {}",
-                attemptplayback::pathcompat::toUtf8(canonicalPath)
-            );
-            return;
-        }
-
-        for (auto const& legacyPath : mergedLegacyPaths) {
-            ec.clear();
-            std::filesystem::remove(legacyPath, ec);
-            if (ec) {
-                log::warn(
-                    "[APX custom-id] migrated data but could not remove old file {}: {}",
-                    attemptplayback::pathcompat::toUtf8(legacyPath),
-                    ec.message()
-                );
-            }
-        }
+        std::filesystem::rename(legacyPaths.front(), canonicalPath, ec);
+        if (ec) reportStorageError_("APX-MIGRATE", "Could not move old editor recording: " + ec.message());
     }
 
 void Ghosts::refreshLevelName(int levelID) {
@@ -878,547 +751,144 @@ void Ghosts::refreshLevelName(int levelID) {
          }
     }
 
-bool Ghosts::rewriteWholeFileToCurrent_(std::filesystem::path const& path) {
-        const size_t validAttempts = countAttemptsWithData_(attempts);
-
-        if (validAttempts == 0) {
-            log::error(
-                "[APX save] ABORTING migration rewrite for {}: 0 valid attempts in memory. "
-                "Refusing to overwrite existing file.",
-                attemptplayback::pathcompat::toUtf8(path)
-            );
-            return false;
-        }
-        
-        auto tmp = path;
-        tmp += ".tmp";
-
-        {
-            apxio::Writer out(tmp, apxio::Mode::Truncate);
-            if (!out) {
-                log::warn(
-                    "[APX save] failed to open temp migration file: {}",
-                    attemptplayback::pathcompat::toUtf8(tmp)
-                );
-                return false;
-            }
-
-            APXHeader h{};
-            std::memcpy(h.magic, "APX2", 4);
-            h.version = kAPXVersion;
-            out.write(reinterpret_cast<const char*>(&h), sizeof(h));
-            if (!out.good()) return false;
-
-            size_t writtenAttempts = 0;
-            for (auto const& a : attempts) {
-                if (!attemptHasData_(a)) continue;
-                if (!writeAPXAttemptCompact(out, a)) return false;
-                ++writtenAttempts;
-            }
-
-            if (writtenAttempts == 0) {
-                log::error(
-                    "[APX save] ABORTING migration rewrite for {}: wrote 0 attempts unexpectedly.",
-                    attemptplayback::pathcompat::toUtf8(path)
-                );
-                return false;
-            }
-
-            if (!writeAPXPracticePath(out, m_checkpointMgr.getPath())) {
-                return false;
-            }
-
-            out.flush();
-            if (!out.good()) return false;
-        }
-
-        if (!replaceAPXFileSafely_(tmp, path)) {
-            log::warn(
-                "[APX save] migration replacement failed {} -> {}",
-                attemptplayback::pathcompat::toUtf8(tmp),
-                attemptplayback::pathcompat::toUtf8(path)
-            );
-            std::error_code ec;
-            std::filesystem::remove(tmp, ec);
-            return false;
-        }
-
-        for (auto& a : attempts) {
-            if (attemptHasData_(a)) a.persistedOnDisk = true;
-        }
-
-        m_needsMigrationRewrite = false;
-        m_loadedFileWasLegacyAttempts = false;
-        return true;
+void Ghosts::reportStorageError_(std::string const& code, std::string const& detail) {
+        const auto path = fileForLevel_(m_levelIDOnAttach);
+        log::error("[{}] level={} file={}: {}", code, m_levelIDOnAttach,
+            attemptplayback::pathcompat::toUtf8(path), detail);
+        if (m_storageErrorShown) return;
+        m_storageErrorShown = true;
+        const auto message = fmt::format("{}: {}\nLevel: {}\nPlease send the Geode log and APX file to me (manshoety) using the discord linked on the mod page. Unsaved attempts may be lost if you leave the level.",
+            code, detail, m_levelIDOnAttach);
+        Loader::get()->queueInMainThread([message] {
+            FLAlertLayer::create("Attempt Playback Storage Error", message, "OK")->show();
+        });
     }
 
 int Ghosts::saveNewAttemptsForLevel_(int levelID) {
+        if (m_isSaving || !hasPendingSaves_()) return 0;
         if (!hasPersistenceTargetForLevel_(levelID)) {
-            log::warn(
-                "[APX save] no persistence target: levelID={}, customSaveId='{}'",
-                levelID,
-                m_customSaveId
-            );
+            reportStorageError_("APX-SAVE", "No save location for this level.");
             return 0;
         }
-        if (m_isSaving) return 0;
         if (m_persistenceReadFailed) {
-            log::warn("[APX save] blocked after failed read/rollback; original recording preserved");
+            reportStorageError_("APX-SAVE", "Existing recording could not be read; saving is disabled to protect it.");
             return 0;
         }
         m_isSaving = true;
+        struct SaveGuard {
+            bool& flag;
+            ~SaveGuard() { flag = false; }
+        } guard{ m_isSaving };
 
-        auto path = fileForLevel_(levelID);
+        const auto path = fileForLevel_(levelID);
+        if (path.empty()) {
+            reportStorageError_("APX-OPEN", "Save directory unavailable.");
+            return 0;
+        }
         std::error_code ec;
         std::filesystem::create_directories(path.parent_path(), ec);
-        if (ec) {
-            log::warn(
-                "[APX save] create_directories failed: {} ({})",
-                attemptplayback::pathcompat::toUtf8(path.parent_path()),
-                ec.message()
-            );
-            m_isSaving = false;
-            return 0;
-        }
-
-        const size_t validAttempts = countAttemptsWithData_(attempts);
-
-        int unsavedValidAttempts = 0;
-        for (auto const& a : attempts) {
-            if (!attemptHasData_(a)) continue;
-            if (!a.recordedThisSession) continue;
-            if (a.persistedOnDisk) continue;
-            ++unsavedValidAttempts;
-        }
-
-        const bool canWritePracticePathOnly =
-            !m_needsMigrationRewrite &&
-            m_checkpointMgr.isDirty() &&
-            m_attemptCatalogScanned && !m_attemptCatalog.empty();
-
-        if (validAttempts == 0 && !canWritePracticePathOnly) {
-            m_isSaving = false;
-            return 0;
-        }
-
-        if (!m_needsMigrationRewrite && unsavedValidAttempts == 0 && !m_checkpointMgr.isDirty()) {
-            m_isSaving = false;
-            return 0;
-        }
-
-
-        int written = 0;
-        bool rewroteWholeFile = false;
-        bool wrotePracticePath = false;
-
-        if (m_needsMigrationRewrite) {
-            if (!rewriteWholeFileToCurrent_(path)) {
-                m_isSaving = false;
-                return 0;
-            }
-            rewroteWholeFile = true;
-        } else if (!ensureHeader_(path)) {
-            log::warn("[APX save] refused invalid/unwritable header: {}", attemptplayback::pathcompat::toUtf8(path));
-            m_isSaving = false;
+        if (ec || !ensureHeader_(path)) {
+            reportStorageError_("APX-OPEN", ec ? ec.message() : "Could not open or create the recording header.");
             return 0;
         }
 
         apxio::Writer out(path, apxio::Mode::Append);
-        if (!out) {
-            log::warn("[APX save] could not open append target: {}", attemptplayback::pathcompat::toUtf8(path));
-            m_isSaving = false;
+        const auto start = out.position();
+        if (!out || start == UINT64_MAX) {
+            reportStorageError_("APX-OPEN", "Could not open recording for append.");
             return 0;
         }
 
-        auto failedChunk = [&](uint64_t start) {
-            if (start != UINT64_MAX && !out.rollback(start)) {
+        auto fail = [&](std::string const& detail) {
+            if (!out.rollback(start)) {
                 m_persistenceReadFailed = true;
-                log::error("[APX save] rollback failed; further writes blocked for this level");
+                reportStorageError_("APX-ROLLBACK", detail + " Rollback failed; further writes disabled.");
+            } else {
+                reportStorageError_("APX-WRITE", detail);
             }
             clearAttemptCatalog_();
-            log::warn("[APX save] chunk not saved; original prefix retained if rollback succeeded");
+            return 0;
         };
 
+        int written = 0;
         for (auto& a : attempts) {
-            if (!attemptHasData_(a)) continue;
-            if (!a.recordedThisSession) continue;
-            if (a.persistedOnDisk) continue;
-
-            const uint64_t start = out.position();
-            if (start == UINT64_MAX || !writeAPXAttemptCompact(out, a)) {
-                failedChunk(start);
-                m_isSaving = false;
-                return written;
+            if (!attemptHasData_(a) || !a.recordedThisSession || a.persistedOnDisk) continue;
+            if (a.serial <= 0 || !writeAPXAttemptCompact(out, a)) {
+                return fail(fmt::format("Could not write attempt {}.", a.serial));
             }
-            a.persistedOnDisk = true;
             ++written;
         }
-
-        if (m_checkpointMgr.isDirty()) {
-            const uint64_t start = out.position();
-            if (start != UINT64_MAX && writeAPXPracticePath(out, m_checkpointMgr.getPath())) {
-                m_checkpointMgr.clearDirty();
-                wrotePracticePath = true;
-            } else {
-                failedChunk(start);
-            }
+        if (m_checkpointMgr.isDirty() && !writeAPXPracticePath(out, m_checkpointMgr.getPath())) {
+            return fail("Could not write practice session data.");
         }
 
-        out.flush();
-
-        if (written > 0 || rewroteWholeFile || wrotePracticePath) {
-            clearAttemptCatalog_();
+        out.close();
+        for (auto& a : attempts) {
+            if (a.recordedThisSession && attemptHasData_(a)) a.persistedOnDisk = true;
         }
-
-        m_isSaving = false;
+        m_checkpointMgr.clearDirty();
+        clearAttemptCatalog_();
+        m_storageErrorShown = false;
         return written;
     }
 
 int Ghosts::loadFromDisk_(int levelID, LoadFilter const& flt) {
-        const auto loadStart = std::chrono::steady_clock::now();
-        if (m_loadedLevelID == levelID && (m_attemptCatalogScanned || !attempts.empty())) {
-            if (!scanAttemptCatalogForLevel_(levelID)) m_persistenceReadFailed = true;
-            return 0;
-        }
+        if (!hasPersistenceTargetForLevel_(levelID) || !scanAttemptCatalogForLevel_(levelID)) return 0;
+        m_checkpointMgr.restorePath(m_attemptCatalogPracticePath);
 
-        if (m_loadedLevelID != levelID) {
-            m_checkpointMgr = CheckpointManager();
-            m_needsMigrationRewrite = false;
-            m_loadedFileWasLegacyAttempts = false;
-            clearAttemptCatalog_();
-        }
+        // Normal level entry only loads the catalog
+        // Filtered loads decode requested attempts
+        if (!flt.practice.has_value() && !flt.minPct.has_value() &&
+            !flt.maxPct.has_value() && flt.maxNonPractice == 0) return 0;
 
-        const auto catalogStart = std::chrono::steady_clock::now();
-        const bool catalogReady = scanAttemptCatalogForLevel_(levelID);
-        const auto catalogMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - catalogStart).count();
-
-        auto path = fileForLevel_(levelID);
-        if (!catalogReady) {
-            m_persistenceReadFailed = true;
-            log::warn("[APX load] catalog failed for {}; automatic writes blocked", attemptplayback::pathcompat::toUtf8(path));
-            return 0;
-        }
-        apxio::Reader in(path, apxio::Mode::Read);
-        if (!in) {
-            std::error_code readEc;
-            if (std::filesystem::exists(path, readEc) || readEc) {
-                m_persistenceReadFailed = true;
-                log::warn("[APX load] could not open existing recording: {}", attemptplayback::pathcompat::toUtf8(path));
-            }
-            return 0;
-        }
-
-        APXHeader h{};
-        in.read(reinterpret_cast<char*>(&h), sizeof(h));
-        if (!in || std::memcmp(h.magic, "APX2", 4) != 0 || h.version > kAPXVersion) {
-            m_persistenceReadFailed = true;
-            log::warn("[APX load] bad header for {}", attemptplayback::pathcompat::toUtf8(path));
-            return 0;
-        }
-
-        if (catalogReady && m_attemptCatalogCurrentFormat && h.version == kAPXVersion &&
-            !flt.practice.has_value() && !flt.minPct.has_value() &&
-            !flt.maxPct.has_value() && flt.maxNonPractice == 0) {
-            m_checkpointMgr.restorePath(m_attemptCatalogPracticePath);
-            m_loadedLevelID = levelID;
-
-            const auto loadMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - loadStart).count();
-            log::info(
-                "[APX load] Catalog-only {} attempts from {} (version {}) in {} ms (catalog={} ms, resident={})",
-                m_attemptCatalog.size(),
-                attemptplayback::pathcompat::toUtf8(path),
-                h.version,
-                loadMs,
-                catalogMs,
-                attempts.size()
-            );
-            log::info("[APX load] migration=no");
-            return 0;
-        }
-
-        const bool headerIsLegacy = (h.version < kAPXVersion);
-        const bool oldWavePointBitMeaning = h.version < kAPXVersion_WavePointThisFrame;
-
-        const bool forceFullMigrationLoad = headerIsLegacy || oldWavePointBitMeaning;
-
-        if (forceFullMigrationLoad) {
-            m_needsMigrationRewrite = true;
-        }
-
-        size_t loaded = 0;
+        int loaded = 0;
         size_t nonPracticeLoaded = 0;
-        uint32_t maxSerialSeen = 0;
-
-        while (in && in.remaining() != 0) {
-            uint32_t type = 0, sz = 0;
-            in.read(reinterpret_cast<char*>(&type), sizeof(type));
-            in.read(reinterpret_cast<char*>(&sz), sizeof(sz));
-
-            if (!in || sz > apxio::kMaxChunkBytes || sz > in.remaining()) {
+        apxio::Reader in(fileForLevel_(levelID));
+        for (auto const& entry : m_attemptCatalog) {
+            if (flt.practice.has_value() && flt.practice.value() != entry.practiceAttempt) continue;
+            if (flt.minPct.has_value() && entry.startPercent < flt.minPct.value()) continue;
+            if (flt.maxPct.has_value() && entry.startPercent > flt.maxPct.value()) continue;
+            if (!entry.practiceAttempt && flt.maxNonPractice > 0 && nonPracticeLoaded >= flt.maxNonPractice) continue;
+            const auto key = attemptIdentityKey_(entry.serial, entry.practiceAttempt);
+            if (m_loadedAttemptKeys.count(key)) continue;
+            Attempt a;
+            if (!loadAPXAttemptByCatalogEntry(in, entry, a)) {
                 m_persistenceReadFailed = true;
+                reportStorageError_("APX-LOAD", fmt::format("Could not read attempt {}.", entry.serial));
                 break;
             }
-
-            if (type == kChunk_ATT3) {
-                Attempt a{};
-                if (!readAPXAttemptCompact(in, sz, a)) {
-                    log::warn(
-                        "[APX load] rejected malformed ATT3 chunk size={} after {} successfully loaded attempts",
-                        sz,
-                        loaded
-                    );
-                    m_persistenceReadFailed = true;
-                    break;
-                }
-
-                if (oldWavePointBitMeaning) {
-                    clearAPXWavePointThisFrameBits(a);
-                }
-
-                const bool isPractice = a.practiceAttempt;
-                const uint64_t attemptKey = attemptIdentityKey_(a.serial, isPractice);
-                if (m_loadedAttemptKeys.count(attemptKey)) {
-                    continue;
-                }
-
-                maxSerialSeen = std::max(maxSerialSeen, static_cast<uint32_t>(a.serial));
-
-                bool loadThis = true;
-
-                if (!(forceFullMigrationLoad)) {
-                    if (flt.practice.has_value() && flt.practice.value() != isPractice) loadThis = false;
-                    if (flt.minPct.has_value() && a.startPercent < flt.minPct.value()) loadThis = false;
-                    if (flt.maxPct.has_value() && a.startPercent > flt.maxPct.value()) loadThis = false;
-                    if (loadThis && !isPractice && flt.maxNonPractice > 0
-                        && nonPracticeLoaded >= flt.maxNonPractice) loadThis = false;
-                }
-
-                if (!loadThis) {
-                    continue;
-                }
-
-                m_loadedAttemptKeys.insert(attemptKey);
-                pushAttempt(std::move(a), false);
-
-                ++loaded;
-                if (!isPractice) ++nonPracticeLoaded;
-            }
-            else if (type == kChunk_ATTZ) {
-                m_loadedFileWasLegacyAttempts = true;
-                m_needsMigrationRewrite = true;
-
-                int64_t attzChunkStart = in.tellg();
-
-                APXMeta m{};
-                if (sz < sizeof(m)) { m_persistenceReadFailed = true; break; }
-                in.read(reinterpret_cast<char*>(&m), sizeof(m));
-                const uint64_t frames = uint64_t(m.p1Count) + m.p2Count;
-                if (!in || m.serial >= static_cast<uint32_t>(INT_MAX) ||
-                    m.p1Count > 10'000'000u || m.p2Count > 10'000'000u ||
-                    frames * sizeof(APXFrame) > sz - sizeof(m) ||
-                    frames * sizeof(Frame) > apxio::kMaxDecodedFrameBytes) {
-                    m_persistenceReadFailed = true;
-                    break;
-                }
-
-                const bool isPractice = (m.flags & 1u) != 0;
-                const uint64_t attemptKey = attemptIdentityKey_(static_cast<int>(m.serial), isPractice);
-                if (m_loadedAttemptKeys.count(attemptKey)) {
-                    auto now = in.tellg();
-                    auto readSoFar = (int64_t)(now - attzChunkStart);
-                    auto remain = (int64_t)sz - readSoFar;
-                    if (remain > 0) in.seekg(remain, apxio::Origin::Current);
-                    continue;
-                }
-
-                maxSerialSeen = std::max(maxSerialSeen, m.serial);
-
-                bool loadThis = true;
-
-                if (!forceFullMigrationLoad) {
-                    if (flt.practice.has_value() && flt.practice.value() != isPractice) loadThis = false;
-                    if (flt.minPct.has_value() && m.startPercent < flt.minPct.value()) loadThis = false;
-                    if (flt.maxPct.has_value() && m.startPercent > flt.maxPct.value()) loadThis = false;
-                    if (loadThis && !isPractice && flt.maxNonPractice > 0
-                        && nonPracticeLoaded >= flt.maxNonPractice) loadThis = false;
-                }
-
-                auto skipToEndOfChunk = [&]() {
-                    auto now = in.tellg();
-                    auto readSoFar = static_cast<int64_t>(now - attzChunkStart);
-                    auto remain = static_cast<int64_t>(sz) - readSoFar;
-                    if (remain > 0) in.seekg(remain, apxio::Origin::Current);
-                };
-
-                auto readFrames = [&](std::vector<Frame>& dst, uint32_t n) {
-                    dst.resize(n);
-                    for (uint32_t i = 0; i < n; ++i) {
-                        APXFrame s{};
-                        in.read(reinterpret_cast<char*>(&s), sizeof(s));
-
-                        Frame f{};
-                        f.x = s.x;
-                        f.y = s.y;
-                        f.rot = s.rot;
-                        f.vehicleSize = s.vehicleSize;
-                        f.waveSize = s.waveSize;
-                        f.mode = static_cast<IconType>(s.mode);
-                        f.t = s.t;
-                        frameFromFlags_(s, f);
-
-                        dst[i] = f;
-                    }
-                };
-
-                if (!loadThis) {
-                    skipToEndOfChunk();
-                    continue;
-                }
-
-                Attempt a{};
-                a.serial = static_cast<int>(m.serial);
-                a.startPercent = m.startPercent;
-                a.endPercent = m.endPercent;
-                a.practiceAttempt = isPractice;
-                a.completed = (m.flags & (1u << 1)) != 0;
-                a.hadDual = (m.flags & (1u << 2)) != 0;
-                a.startX = m.startX;
-                a.startY = m.startY;
-                a.baseTimeOffset = m.baseTimeOffset;
-                a.seed = static_cast<uintptr_t>(m.seed);
-
-                readFrames(a.p1, m.p1Count);
-                readFrames(a.p2, m.p2Count);
-                if (!in) { m_persistenceReadFailed = true; break; }
-
-                if (oldWavePointBitMeaning) {
-                    clearAPXWavePointThisFrameBits(a);
-                }
-
-                if (!a.p1.empty()) {
-                    a.startX = static_cast<float>(a.p1.front().x);
-                    a.startY = static_cast<float>(a.p1.front().y);
-                    a.endX = static_cast<float>(a.p1.back().x);
-                } else if (!a.p2.empty()) {
-                    a.startX = static_cast<float>(a.p2.front().x);
-                    a.startY = static_cast<float>(a.p2.front().y);
-                    a.endX = static_cast<float>(a.p2.back().x);
-                }
-
-                a.persistedOnDisk = true;
-                a.recordedThisSession = false;
-
-                m_loadedAttemptKeys.insert(attemptKey);
-                pushAttempt(std::move(a), false);
-
-                ++loaded;
-                if (!isPractice) ++nonPracticeLoaded;
-
-                auto now = in.tellg();
-                auto readSoFar = static_cast<int64_t>(now - attzChunkStart);
-                auto remain = static_cast<int64_t>(sz) - readSoFar;
-                if (remain > 0) in.seekg(remain, apxio::Origin::Current);
-            }
-            else if (type == kChunk_PATH) {
-                PracticePath loadedPath;
-
-                if (readAPXPracticePath(in, sz, loadedPath)) {
-                    m_checkpointMgr.restorePath(loadedPath);
-                } else {
-                    m_persistenceReadFailed = true;
-                    break;
-                }
-            }
-            else if (type == kChunk_CheckpointZ2 || type == kChunk_SEGZ) {
-                in.seekg(static_cast<int64_t>(sz), apxio::Origin::Current);
-            } else {
-                in.seekg(static_cast<int64_t>(sz), apxio::Origin::Current);
-            }
+            m_loadedAttemptKeys.insert(key);
+            pushAttempt(std::move(a), false);
+            ++loaded;
+            if (!entry.practiceAttempt) ++nonPracticeLoaded;
         }
-
-        m_loadedLevelID = levelID;
-
-        if (m_nextAttemptSerial <= static_cast<int>(maxSerialSeen)) {
-            m_nextAttemptSerial = static_cast<int>(maxSerialSeen) + 1;
-        }
-
-        const auto loadMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - loadStart).count();
-        log::info(
-            "[APX load] Loaded {} attempts from {} (version {}) in {} ms",
-            loaded,
-            attemptplayback::pathcompat::toUtf8(path),
-            h.version,
-            loadMs
-        );
-
-        log::info(
-            "[APX load] migration={}",
-            m_needsMigrationRewrite ? "yes" : "no"
-        );
-
-        if (!in) m_persistenceReadFailed = true;
-        in.close();
-        if (m_persistenceReadFailed) {
-            log::warn("[APX load] incomplete decode; automatic writes blocked and original preserved");
-            return static_cast<int>(loaded);
-        }
-
-        if (m_needsMigrationRewrite) {
-            if (oldWavePointBitMeaning) {
-                log::info(
-                    "[APX migration] clearing old wavePointThisFrame/sliding bit and rewriting {} to APX v{}",
-                    attemptplayback::pathcompat::toUtf8(path),
-                    kAPXVersion
-                );
-            } else {
-                log::info(
-                    "[APX migration] rewriting {} to APX v{}",
-                    attemptplayback::pathcompat::toUtf8(path),
-                    kAPXVersion
-                );
-            }
-
-            if (!rewriteWholeFileToCurrent_(path)) {
-                log::warn(
-                    "[APX migration] failed to rewrite migration file: {}",
-                    attemptplayback::pathcompat::toUtf8(path)
-                );
-            }
-        }
-
-        return static_cast<int>(loaded);
+        return loaded;
     }
 
 int Ghosts::saveNewAttemptsForCurrentLevel() {
-        if (!hasCurrentPersistenceTarget_()) {
-            log::warn(
-                "[APX save] no current persistence target: levelID={}, customSaveId='{}'",
-                m_levelIDOnAttach,
-                m_customSaveId
-            );
-            return 0;
-        }
-
         return saveNewAttemptsForLevel_(m_levelIDOnAttach);
     }
 
 bool Ghosts::refreshAttemptCatalogForCurrentLevel_(bool forceRescan, bool pushCurrentAttempt) {
-        if (!hasCurrentPersistenceTarget_()) {
-            clearAttemptCatalog_();
-            return false;
+    if (!hasCurrentPersistenceTarget_()) {
+        clearAttemptCatalog_();
+        return false;
+    }
+
+    if (!flushPendingSaves_()) return false;
+
+    if (forceRescan) clearAttemptCatalog_();
+
+    return scanAttemptCatalogForLevel_(m_levelIDOnAttach);
+}
+
+bool Ghosts::refreshPracticeRuns() {
+        // Selector can open before the first death
+        // Register recorded prefix and continue same session if user cancels
+        if (m_pl && m_pl->m_isPracticeMode && !m_justDied && finalizeCurrentAttempt_(false)) {
+            startNewAttempt(true);
         }
-
-        // write already-pushed recordedThisSession attempts so the catalog can see them from disk
-        flushPendingSaves_();
-
-        if (forceRescan) {
-            clearAttemptCatalog_();
-        }
-
-        return scanAttemptCatalogForLevel_(m_levelIDOnAttach);
+        return refreshAttemptCatalogForCurrentLevel_(true, false);
     }
 
 void Ghosts::prunePracticePathSerials_(
@@ -1617,65 +1087,8 @@ bool Ghosts::deleteAttemptsBySerialSet_(
         }
 
         if (!foundAny) return false;
-        if (m_isSaving) return false;
-
-        m_isSaving = true;
-        struct SaveGuard {
-            bool& flag;
-            ~SaveGuard() { flag = false; }
-        } guard{ m_isSaving };
-
-        clearRuntimeReplayStateAfterAttemptDeletion_();
-
-        const auto path = fileForLevel_(m_levelIDOnAttach);
-
-        std::vector<Attempt> keptAttempts;
-        keptAttempts.reserve(m_attemptCatalog.size());
-
-        for (auto const& entry : m_attemptCatalog) {
-            if (deleteSet.count(entry.serial) != 0) {
-                continue;
-            }
-
-            Attempt loaded{};
-            bool usedLegacy = false;
-
-            if (!loadAPXAttemptByCatalogEntry(path, entry, loaded, &usedLegacy)) {
-                log::warn(
-                    "[APX delete] failed to lazy-load kept attempt serial={} from {}",
-                    entry.serial,
-                    attemptplayback::pathcompat::toUtf8(path)
-                );
-                return false;
-            }
-
-            loaded.persistedOnDisk = true;
-            loaded.recordedThisSession = false;
-            keptAttempts.push_back(std::move(loaded));
-        }
-
-        // Practice session deletion handled by Practice tab
         PracticePath keptPath = m_checkpointMgr.getPath();
-
-        if (!saveAPXFileCurrent(path, keptAttempts, keptPath)) {
-            log::warn(
-                "[APX delete] failed to rewrite APX file after normal-attempt deletion: {}",
-                attemptplayback::pathcompat::toUtf8(path)
-            );
-            return false;
-        }
-
-        removeDeletedAttemptsFromRuntime_(deleteSet);
-
-        clearRuntimeReplayStateAfterAttemptDeletion_();
-
-        clearAttemptCatalog_();
-        scanAttemptCatalogForLevel_(m_levelIDOnAttach);
-
-        armFreshRecordingAfterDeleteRestart_();
-        restartLevel();
-
-        return true;
+        return rewriteAttemptsAndPracticePathAfterDeletion_(deleteSet, keptPath, "normal-attempt");
     }
 
 void Ghosts::clearAttemptCatalog_() {
@@ -1686,48 +1099,67 @@ void Ghosts::clearAttemptCatalog_() {
         m_attemptCatalogLevelID = 0;
         m_attemptCatalogCustomSaveId.clear();
         m_attemptCatalogScanned = false;
-        m_attemptCatalogCurrentFormat = false;
     }
 
 bool Ghosts::scanAttemptCatalogForLevel_(int levelID) {
-        if (
-            m_attemptCatalogScanned &&
-            m_attemptCatalogLevelID == levelID &&
-            m_attemptCatalogCustomSaveId == m_customSaveId
-        ) {
-            return true;
-        }
-
-        clearAttemptCatalog_();
-
-        APXCatalogScanResult scan{};
-        if (!scanAPXFileCatalog(fileForLevel_(levelID), scan)) {
-            return false;
-        }
-
-        m_attemptCatalogCurrentFormat = !scan.loadedLegacy && !scan.sawLegacyAttemptChunks;
-        m_attemptCatalog = std::move(scan.attempts);
-        m_attemptCatalogPracticePath = std::move(scan.practicePath);
-        m_attemptCatalogBySerial.reserve(m_attemptCatalog.size());
-        m_attemptCatalogByIdentity.reserve(m_attemptCatalog.size());
-
-        for (size_t i = 0; i < m_attemptCatalog.size(); ++i) {
-            const APXAttemptDiskInfo& entry = m_attemptCatalog[i];
-            m_attemptCatalogBySerial[entry.serial] = i;
-            const uint64_t entryKey = attemptIdentityKey_(entry.serial, entry.practiceAttempt);
-            if (m_attemptCatalogByIdentity.contains(entryKey)) m_attemptCatalogCurrentFormat = false;
-            m_attemptCatalogByIdentity[entryKey] = i;
-        }
-
-        if (m_nextAttemptSerial <= static_cast<int>(scan.maxSerialSeen)) {
-            m_nextAttemptSerial = static_cast<int>(scan.maxSerialSeen) + 1;
-        }
-
-        m_attemptCatalogLevelID = levelID;
-        m_attemptCatalogCustomSaveId = m_customSaveId;
-        m_attemptCatalogScanned = true;
+    if (m_attemptCatalogScanned &&
+        m_attemptCatalogLevelID == levelID &&
+        m_attemptCatalogCustomSaveId == m_customSaveId) {
         return true;
     }
+
+   clearAttemptCatalog_();
+
+    const auto path = fileForLevel_(levelID);
+    APXCatalogScanResult scan{};
+    if (!scanAPXFileCatalog(path, scan)) {
+        m_persistenceReadFailed = true;
+        reportStorageError_("APX-LOAD", "Recording catalog could not be read. Original file left unchanged.");
+        return false;
+    }
+
+    if (scan.loadedLegacy || scan.sawLegacyAttemptChunks) {
+        std::vector<Attempt> legacyAttempts;
+        PracticePath legacyPath;
+        if (!loadAPXFileWithMigration(path, legacyAttempts, legacyPath) ||
+            !scanAPXFileCatalog(path, scan) || scan.loadedLegacy || scan.sawLegacyAttemptChunks) {
+            m_persistenceReadFailed = true;
+            reportStorageError_("APX-MIGRATE", "Could not convert the old recording. Please send the original file.");
+            return false;
+        }
+    }
+
+    m_attemptCatalog = std::move(scan.attempts);
+    m_attemptCatalogPracticePath = std::move(scan.practicePath);
+    m_attemptCatalogBySerial.reserve(m_attemptCatalog.size());
+    m_attemptCatalogByIdentity.reserve(m_attemptCatalog.size());
+
+    for (size_t i = 0; i < m_attemptCatalog.size(); ++i) {
+        const APXAttemptDiskInfo& entry = m_attemptCatalog[i];
+        m_attemptCatalogBySerial[entry.serial] = i;
+        const uint64_t entryKey = attemptIdentityKey_(entry.serial, entry.practiceAttempt);
+        m_attemptCatalogByIdentity[entryKey] = i;
+    }
+
+    uint32_t maxReservedSerial = scan.maxSerialSeen;
+    for (auto const& session : m_attemptCatalogPracticePath.sessions) {
+        for (int serial : session.allAttemptSerials) {
+            if (serial > 0) maxReservedSerial = std::max(maxReservedSerial, static_cast<uint32_t>(serial));
+        }
+
+        for (auto const& seg : session.segments) {
+            if (seg.ownerSerial > 0) maxReservedSerial = std::max(maxReservedSerial, static_cast<uint32_t>(seg.ownerSerial));
+        }
+    }
+
+    if (maxReservedSerial >= static_cast<uint32_t>(INT_MAX)) m_nextAttemptSerial = INT_MAX;
+    else m_nextAttemptSerial = std::max(m_nextAttemptSerial, static_cast<int>(maxReservedSerial) + 1);
+
+    m_attemptCatalogLevelID = levelID;
+    m_attemptCatalogCustomSaveId = m_customSaveId;
+    m_attemptCatalogScanned = true;
+    return true;
+}
 
 const APXAttemptDiskInfo* Ghosts::findCatalogEntryBySerialAndPractice_(
         int serial,

@@ -96,6 +96,7 @@ class $modify(PLHook, PlayLayer) {
         // log::info("[PlayLayer] levelComplete");
         if (Ghosts::I().isAttachedPlayLayer(this)) {
             if (Ghosts::I().safeMode_enabled) {
+                if (this->m_isPracticeMode) Ghosts::I().onComplete();
                 PlayLayer::showCompleteText();
                 return;
             }
@@ -159,6 +160,7 @@ class $modify(PLHook, PlayLayer) {
         // log::info("[PlayLayer] togglePracticeMode({})", on);
         if (Ghosts::I().isAttachedPlayLayer(this)) Ghosts::I().onPracticeToggle(on);
         PlayLayer::togglePracticeMode(on);
+        if (Ghosts::I().isAttachedPlayLayer(this)) Ghosts::I().afterPracticeToggle();
     }
     //$override void commitJumps() {
     //    PlayLayer::commitJumps();

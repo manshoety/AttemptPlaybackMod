@@ -6,7 +6,7 @@
 #include <system_error>
 
 namespace {
-    constexpr uint32_t kCacheVersion = 2; 
+    constexpr uint32_t kCacheVersion = 4;
     constexpr uint32_t kMaxPayload = apxio::kMaxCatalogPayload;
     constexpr size_t kSampleBytes = 4096;
     constexpr uint64_t kHashOffset = 14695981039346656037ull;
@@ -118,10 +118,6 @@ bool loadAPXCatalogCache(std::filesystem::path const& apxPath, std::vector<uint8
     }
     if (payloadHash_(readPayload) != hdr.payloadHash) return false;
 
-    FileIdentity after{};
-    if (!getFileIdentity_(apxPath, after) || after.size != identity.size ||
-        after.writeTime != identity.writeTime || after.sampledHash != identity.sampledHash) return false;
-
     payload = std::move(readPayload);
     return true;
 }
@@ -148,35 +144,27 @@ bool saveAPXCatalogCache(
     auto path = cachePath_(apxPath);
     auto tmp = path;
     tmp += ".tmp";
-    std::error_code tempEc;
-    const auto tempStatus = std::filesystem::symlink_status(tmp, tempEc);
-    if (tempStatus.type() == std::filesystem::file_type::symlink ||
-        (tempEc && tempEc != std::errc::no_such_file_or_directory)) return false;
+    bool written = false;
+
     {
         apxio::Writer out(tmp, apxio::Mode::Truncate);
         if (!out) return false;
         out.write(reinterpret_cast<char const*>(&hdr), sizeof(hdr));
         if (!payload.empty()) out.write(reinterpret_cast<char const*>(payload.data()), payload.size());
-        out.flush();
-        if (!out.good()) return false;
+        written = out.good();
+        out.close();
     }
-
-    FileIdentity after{};
-    if (!getFileIdentity_(apxPath, after) || !(after == expectedIdentity)) {
+    if (!written) {
         std::error_code ec;
-        std::filesystem::remove(tmp, ec);
-        return false;
+        std::filesystem::remove(tmp, ec); return false;
     }
 
     std::error_code ec;
     std::filesystem::rename(tmp, path, ec);
     if (ec) {
-        // rebuildable index
-        ec.clear();
-        std::filesystem::remove(path, ec);
-        if (ec) return false;
-        ec.clear();
-        std::filesystem::rename(tmp, path, ec);
+        std::error_code cleanup;
+        std::filesystem::remove(tmp, cleanup);
+        return false;
     }
-    return !ec;
+    return true;
 }

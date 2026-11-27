@@ -152,7 +152,6 @@ bool Ghosts::startReplayPractice() {
         clearDeathMarkers_();
         const bool explicitSelection = !m_requestedPracticeSessionIds.empty();
         clearReplayStartPosOverride_();
-        if (!explicitSelection) restartLevel();
 
         m_freezePlayerXAtEnd = false;
         m_chainAuthoritative = true;
@@ -170,17 +169,14 @@ bool Ghosts::startReplayPractice() {
         }
 
         if (isPracticeMode()) togglePracticeMode(false);
-        flushPendingSaves_();
+        else finalizeCurrentAttempt_(false);
 
-        if (hasCurrentPersistenceTarget_()) {
-            clearAttemptCatalog_();
-
-            if (scanAttemptCatalogForLevel_(m_levelIDOnAttach)) {
-                m_checkpointMgr.restorePath(m_attemptCatalogPracticePath);
-            }
+        if (!refreshPracticeRuns()) {
+            log::warn("[Bot] practice replay aborted: recording save/catalog unavailable");
+            m_filterByStartPosition = false;
+            stopReplay();
+            return false;
         }
-
-        if (isPracticeMode()) togglePracticeMode(false);
 
         int selectedSession = -1;
 
@@ -403,7 +399,6 @@ bool Ghosts::startReplayBest() {
         clearDeathMarkers_();
         clearReplayStartPosOverride_();
         clearPracticeReplaySessionSelection();
-        restartLevel();
         m_freezePlayerXAtEnd = false;
         m_freezePlayerX = 0.f;
         m_freezePlayerY = 0.f;
@@ -417,6 +412,11 @@ bool Ghosts::startReplayBest() {
         }
 
         if (isPracticeMode()) togglePracticeMode(false);
+        else finalizeCurrentAttempt_(false);
+        if (!flushPendingSaves_()) {
+            stopReplay();
+            return false;
+        }
 
         //log::info("[Bot] startReplayBest: {} total attempts", attempts.size());
 
@@ -728,7 +728,7 @@ bool Ghosts::refreshCurrentOwnerPointer_() {
 
 void Ghosts::updateClickState(bool isPlayer1) {
         if (!botActive) return;
-        if (!m_pl || m_is_quitting) return;
+        if (!m_pl || m_is_quitting || resetting || m_justDied || botActive) return;
         refreshCurrentOwnerPointer_();
         if (!m_allowSetPlayerClickState) return;
         if (!m_currentOwner || m_currentOwner->p1.empty()) return;
@@ -1060,6 +1060,12 @@ void Ghosts::recordUpdate(bool isPlayer1, bool isPostWavePointUpdate) {
         const bool isPractice = m_pl->m_isPracticeMode;
         if (isPractice && !recordInPractice) return;
         if (!recording || recordingBlocked) return;
+        if (!m_current.recordedThisSession || m_current.serial <= 0) {
+            if (isPostWavePointUpdate) return;
+            startNewAttempt(true);
+            if (!recording || !m_current.recordedThisSession) return;
+        }
+        if (isPractice) m_current.practiceAttempt = true;
 
         if (isPostWavePointUpdate) insertWaveStateIntoLastFrame(isPlayer1);
         else recordCurrentFrame_(isPlayer1);

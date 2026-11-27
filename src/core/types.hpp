@@ -560,7 +560,7 @@ struct APXAttemptDiskInfo {
     double endTime = 0.0;
 
     double baseTimeOffset = 0.0;
-    uintptr_t seed = 0;
+    uint64_t seed = 0;
 
     uint32_t p1Count = 0;
     uint32_t p2Count = 0;
@@ -726,7 +726,7 @@ struct Attempt {
     bool p2Visible = false;
     bool preloaded = false;
     bool m_isPlatformer = false;
-    uintptr_t seed = 0;
+    uint64_t seed = 0;
 
     PoseCache last1{};
     PoseCache last2{};

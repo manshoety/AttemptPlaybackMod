@@ -817,12 +817,27 @@ bool PracticeRunSelectPopup::init(float width, float height) {
 
     m_haveCurrentStart = G.getCurrentPracticeStartLocation(m_currentStartX, m_currentStartPercent);
 
-    loadRuns_();
+    if (!loadRuns_()) {
+        replay_ui_detail::setFallbackFlag(false);
+        const bool pending = G.hasUnsavedRecording();
+        FLAlertLayer::create(
+            pending ? "Recording Not Saved" : "Unable to Read Recording",
+            std::string(pending ? "The recording is still pending. Free storage or check the save folder, then try again before closing the game." :
+                "The recording catalog could not be read. The original recording has not been deleted."),
+            "OK"
+        )->show();
+        return false;
+    }
     if (m_runs.empty()) {
         replay_ui_detail::setFallbackFlag(false);
+        const auto& catalog = G.getAttemptCatalog();
+        const bool havePracticeFrames = std::any_of(catalog.begin(), catalog.end(), [](auto const& a) {
+            return a.practiceAttempt && (a.p1Count > 0 || a.p2Count > 0);
+        });
         FLAlertLayer::create(
-            "No Practice Runs",
-            std::string("There are no saved practice runs with recorded attempts for this level."),
+            havePracticeFrames ? "Practice Route Missing" : "No Practice Runs",
+            std::string(havePracticeFrames ? "Recorded practice attempts exist, but no usable session could be registered. Your saved attempts have been preserved. Please send the APX file and Geode log to me (manshoety) using the discord linked on the mod page." :
+                "There are no saved practice runs with recorded attempts for this level."),
             "OK"
         )->show();
         return false;
@@ -1023,11 +1038,11 @@ bool PracticeRunSelectPopup::init(float width, float height) {
     return true;
 }
 
-void PracticeRunSelectPopup::loadRuns_() {
+bool PracticeRunSelectPopup::loadRuns_() {
     m_allRuns.clear();
 
     auto& G = Ghosts::I();
-    G.refreshAttemptCatalogForCurrentLevel(true);
+    if (!G.refreshPracticeRuns()) return false;
 
     auto const& catalog = G.getAttemptCatalog();
     auto const& path = G.getPracticePathCatalog();
@@ -1035,7 +1050,7 @@ void PracticeRunSelectPopup::loadRuns_() {
     std::unordered_map<int, APXAttemptDiskInfo const*> bySerial;
     bySerial.reserve(catalog.size());
     for (auto const& attempt : catalog) {
-        if (attempt.practiceAttempt && attempt.serial > 0) {
+        if (attempt.practiceAttempt && attempt.serial > 0 && attempt.p1Count > 0) {
             bySerial[attempt.serial] = &attempt;
         }
     }
@@ -1058,6 +1073,14 @@ void PracticeRunSelectPopup::loadRuns_() {
         info.startX = CheckpointManager::sessionStartX_(session);
         info.endX = session.endX;
 
+        for (auto const& seg : session.segments) {
+            if (bySerial.contains(seg.ownerSerial) && std::isfinite(seg.absStart()) &&
+                std::isfinite(seg.absEnd()) && seg.absEnd() > seg.absStart() + 1e-6) {
+                info.playable = true;
+                break;
+            }
+        }
+
         float fallbackStartPercent = 0.f;
         float fallbackEndPercent = 0.f;
         bool haveFallbackStart = false;
@@ -1074,6 +1097,7 @@ void PracticeRunSelectPopup::loadRuns_() {
 
             if (!haveFallbackStart || attempt.startPercent < fallbackStartPercent) {
                 fallbackStartPercent = attempt.startPercent;
+                if (!info.playable) info.startX = attempt.startX;
                 haveFallbackStart = true;
              }
         }
@@ -1088,6 +1112,7 @@ void PracticeRunSelectPopup::loadRuns_() {
         }
     }
     applyCurrentStartFilter_();
+    return true;
 }
 
 void PracticeRunSelectPopup::applyCurrentStartFilter_() {
@@ -1413,6 +1438,14 @@ void PracticeRunSelectPopup::onNextPage(CCObject*) {
 
 void PracticeRunSelectPopup::onContinue(CCObject*) {
     if (m_selectedSessionIds.empty()) return;
+
+    if (std::any_of(m_runs.begin(), m_runs.end(), [this](RunInfo const& run) {
+        return m_selectedSessionIds.contains(run.sessionId) && !run.playable;
+    })) {
+        FLAlertLayer::create("Practice Run Not Replayable", std::string(
+            "This run has saved attempts but no valid timed route. Deselect it to replay other runs."), "OK")->show();
+        return;
+    }
 
     float gapEndPercent = 0.f;
     float nextStartPercent = 0.f;

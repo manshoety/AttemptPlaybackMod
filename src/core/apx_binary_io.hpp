@@ -15,9 +15,10 @@ namespace apxio {
 enum class Origin { Begin, Current };
 enum class Mode { Read, ReadAtEnd, Truncate, Append, CreateNew };
 
-// Per-record limits on 32-bit builds
-inline constexpr uint32_t kMaxChunkBytes = sizeof(void*) == 4 ? 32u * 1024u * 1024u : 0x7fffffffu;
-inline constexpr uint64_t kMaxDecodedFrameBytes = sizeof(void*) == 4 ? 64ull * 1024u * 1024u : UINT64_MAX;
+// Per-record and allocation limits
+inline constexpr uint32_t kMaxChunkBytes = sizeof(void*) == 4 ? 32u * 1024u * 1024u : 256u * 1024u * 1024u;
+inline constexpr uint64_t kMaxDecodedFrameBytes = sizeof(void*) == 4 ? 64ull * 1024u * 1024u : 256ull * 1024u * 1024u;
+inline constexpr uint64_t kMaxBulkFrameBytes = sizeof(void*) == 4 ? 96ull * 1024u * 1024u : 512ull * 1024u * 1024u;
 inline constexpr uint32_t kMaxCatalogPayload = sizeof(void*) == 4 ? 32u * 1024u * 1024u : 128u * 1024u * 1024u;
 inline constexpr uint32_t kMaxCatalogEntries = sizeof(void*) == 4 ? 250'000u : 1'000'000u;
 
@@ -36,10 +37,10 @@ public:
     explicit Reader(std::filesystem::path const& path, Mode mode = Mode::Read) { open(path, mode); }
 
     void open(std::filesystem::path const& path, Mode mode = Mode::Read) {
-        m_file = asp::fs::File{}; 
-        m_memory = false; 
-        m_ok = false; 
-        m_eof = false; 
+        m_file = asp::fs::File{};
+        m_memory = false;
+        m_ok = false;
+        m_eof = false;
         m_pos = m_size = 0;
 
         if (path.empty()) return;
@@ -160,8 +161,6 @@ public:
 
         } else if (!m_file.writeAll({data, count})) m_ok = false;
     }
-
-    void flush() {}
 
     uint64_t position() {
         if (!m_ok || !m_file.valid()) return UINT64_MAX;

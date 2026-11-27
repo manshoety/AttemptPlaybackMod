@@ -24,6 +24,7 @@
 
 #include "../core/dashing_args.hpp"
 #include "../core/apx_io.hpp"
+#include "../core/apx_catalog_cache.hpp"
 #include "../core/apx_format.hpp"
 #include "./globals.hpp"
 #include <cvolton.level-id-api/EditorIDs.hpp>
@@ -774,7 +775,9 @@ public:
         size_t bytesPerPlayerObject
     );
 
-    void flushPendingSaves_();
+    bool flushPendingSaves_();
+    bool hasPendingSaves_() const;
+    void reportStorageError_(std::string const& code, std::string const& detail);
 
     void setUseCheckpointsRoute(bool on) { m_useCheckpointsRoute = on; }
     bool useCheckpointsRoute() const { return m_useCheckpointsRoute; }
@@ -877,12 +880,11 @@ public:
     }
 
     void renumberCurrentAttemptIfFresh() {
-        if (m_current.p1.empty() && m_current.p2.empty()) {
-            m_current.serial = m_nextAttemptSerial++;
+        if (m_current.p1.empty() && m_current.p2.empty() &&
+            (!m_current.recordedThisSession || m_current.serial <= 0)) {
+            startNewAttempt();
         }
     }
-
-    bool rewriteWholeFileToCurrent_(std::filesystem::path const& path);
 
     int saveNewAttemptsForLevel_(int levelID);
 
@@ -910,7 +912,7 @@ public:
 
     void setBudgetPerFrame(int v) { m_budgetPerFrame = std::max(1, v); }
     void setMaxVisibleGhosts(int v) { m_maxVisibleGhosts = std::max(1, v); }
-    void setRecordInPractice(bool v) { recordInPractice = v; }
+    void setRecordInPractice(bool v);
 
     void setAccurateHighTPSReplay(bool v) { m_accurateHighTPSReplay = v; }
     void setAutosaveEnabled(bool v) { m_autosaveEnabled = v; m_autosaveAccum = 0.f; }
@@ -922,12 +924,7 @@ public:
     void setColorMode(ColorMode m);
     void updateAllColors();
     void setRecordingEnabled(bool on) { if (on != recording) toggleRecording(); }
-    void setRecordingBlocked(bool on) { 
-        recordingBlocked = on; 
-        m_current = Attempt{};
-        m_currentDidNoclip = false;
-        restartLevel();
-    }
+    void setRecordingBlocked(bool on);
     bool isRecordingBlocked() const { return recordingBlocked; }
     bool isRecordingBlockedOnNoclip() const { return m_recordingBlockedOnNoclip; }
     void setRecordingBlockedOnNoclip(bool on) { m_recordingBlockedOnNoclip = on; }
@@ -1075,7 +1072,12 @@ public:
 
     void onPracticeToggle(bool enabled);
 
-    void ensurePracticeRecordingSession_();
+    bool ensurePracticeRecordingSession_();
+    void afterPracticeToggle();
+    bool refreshPracticeRuns();
+    bool hasUnsavedRecording() const {
+        return hasPendingSaves_();
+    }
 
     void maybeInitialWarpToReplayStart_();
 
@@ -1106,7 +1108,7 @@ public:
 
     void recordCurrentFrame_(bool isPlayer1);
 
-    void seedInitialAttemptFrame_();
+    void seedInitialAttemptFrame_(bool midAttempt = false);
     
     bool isOwnerGhost_(size_t ai, Attempt const& a) const;
 
@@ -1305,10 +1307,9 @@ private:
     int m_autosaveMinutes = 5;
     float m_autosaveAccum = 0.f;
     std::unordered_set<uint64_t> m_loadedAttemptKeys;
-    int m_loadedLevelID = 0;
+
+    bool m_storageErrorShown = false;
     bool m_persistenceReadFailed = false; // Block automatic writes after an unreadable recording or failed rollback
-    bool m_needsMigrationRewrite = false;
-    bool m_loadedFileWasLegacyAttempts = false;
     uint64_t m_lazyLoadedAttempts = 0;
     uint64_t m_lazyLoadFailures = 0;
     uint64_t m_lazyDecodeTimeUs = 0;
@@ -1318,7 +1319,6 @@ private:
     std::unordered_map<uint64_t, size_t> m_attemptCatalogByIdentity;
     int m_attemptCatalogLevelID = 0;
     bool m_attemptCatalogScanned = false;
-    bool m_attemptCatalogCurrentFormat = false;
     std::string m_attemptCatalogCustomSaveId;
 
     bool m_allow_platformer = false;
@@ -2110,7 +2110,8 @@ private:
 
     size_t ptrToIndex_(const Attempt* p) const;
 
-    void startNewAttempt();
+    void startNewAttempt(bool midAttempt = false);
+    bool finalizeCurrentAttempt_(bool completed, bool spawnNow = true, bool allowSingleFrame = false);
 
     void sortBestToFront();
 

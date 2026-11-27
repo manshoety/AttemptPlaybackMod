@@ -33,6 +33,7 @@ private:
         float endX = 0.f;
         double replayEndTime = 0.0;
         bool completed = false;
+        bool playable = false;
     };
 
     std::vector<RunInfo> m_allRuns;
@@ -59,7 +60,7 @@ private:
     cocos2d::CCLabelBMFont* m_currentStartLabel = nullptr;
 
 private:
-    void loadRuns_();
+    bool loadRuns_();
     void applyCurrentStartFilter_();
     void sortRuns_();
     void rebuildRows_();

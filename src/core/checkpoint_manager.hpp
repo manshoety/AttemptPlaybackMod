@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -24,7 +26,8 @@ public:
 
         size_t changed = 0;
 
-        for (auto& seg : session->segments) {
+        auto segments = session->segments;
+        for (auto& seg : segments) {
             if (seg.baseTimeOffset == 0.0) {
                 seg.baseTimeOffset = offset;
                 ++changed;
@@ -32,7 +35,7 @@ public:
         }
 
         if (changed != 0) {
-            session->updateSpan();
+            setReplayOverrideSegments(std::move(segments));
         }
 
         return changed;
@@ -40,6 +43,8 @@ public:
     
     void restorePath(const PracticePath& path) {
         m_path = path;
+        m_activeMembership.clear();
+        m_membershipSessionId = 0;
         m_replayOverrideSegments.clear();
         m_dirty = false;
         m_noValidSessionForStartX = false;
@@ -48,11 +53,9 @@ public:
         m_nextSessionId = 1;
         for (const auto& session : m_path.sessions) {
             if (session.sessionId >= m_nextSessionId) {
-                m_nextSessionId = session.sessionId + 1;
+                m_nextSessionId = static_cast<int64_t>(session.sessionId) + 1;
             }
         }
-
-        currentFurthestSegment = PracticeSegment{};
     }
 
     static float sessionStartX_(PracticeSession const& s) {
@@ -112,19 +115,15 @@ public:
 
             m_noValidSessionForStartX = true;
             m_path.selectedSessionId = 0;
-            m_path.activeSessionId = 0;
             return -1;
         }
 
         m_noValidSessionForStartX = true;
         m_path.selectedSessionId = 0;
-        m_path.activeSessionId = 0;
         return -1;
     }
 
     int selectSessionById(int sessionId) {
-        currentFurthestSegment = PracticeSegment{};
-
         if (sessionId > 0 && sessionById_(sessionId)) {
             m_noValidSessionForStartX = false;
             m_path.selectedSessionId = sessionId;
@@ -229,6 +228,9 @@ public:
     }
 
     void onExitEarly() {
+        auto const* session = m_path.activeSession();
+        if (!session || session->completed || session->frozen || m_path.frozen) return;
+
         if (currentFurthestSegment.ownerSerial <= 0) return;
         if (!(currentFurthestSegment.localEndTime > currentFurthestSegment.localStartTime)) return;
 
@@ -244,7 +246,7 @@ public:
         );
     }
     
-    void overwriteSegmentForAttempt(
+    bool overwriteSegmentForAttempt(
         int serial,
         double baseTimeOffset,
         double localStartTime,
@@ -254,16 +256,15 @@ public:
         size_t p1Frames,
         size_t p2Frames
     ) {
-        if (!(localEndTime > localStartTime)) return;
+        if (serial <= 0 || p1Frames == 0) return false;
 
         PracticeSession* session = m_path.activeSession();
         if (!session) {
-            createNewSession();
+            if (!createNewSession()) return false;
             session = m_path.activeSession();
         }
-        if (!session) return;
 
-        if (m_path.frozen || session->frozen) return;
+        if (!session || m_path.frozen || session->frozen) return false;
 
         //log::info(
         //    "[SESSION WRITE] activeSessionId={} sessionPtr={} serial={} base={} start={} end={}",
@@ -276,6 +277,7 @@ public:
         //);
 
         addAttemptSerialIfMissing_(*session, serial);
+        m_dirty = true;
 
         PracticeSegment newSeg = makeSegment_(
             serial,
@@ -288,16 +290,18 @@ public:
             p2Frames
         );
 
+        if (!validSegment_(newSeg)) return true;
         updateCurrentFurthestSegment_(newSeg);
 
-        bool beganAtStartOfLevel = baseTimeOffset == 0.f;
+        bool beganAtStartOfLevel = baseTimeOffset == 0.0 && localStartTime <= kSegEps_;
 
         overwriteIntoTimeline_(session->segments, newSeg, beganAtStartOfLevel);
 
         session->updateSpan();
         m_dirty = true;
+        return true;
     }
-    
+
     int findOwnerSerialForTime(double t) const {
         auto const* segsPtr = replaySegments_();
         if (!segsPtr || segsPtr->empty()) return -1;
@@ -422,9 +426,10 @@ public:
         if (session) session->frozen = false;
     }
 
-    void createNewSession() {
+    bool createNewSession() {
+        if (m_nextSessionId > std::numeric_limits<int>::max()) return false;
         PracticeSession session;
-        session.sessionId = m_nextSessionId++;
+        session.sessionId = static_cast<int>(m_nextSessionId++);
         session.startX = 0.f;
         session.startY = 0.f;
         session.endX = 0.f;
@@ -435,18 +440,22 @@ public:
         m_path.sessions.push_back(session);
         m_path.activeSessionId = session.sessionId;
         m_path.selectedSessionId = session.sessionId;
+        m_activeMembership.clear();
+        m_membershipSessionId = session.sessionId;
 
         m_dirty = true;
         m_noValidSessionForStartX = false;
         currentFurthestSegment = PracticeSegment{};
-        //log::info("[SESSION] createNewSession id={} total={}", session.sessionId, m_path.sessions.size() + 1);
+        return true;
     }
     
 private:
     PracticePath m_path;
     std::vector<PracticeSegment> m_replayOverrideSegments;
     bool m_dirty = false;
-    int m_nextSessionId = 1;
+    int64_t m_nextSessionId = 1;
+    std::unordered_set<int> m_activeMembership;
+    int m_membershipSessionId = 0;
     bool m_noValidSessionForStartX = false;
     PracticeSegment currentFurthestSegment; // For when you exit practice mode before finishing the level
     static constexpr double kSegEps_ = 1e-6;
@@ -474,9 +483,12 @@ private:
 
     void addAttemptSerialIfMissing_(PracticeSession& session, int serial) {
         if (serial <= 0) return;
-        if (session.allAttemptSerials.empty() || session.allAttemptSerials.back() != serial) {
-            session.allAttemptSerials.push_back(serial);
+        if (m_membershipSessionId != session.sessionId) {
+            m_activeMembership.clear();
+            m_activeMembership.insert(session.allAttemptSerials.begin(), session.allAttemptSerials.end());
+            m_membershipSessionId = session.sessionId;
         }
+        if (m_activeMembership.insert(serial).second) session.allAttemptSerials.push_back(serial);
     }
 
     PracticeSegment makeSegment_(
@@ -516,7 +528,11 @@ private:
     }
 
     static bool validSegment_(PracticeSegment const& s) {
-        return s.ownerSerial > 0 && (s.absEnd() > s.absStart() + kSegEps_);
+        return s.ownerSerial > 0 && std::isfinite(s.baseTimeOffset) &&
+            s.baseTimeOffset >= 0.0 && std::isfinite(s.localStartTime) && std::isfinite(s.localEndTime) &&
+            std::isfinite(s.absStart()) && std::isfinite(s.absEnd()) &&
+            std::isfinite(s.startX) && std::isfinite(s.endX) &&
+            s.localStartTime >= 0.0 && s.absEnd() > s.absStart() + kSegEps_;
     }
 
     static void clampSegmentX_(PracticeSegment& s) {

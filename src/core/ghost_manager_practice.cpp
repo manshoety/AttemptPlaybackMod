@@ -6,7 +6,12 @@ bool Ghosts::getCurrentPracticeStartLocation(float& startX, float& startPercent)
         float x = NAN;
         float fallbackPercent = 0.f;
 
-        if (!m_current.p1.empty()) {
+        const auto* session = m_checkpointMgr.getPath().activeSession();
+        if (m_pl->m_isPracticeMode && session && !session->segments.empty()) {
+            x = CheckpointManager::sessionStartX_(*session);
+            fallbackPercent = m_current.startPercent;
+        }
+        else if (!m_current.p1.empty()) {
             x = static_cast<float>(m_current.p1.front().x);
             fallbackPercent = m_current.startPercent;
         }
@@ -98,21 +103,6 @@ bool Ghosts::deletePracticeSessionById(int sessionId) {
             if (seg.ownerSerial > 0) deleteSet.insert(seg.ownerSerial);
         }
 
-        if (deleteSet.empty()) {
-            PracticePath keptPath = m_attemptCatalogPracticePath;
-            keptPath.sessions.erase(
-                std::remove_if(
-                    keptPath.sessions.begin(),
-                    keptPath.sessions.end(),
-                    [&](PracticeSession const& session) {
-                        return session.sessionId == sessionId;
-                    }
-                ),
-                keptPath.sessions.end()
-            );
-            return rewriteAttemptsAndPracticePathAfterDeletion_(deleteSet, keptPath, "practice-session");
-        }
-
         PracticePath keptPath = m_attemptCatalogPracticePath;
         keptPath.sessions.erase(
             std::remove_if(
@@ -125,23 +115,25 @@ bool Ghosts::deletePracticeSessionById(int sessionId) {
             keptPath.sessions.end()
         );
 
+        for (auto const& session : keptPath.sessions) {
+            for (int serial : session.allAttemptSerials) deleteSet.erase(serial);
+            for (auto const& segment : session.segments) deleteSet.erase(segment.ownerSerial);
+        }
         return rewriteAttemptsAndPracticePathAfterDeletion_(deleteSet, keptPath, "practice-session");
     }
 
-void Ghosts::ensurePracticeRecordingSession_() {
-    if (!m_pl || !m_pl->m_isPracticeMode || !recording || recordingBlocked ||
-        !recordInPractice || playback || botActive) return;
+bool Ghosts::ensurePracticeRecordingSession_() {
+    if (!recording || recordingBlocked || !recordInPractice || botActive) return false;
+    if (!m_current.practiceAttempt && (!m_pl || !m_pl->m_isPracticeMode)) return false;
 
     m_current.practiceAttempt = true;
     auto const& path = m_checkpointMgr.getPath();
     auto const* active = path.activeSession();
-    if (!active || path.frozen || active->frozen) {
-        m_checkpointMgr.createNewSession();
-        log::info(
-            "[Practice save] started recording session {} (previous route missing/frozen)",
-            m_checkpointMgr.getPath().activeSessionId
-        );
+    if (!active || path.frozen || active->frozen || active->completed) {
+        if (!m_checkpointMgr.createNewSession()) return false;
+        log::debug("[Practice save] created session {}", m_checkpointMgr.getPath().activeSessionId);
     }
+    return true;
 }
 
 bool Ghosts::rewriteAttemptsAndPracticePathAfterDeletion_(
@@ -157,12 +149,12 @@ bool Ghosts::rewriteAttemptsAndPracticePathAfterDeletion_(
             ~SaveGuard() { flag = false; }
         } guard{ m_isSaving };
 
-        clearRuntimeReplayStateAfterAttemptDeletion_();
-
         const auto path = fileForLevel_(m_levelIDOnAttach);
 
         std::vector<Attempt> keptAttempts;
         keptAttempts.reserve(m_attemptCatalog.size());
+        apxio::Reader in(path);
+        uint64_t frameBytes = 0;
 
         for (auto const& entry : m_attemptCatalog) {
             if (deleteSet.count(entry.serial) != 0) {
@@ -172,12 +164,18 @@ bool Ghosts::rewriteAttemptsAndPracticePathAfterDeletion_(
             Attempt loaded{};
             bool usedLegacy = false;
 
-            if (!loadAPXAttemptByCatalogEntry(path, entry, loaded, &usedLegacy)) {
+            frameBytes += (uint64_t(entry.p1Count) + entry.p2Count) * sizeof(Frame);
+            if (frameBytes > apxio::kMaxBulkFrameBytes) {
+                reportStorageError_("APX-DELETE", "Recording too large for this operation. Original file left unchanged.");
+                return false;
+            }
+            if (!loadAPXAttemptByCatalogEntry(in, entry, loaded, &usedLegacy)) {
                 log::warn(
                     "[APX delete] failed to lazy-load kept attempt serial={} from {}",
                     entry.serial,
                     attemptplayback::pathcompat::toUtf8(path)
                 );
+                reportStorageError_("APX-DELETE", fmt::format("Could not read attempt {}.", entry.serial));
                 return false;
             }
 
@@ -186,15 +184,18 @@ bool Ghosts::rewriteAttemptsAndPracticePathAfterDeletion_(
             keptAttempts.push_back(std::move(loaded));
         }
 
+        in.close();
         if (!saveAPXFileCurrent(path, keptAttempts, keptPath)) {
             log::warn(
                 "[APX delete] failed to rewrite APX file after {} deletion: {}",
                 label ? label : "attempt",
                 attemptplayback::pathcompat::toUtf8(path)
             );
+            reportStorageError_("APX-DELETE", "Could not write the updated recording. Original file left unchanged.");
             return false;
         }
 
+        clearRuntimeReplayStateAfterAttemptDeletion_();
         m_checkpointMgr.restorePath(keptPath);
         removeDeletedAttemptsFromRuntime_(deleteSet);
         clearRuntimeReplayStateAfterAttemptDeletion_();
@@ -291,60 +292,42 @@ bool Ghosts::deletePracticeAttemptsBySerialSet_(
     }
 
 void Ghosts::onPracticeToggle(bool enabled) {
-        // log::info("[onPracticeToggle] enabled={}", enabled);
-
-        if (recording && !recordingBlocked && recordInPractice && !enabled &&
-            m_pl && m_pl->m_isPracticeMode && !block_attempt_push_on_recording_start) {
-            if (!m_current.p1.empty()) {
-                m_current.practiceAttempt = true;
-                double startTime = m_current.baseTimeOffset;
-                float startX = m_current.p1.front().x;
-                float endX = m_current.p1.back().x;
-                
-                m_checkpointMgr.overwriteSegmentForAttempt(
-                    m_current.serial,
-                    m_current.baseTimeOffset,
-                    0,
-                    m_current.p1.back().t - m_current.baseTimeOffset,
-                    startX,
-                    endX,
-                    m_current.p1.size(),
-                    m_current.p2.size()
-                );
-                pushAttempt(std::move(m_current));
-            }
-            m_checkpointMgr.onExitEarly();
-        }
-
-        if (playback) setActiveGhostsInvisible();
-        if (!isRecording()) toggleRecording();
-
-        practiceAttemptReplayIndex.clear();
-
-        forcePlayersVisible_();
-        clearHeldInputs_();
-
-        if (!recordingBlocked) {
-            if (enabled) {
-                m_practiceCompositeOwnerSerial = -1;
-                renumberCurrentAttemptIfFresh();
-                m_current.practiceAttempt = true;
-
-                m_checkpointMgr.createNewSession();
-                m_pendingRearm = false;
-            }
-            else {
-                m_checkpointMgr.freezeForReplay();
-
-                saveCurrentAttemptNow();
-                flushPendingSaves_();
-
-                m_pendingRearm = true;
-            }
-        }
-
-        m_prevPractice = enabled;
+    if (!m_pl || enabled == m_pl->m_isPracticeMode) return;
+    if (!enabled) {
+        finalizeCurrentAttempt_(false, true);
+        m_checkpointMgr.freezeForReplay();
+        flushPendingSaves_();
+        m_current = Attempt{};
+        m_pendingRearm = true;
+    } else if (recording && !recordingBlocked && recordInPractice && !botActive) {
+        renumberCurrentAttemptIfFresh();
+        m_current.practiceAttempt = true;
+        m_practiceCompositeOwnerSerial = -1;
+        m_checkpointMgr.createNewSession();
+        m_pendingRearm = false;
     }
+
+    if (playback) setActiveGhostsInvisible();
+    practiceAttemptReplayIndex.clear();
+
+    forcePlayersVisible_();
+    clearHeldInputs_();
+}
+
+void Ghosts::afterPracticeToggle() {
+    if (!m_pl) return;
+    const bool enabled = m_pl->m_isPracticeMode;
+    m_prevPractice = enabled;
+    if (!recording || recordingBlocked || botActive) return;
+    if (enabled && !recordInPractice) {
+        m_current = Attempt{};
+        return;
+    }
+    if (!m_current.recordedThisSession || m_current.serial <= 0) {
+        if (!m_justDied) startNewAttempt(true);
+    }
+    m_current.practiceAttempt = enabled;
+}
 
 int Ghosts::startModeForReplayFrame_(IconType mode) {
         switch (mode) {
