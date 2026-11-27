@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <limits>
 #include <span>
+#include <string>
 #include <vector>
 #include <utility>
 
@@ -28,6 +29,7 @@ class Reader {
 
     uint64_t m_size = 0, m_pos = 0;
     bool m_memory = false, m_ok = false, m_eof = false;
+    std::string m_error;
 public:
     Reader() = default;
 
@@ -42,14 +44,22 @@ public:
         m_ok = false;
         m_eof = false;
         m_pos = m_size = 0;
+        m_error.clear();
 
-        if (path.empty()) return;
+        if (path.empty()) {
+            m_error = "Empty file path.";
+            return;
+        }
         auto opened = asp::fs::File::open(asp::fs::Path::fromStdPath(path));
-        if (!opened) return;
+        if (!opened) {
+            m_error = opened.unwrapErr().toString();
+            return;
+        }
 
         m_file = std::move(opened.unwrap());
         auto size = m_file.size();
         if (!size || size.unwrap() > uint64_t(INT64_MAX)) {
+            m_error = !size ? size.unwrapErr().toString() : "File is too large.";
             m_file.close();
             return;
         }
@@ -64,9 +74,11 @@ public:
     explicit operator bool() const { return m_ok; }
     bool good() const { return m_ok; }
     bool eof() const { return m_eof; }
+    std::string const& error() const { return m_error; }
     void clear() {
         m_ok = is_open();
         m_eof = false;
+        m_error.clear();
     }
     int64_t tellg() const { return m_ok ? static_cast<int64_t>(m_pos) : -1; }
     uint64_t remaining() const { return m_ok ? m_size - m_pos : 0; }
@@ -94,13 +106,18 @@ public:
         if (!m_ok || count == 0) return;
         if (count > remaining()) {
             m_eof = remaining() == 0;
+            m_error = "Unexpected end of file.";
             m_ok = false;
             return;
         }
         if (m_memory) std::memcpy(dst, m_bytes.data() + m_pos, count);
-        else if (!m_file.readExact({reinterpret_cast<uint8_t*>(dst), count})) {
-            m_ok = false;
-            return;
+        else {
+            auto result = m_file.readExact({reinterpret_cast<uint8_t*>(dst), count});
+            if (!result) {
+                m_error = result.unwrapErr().toString();
+                m_ok = false;
+                return;
+            }
         }
         m_pos += count;
     }
@@ -117,11 +134,15 @@ class Writer {
     std::vector<uint8_t>* m_bytes = nullptr;
     bool m_ok = false;
     size_t m_limit = SIZE_MAX;
+    std::string m_error;
 public:
     explicit Writer(std::vector<uint8_t>& bytes, size_t limit = SIZE_MAX)
         : m_bytes(&bytes), m_ok(bytes.size() <= limit), m_limit(limit) {}
     explicit Writer(std::filesystem::path const& path, Mode mode = Mode::Truncate) {
-        if (path.empty()) return;
+        if (path.empty()) {
+            m_error = "Empty file path.";
+            return;
+        }
         auto native = asp::fs::Path::fromStdPath(path);
         if (mode == Mode::Append) {
             // Single writer on game thread
@@ -130,15 +151,30 @@ public:
             opts.write = true;
             auto opened = asp::fs::File::open(native, opts);
 
-            if (!opened) return;
+            if (!opened) {
+                m_error = opened.unwrapErr().toString();
+                return;
+            }
 
             m_file = std::move(opened.unwrap());
             auto size = m_file.size();
-            m_ok = size && m_file.seek(size.unwrap()).isOk();
+            if (!size) {
+                m_error = size.unwrapErr().toString();
+                return;
+            }
+            auto seek = m_file.seek(size.unwrap());
+            if (!seek) {
+                m_error = seek.unwrapErr().toString();
+                return;
+            }
+            m_ok = true;
         } else {
             auto opened = mode == Mode::CreateNew ? asp::fs::File::createNew(native) : asp::fs::File::create(native);
             
-            if (!opened) return;
+            if (!opened) {
+                m_error = opened.unwrapErr().toString();
+                return;
+            }
 
             m_file = std::move(opened.unwrap());
             m_ok = true;
@@ -146,6 +182,7 @@ public:
     }
     explicit operator bool() const { return m_ok; }
     bool good() const { return m_ok; }
+    std::string const& error() const { return m_error; }
 
     void write(char const* src, size_t count) {
         if (!m_ok || !count) return;
@@ -159,13 +196,23 @@ public:
             }
             m_bytes->insert(m_bytes->end(), data, data + count);
 
-        } else if (!m_file.writeAll({data, count})) m_ok = false;
+        } else {
+            auto result = m_file.writeAll({data, count});
+            if (!result) {
+                m_error = result.unwrapErr().toString();
+                m_ok = false;
+            }
+        }
     }
 
     uint64_t position() {
         if (!m_ok || !m_file.valid()) return UINT64_MAX;
         auto pos = m_file.tell();
-        return pos ? pos.unwrap() : UINT64_MAX;
+        if (!pos) {
+            m_error = pos.unwrapErr().toString();
+            return UINT64_MAX;
+        }
+        return pos.unwrap();
     }
 
     bool rollback(uint64_t position) {

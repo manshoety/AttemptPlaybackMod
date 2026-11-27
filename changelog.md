@@ -1,4 +1,4 @@
-# v1.6.0-beta.4
+# v1.6.0-beta.5
 - practice mode recording fix
 # v1.6.0-beta.3
 - iOS sound effect crash

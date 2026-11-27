@@ -664,22 +664,50 @@ std::filesystem::path Ghosts::fileForLevel_(int levelID) const {
     }
 
 bool Ghosts::ensureHeader_(std::filesystem::path const& path) {
-        if (path.empty()) return false;
+        if (path.empty()) {
+            reportStorageError_("APX-OPEN", "Empty recording path.");
+            return false;
+        }
 
         std::error_code ec;
 
-        const auto status = std::filesystem::symlink_status(path, ec);
-        if (ec && ec != std::errc::no_such_file_or_directory) return false;
-        if (status.type() != std::filesystem::file_type::not_found) {
-            if (ec || !std::filesystem::is_regular_file(status)) return false;
+        const bool exists = std::filesystem::exists(path, ec);
+        if (ec) {
+            reportStorageError_("APX-OPEN-STATUS", ec.message());
+            return false;
+        }
+        if (exists) {
+            if (!std::filesystem::is_regular_file(path, ec) || ec) {
+                reportStorageError_("APX-OPEN-STATUS", ec ? ec.message() : "Recording is not a regular file.");
+                return false;
+            }
             apxio::Reader in(path);
+            if (!in) {
+                reportStorageError_("APX-OPEN-READ", in.error());
+                return false;
+            }
             APXHeader h{};
             in.read(reinterpret_cast<char*>(&h), sizeof(h));
-            return in && std::memcmp(h.magic, "APX2", 4) == 0 && h.version == kAPXVersion;
+            if (!in) {
+                reportStorageError_("APX-OPEN-HEADER", in.error());
+                return false;
+            }
+            if (std::memcmp(h.magic, "APX2", 4) != 0) {
+                reportStorageError_("APX-OPEN-HEADER", "Invalid recording header.");
+                return false;
+            }
+            if (h.version != kAPXVersion) {
+                reportStorageError_("APX-OPEN-VERSION", fmt::format("Recording version {} (expected {}).", h.version, kAPXVersion));
+                return false;
+            }
+            return true;
         }
         
         apxio::Writer out(path, apxio::Mode::CreateNew);
-        if (!out) return false;
+        if (!out) {
+            reportStorageError_("APX-OPEN-CREATE", out.error());
+            return false;
+        }
 
         APXHeader h{};
         h.version = kAPXVersion;
@@ -687,6 +715,7 @@ bool Ghosts::ensureHeader_(std::filesystem::path const& path) {
         const bool ok = out.good();
         out.close();
         if (!ok) {
+            reportStorageError_("APX-OPEN-WRITE", out.error());
             std::filesystem::remove(path, ec);
             if (ec) log::warn("[APX save] failed removing incomplete new header: {}", ec.message());
         }
@@ -787,19 +816,21 @@ int Ghosts::saveNewAttemptsForLevel_(int levelID) {
         }
         std::error_code ec;
         std::filesystem::create_directories(path.parent_path(), ec);
-        if (ec || !ensureHeader_(path)) {
-            reportStorageError_("APX-OPEN", ec ? ec.message() : "Could not open or create the recording header.");
+        if (ec) {
+            reportStorageError_("APX-OPEN", ec.message());
             return 0;
         }
+        if (!ensureHeader_(path)) return 0;
 
         apxio::Writer out(path, apxio::Mode::Append);
         const auto start = out.position();
         if (!out || start == UINT64_MAX) {
-            reportStorageError_("APX-OPEN", "Could not open recording for append.");
+            reportStorageError_("APX-OPEN", "Could not open recording for append: " + out.error());
             return 0;
         }
 
-        auto fail = [&](std::string const& detail) {
+        auto fail = [&](std::string detail) {
+            if (!out.error().empty()) detail += " " + out.error();
             if (!out.rollback(start)) {
                 m_persistenceReadFailed = true;
                 reportStorageError_("APX-ROLLBACK", detail + " Rollback failed; further writes disabled.");
